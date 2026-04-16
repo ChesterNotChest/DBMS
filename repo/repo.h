@@ -15,6 +15,52 @@ namespace repo {
 
 using TableRow = QStringList;
 
+/// 仓储层路径配置。可在程序启动时通过 getter/setter 调整目录路径。
+class RepoPathConfig
+{
+public:
+    /// 返回默认数据目录名。
+    static QString getDataDirectoryName()
+    {
+        return s_dataDirectoryName;
+    }
+
+    /// 设置默认数据目录名。
+    static void setDataDirectoryName(const QString &dataDirectoryName)
+    {
+        s_dataDirectoryName = dataDirectoryName;
+    }
+
+    /// 返回排序索引目录名。
+    static QString getSortIndexDirectoryName()
+    {
+        return s_sortIndexDirectoryName;
+    }
+
+    /// 设置排序索引目录名。
+    static void setSortIndexDirectoryName(const QString &sortIndexDirectoryName)
+    {
+        s_sortIndexDirectoryName = sortIndexDirectoryName;
+    }
+
+    /// 返回排序索引文件名中源表名与索引名之间的分隔符。
+    static QString getSortIndexNameSeparator()
+    {
+        return s_sortIndexNameSeparator;
+    }
+
+    /// 设置排序索引文件名中源表名与索引名之间的分隔符。
+    static void setSortIndexNameSeparator(const QString &sortIndexNameSeparator)
+    {
+        s_sortIndexNameSeparator = sortIndexNameSeparator;
+    }
+
+private:
+    inline static QString s_dataDirectoryName = QStringLiteral("data");
+    inline static QString s_sortIndexDirectoryName = QStringLiteral("indexes");
+    inline static QString s_sortIndexNameSeparator = QStringLiteral("__");
+};
+
 /// 表示一个持久化到磁盘上的规则二维表。
 struct TableData
 {
@@ -81,21 +127,28 @@ public:
     static QString defaultDataRoot();
 
     /// 返回所有持久化文件使用的数据根目录绝对路径。
-    QString dataRoot() const;
+    QString getDataRoot() const;
     /// 返回 `root.dbf` 的绝对路径。
-    QString rootFilePath() const;
+    QString getRootFilePath() const;
+    /// 返回数据库 `.meta` 文件名，不含目录。
+    QString getMetaFileName(const QString &databaseName) const;
     /// 返回 `[database].meta` 的绝对路径。
-    QString metaFilePath(const QString &databaseName) const;
+    QString getMetaFilePath(const QString &databaseName) const;
     /// 返回数据库目录 `data/[database]` 的绝对路径。
-    QString databaseDirectory(const QString &databaseName) const;
+    QString getDatabaseDirectory(const QString &databaseName) const;
+    /// 返回表 `.dat` 文件名，不含目录。
+    QString getTableFileName(const QString &tableName) const;
     /// 返回 `data/[database]/[table].dat` 的绝对路径。
-    QString tableFilePath(const QString &databaseName, const QString &tableName) const;
+    QString getTableFilePath(const QString &databaseName, const QString &tableName) const;
     /// 返回某个数据库排序索引目录的绝对路径。
-    QString sortIndexDirectory(const QString &databaseName) const;
+    QString getSortIndexDirectory(const QString &databaseName) const;
+    /// 返回排序索引文件名，不含目录。
+    QString getSortIndexFileName(const QString &indexName,
+                                 const QString &sourceTable = QString()) const;
     /// 返回某个排序索引文件的绝对路径。
-    QString sortIndexFilePath(const QString &databaseName,
-                              const QString &indexName,
-                              const QString &sourceTable = QString()) const;
+    QString getSortIndexFilePath(const QString &databaseName,
+                                 const QString &indexName,
+                                 const QString &sourceTable = QString()) const;
 
     /// 将绝对路径转换为相对存储根目录父级的相对路径。
     QString toStorageRelativePath(const QString &absolutePath) const;
@@ -149,7 +202,7 @@ public:
     /// 直接读取原始 `root.dbf` 二维表。
     TableData rootTable(QString *error = nullptr) const;
     /// 返回 `root.dbf` 的绝对路径。
-    QString rootFilePath() const;
+    QString getRootFilePath() const;
 
 private:
     FlatFileTableStore m_store;
@@ -179,7 +232,7 @@ public:
     /// 直接读取原始 `[database].meta` 二维表。
     TableData metaTable(QString *error = nullptr) const;
     /// 返回元数据文件的绝对路径。
-    QString metaFilePath() const;
+    QString getMetaFilePath() const;
 
 private:
     QString m_databaseName;
@@ -210,7 +263,7 @@ public:
     /// 按行号删除一行数据。
     RepositoryResult deleteRow(int rowIndex) const;
     /// 返回表文件的绝对路径。
-    QString tableFilePath() const;
+    QString getTableFilePath() const;
 
 private:
     QString m_databaseName;
@@ -243,7 +296,7 @@ public:
     /// 删除索引文件中的某一行。
     RepositoryResult deleteRow(int rowIndex) const;
     /// 返回排序索引文件的绝对路径。
-    QString indexFilePath() const;
+    QString getIndexFilePath() const;
 
 private:
     QString m_databaseName;

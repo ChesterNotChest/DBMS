@@ -6,7 +6,7 @@
 2. 将每个表的具体操作（增删改查）抽象到repos里，分别放到database_repo.py，table_repo.py，field_repo.py。
 -------
 阶段二：(ddl、dml雏形)
-1. 增删改查，均抽象成tasks，分别放到database_task.py，meta_repo.py，table_repo.py（以函数的形式实现select、update等ddl和dml方法）
+1. 增删改查，均抽象成tasks，分别放到database_task.cpp，meta_repo.cpp，table_repo.cpp（以函数的形式实现select、update等ddl和dml方法）
 2. 为tasks设计单元测试用例，分别放到test_database_task.cpp，test_meta_repo.cpp，test_table_repo.cpp
 （注：database_tasks.py里的变动需要修改meta.db的内容）
 -------

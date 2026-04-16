@@ -23,52 +23,52 @@ RepositoryResult SortIndexRepo::createIndex(const QStringList &columns) const
     }
 
     const RepositoryResult directoryReady =
-        m_store.ensureDirectory(m_store.sortIndexDirectory(m_databaseName));
+        m_store.ensureDirectory(m_store.getSortIndexDirectory(m_databaseName));
     if (!directoryReady.ok) {
         return directoryReady;
     }
 
-    if (m_store.exists(indexFilePath())) {
+    if (m_store.exists(getIndexFilePath())) {
         return RepositoryResult::failure(
             QStringLiteral("sort index '%1' already exists").arg(m_indexName));
     }
 
-    return m_store.createEmptyTable(indexFilePath(), columns);
+    return m_store.createEmptyTable(getIndexFilePath(), columns);
 }
 
 RepositoryResult SortIndexRepo::dropIndex() const
 {
-    return m_store.removeFile(indexFilePath());
+    return m_store.removeFile(getIndexFilePath());
 }
 
 TableData SortIndexRepo::readIndex(QString *error) const
 {
-    return m_store.readTable(indexFilePath(), error);
+    return m_store.readTable(getIndexFilePath(), error);
 }
 
 RepositoryResult SortIndexRepo::replaceIndex(const TableData &table) const
 {
-    return m_store.writeTable(indexFilePath(), table);
+    return m_store.writeTable(getIndexFilePath(), table);
 }
 
 RepositoryResult SortIndexRepo::insertRow(const TableRow &row) const
 {
-    return m_store.appendRow(indexFilePath(), row);
+    return m_store.appendRow(getIndexFilePath(), row);
 }
 
 RepositoryResult SortIndexRepo::updateRow(int rowIndex, const TableRow &row) const
 {
-    return m_store.updateRow(indexFilePath(), rowIndex, row);
+    return m_store.updateRow(getIndexFilePath(), rowIndex, row);
 }
 
 RepositoryResult SortIndexRepo::deleteRow(int rowIndex) const
 {
-    return m_store.deleteRow(indexFilePath(), rowIndex);
+    return m_store.deleteRow(getIndexFilePath(), rowIndex);
 }
 
-QString SortIndexRepo::indexFilePath() const
+QString SortIndexRepo::getIndexFilePath() const
 {
-    return m_store.sortIndexFilePath(m_databaseName, m_indexName, m_sourceTable);
+    return m_store.getSortIndexFilePath(m_databaseName, m_indexName, m_sourceTable);
 }
 
 } // namespace repo

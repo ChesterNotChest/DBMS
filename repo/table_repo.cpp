@@ -5,6 +5,11 @@
 
 namespace {
 
+const QString kRootFileName = QStringLiteral("root.dbf");
+const QString kMetaFileSuffix = QStringLiteral(".meta");
+const QString kTableFileSuffix = QStringLiteral(".dat");
+const QString kSortIndexFileSuffix = QStringLiteral(".idx");
+
 QJsonArray toJsonArray(const QStringList &values)
 {
     QJsonArray array;
@@ -77,49 +82,67 @@ FlatFileTableStore::FlatFileTableStore(QString dataRoot)
 
 QString FlatFileTableStore::defaultDataRoot()
 {
-    return QDir::cleanPath(QDir::current().absoluteFilePath(QStringLiteral("data")));
+    return QDir::cleanPath(
+        QDir::current().absoluteFilePath(RepoPathConfig::getDataDirectoryName()));
 }
 
-QString FlatFileTableStore::dataRoot() const
+QString FlatFileTableStore::getDataRoot() const
 {
     return m_dataRoot;
 }
 
-QString FlatFileTableStore::rootFilePath() const
+QString FlatFileTableStore::getRootFilePath() const
 {
-    return QDir(m_dataRoot).absoluteFilePath(QStringLiteral("root.dbf"));
+    return QDir(m_dataRoot).absoluteFilePath(kRootFileName);
 }
 
-QString FlatFileTableStore::metaFilePath(const QString &databaseName) const
+QString FlatFileTableStore::getMetaFileName(const QString &databaseName) const
 {
-    return QDir(m_dataRoot).absoluteFilePath(databaseName + QStringLiteral(".meta"));
+    return databaseName + kMetaFileSuffix;
 }
 
-QString FlatFileTableStore::databaseDirectory(const QString &databaseName) const
+QString FlatFileTableStore::getMetaFilePath(const QString &databaseName) const
+{
+    return QDir(m_dataRoot).absoluteFilePath(getMetaFileName(databaseName));
+}
+
+QString FlatFileTableStore::getDatabaseDirectory(const QString &databaseName) const
 {
     return QDir(m_dataRoot).absoluteFilePath(databaseName);
 }
 
-QString FlatFileTableStore::tableFilePath(const QString &databaseName, const QString &tableName) const
+QString FlatFileTableStore::getTableFileName(const QString &tableName) const
 {
-    return QDir(databaseDirectory(databaseName))
-        .absoluteFilePath(tableName + QStringLiteral(".dat"));
+    return tableName + kTableFileSuffix;
 }
 
-QString FlatFileTableStore::sortIndexDirectory(const QString &databaseName) const
+QString FlatFileTableStore::getTableFilePath(const QString &databaseName, const QString &tableName) const
 {
-    return QDir(databaseDirectory(databaseName)).absoluteFilePath(QStringLiteral("indexes"));
+    return QDir(getDatabaseDirectory(databaseName)).absoluteFilePath(getTableFileName(tableName));
 }
 
-QString FlatFileTableStore::sortIndexFilePath(const QString &databaseName,
-                                              const QString &indexName,
-                                              const QString &sourceTable) const
+QString FlatFileTableStore::getSortIndexDirectory(const QString &databaseName) const
+{
+    return QDir(getDatabaseDirectory(databaseName))
+        .absoluteFilePath(RepoPathConfig::getSortIndexDirectoryName());
+}
+
+QString FlatFileTableStore::getSortIndexFileName(const QString &indexName,
+                                                 const QString &sourceTable) const
 {
     QString fileName = indexName;
     if (!sourceTable.trimmed().isEmpty()) {
-        fileName = sourceTable + QStringLiteral("__") + indexName;
+        fileName = sourceTable + RepoPathConfig::getSortIndexNameSeparator() + indexName;
     }
-    return QDir(sortIndexDirectory(databaseName)).absoluteFilePath(fileName + QStringLiteral(".idx"));
+    return fileName + kSortIndexFileSuffix;
+}
+
+QString FlatFileTableStore::getSortIndexFilePath(const QString &databaseName,
+                                                 const QString &indexName,
+                                                 const QString &sourceTable) const
+{
+    return QDir(getSortIndexDirectory(databaseName))
+        .absoluteFilePath(getSortIndexFileName(indexName, sourceTable));
 }
 
 QString FlatFileTableStore::toStorageRelativePath(const QString &absolutePath) const
@@ -339,52 +362,52 @@ RepositoryResult TableRepo::createTable(const QStringList &columns) const
     }
 
     const RepositoryResult directoryReady =
-        m_store.ensureDirectory(m_store.databaseDirectory(m_databaseName));
+        m_store.ensureDirectory(m_store.getDatabaseDirectory(m_databaseName));
     if (!directoryReady.ok) {
         return directoryReady;
     }
 
-    if (m_store.exists(tableFilePath())) {
+    if (m_store.exists(getTableFilePath())) {
         return RepositoryResult::failure(
             QStringLiteral("table '%1' already exists").arg(m_tableName));
     }
 
-    return m_store.createEmptyTable(tableFilePath(), columns);
+    return m_store.createEmptyTable(getTableFilePath(), columns);
 }
 
 RepositoryResult TableRepo::dropTable() const
 {
-    return m_store.removeFile(tableFilePath());
+    return m_store.removeFile(getTableFilePath());
 }
 
 TableData TableRepo::readTable(QString *error) const
 {
-    return m_store.readTable(tableFilePath(), error);
+    return m_store.readTable(getTableFilePath(), error);
 }
 
 RepositoryResult TableRepo::replaceTable(const TableData &table) const
 {
-    return m_store.writeTable(tableFilePath(), table);
+    return m_store.writeTable(getTableFilePath(), table);
 }
 
 RepositoryResult TableRepo::insertRow(const TableRow &row) const
 {
-    return m_store.appendRow(tableFilePath(), row);
+    return m_store.appendRow(getTableFilePath(), row);
 }
 
 RepositoryResult TableRepo::updateRow(int rowIndex, const TableRow &row) const
 {
-    return m_store.updateRow(tableFilePath(), rowIndex, row);
+    return m_store.updateRow(getTableFilePath(), rowIndex, row);
 }
 
 RepositoryResult TableRepo::deleteRow(int rowIndex) const
 {
-    return m_store.deleteRow(tableFilePath(), rowIndex);
+    return m_store.deleteRow(getTableFilePath(), rowIndex);
 }
 
-QString TableRepo::tableFilePath() const
+QString TableRepo::getTableFilePath() const
 {
-    return m_store.tableFilePath(m_databaseName, m_tableName);
+    return m_store.getTableFilePath(m_databaseName, m_tableName);
 }
 
 } // namespace repo

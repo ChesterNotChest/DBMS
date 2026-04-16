@@ -30,16 +30,16 @@ RepositoryResult MetaRepo::initialize() const
     }
 
     const RepositoryResult databaseDirReady =
-        m_store.ensureDirectory(m_store.databaseDirectory(m_databaseName));
+        m_store.ensureDirectory(m_store.getDatabaseDirectory(m_databaseName));
     if (!databaseDirReady.ok) {
         return databaseDirReady;
     }
 
-    if (m_store.exists(m_store.metaFilePath(m_databaseName))) {
+    if (m_store.exists(m_store.getMetaFilePath(m_databaseName))) {
         return RepositoryResult::success();
     }
 
-    return m_store.createEmptyTable(m_store.metaFilePath(m_databaseName), kMetaColumns);
+    return m_store.createEmptyTable(m_store.getMetaFilePath(m_databaseName), kMetaColumns);
 }
 
 QList<TableEntry> MetaRepo::listTables(QString *error) const
@@ -52,7 +52,7 @@ QList<TableEntry> MetaRepo::listTables(QString *error) const
         return {};
     }
 
-    const TableData table = m_store.readTable(m_store.metaFilePath(m_databaseName), error);
+    const TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), error);
     QList<TableEntry> tables;
     for (const TableRow &row : table.rows) {
         if (row.size() < 2) {
@@ -94,9 +94,9 @@ RepositoryResult MetaRepo::createTableEntry(const QString &tableName) const
         return RepositoryResult::failure(lookupError);
     }
 
-    const QString tablePath = m_store.tableFilePath(m_databaseName, tableName);
+    const QString tablePath = m_store.getTableFilePath(m_databaseName, tableName);
     return m_store.appendRow(
-        m_store.metaFilePath(m_databaseName),
+        m_store.getMetaFilePath(m_databaseName),
         TableRow{tableName, m_store.toStorageRelativePath(tablePath)});
 }
 
@@ -116,7 +116,7 @@ RepositoryResult MetaRepo::renameTableEntry(const QString &tableName,
     }
 
     QString error;
-    TableData table = m_store.readTable(m_store.metaFilePath(m_databaseName), &error);
+    TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -137,10 +137,10 @@ RepositoryResult MetaRepo::renameTableEntry(const QString &tableName,
             QStringLiteral("table '%1' does not exist").arg(tableName));
     }
 
-    QDir databaseDirectory(m_store.databaseDirectory(m_databaseName));
-    const QString oldFileName = tableName + QStringLiteral(".dat");
-    const QString newFileName = newTableName + QStringLiteral(".dat");
-    if (QFileInfo::exists(m_store.tableFilePath(m_databaseName, tableName))
+    QDir databaseDirectory(m_store.getDatabaseDirectory(m_databaseName));
+    const QString oldFileName = m_store.getTableFileName(tableName);
+    const QString newFileName = m_store.getTableFileName(newTableName);
+    if (QFileInfo::exists(m_store.getTableFilePath(m_databaseName, tableName))
         && !databaseDirectory.rename(oldFileName, newFileName)) {
         return RepositoryResult::failure(
             QStringLiteral("failed to rename table file '%1' to '%2'")
@@ -149,8 +149,8 @@ RepositoryResult MetaRepo::renameTableEntry(const QString &tableName,
 
     table.rows[currentIndex] = TableRow{
         newTableName,
-        m_store.toStorageRelativePath(m_store.tableFilePath(m_databaseName, newTableName))};
-    return m_store.writeTable(m_store.metaFilePath(m_databaseName), table);
+        m_store.toStorageRelativePath(m_store.getTableFilePath(m_databaseName, newTableName))};
+    return m_store.writeTable(m_store.getMetaFilePath(m_databaseName), table);
 }
 
 RepositoryResult MetaRepo::deleteTableEntry(const QString &tableName) const
@@ -161,7 +161,7 @@ RepositoryResult MetaRepo::deleteTableEntry(const QString &tableName) const
     }
 
     QString error;
-    TableData table = m_store.readTable(m_store.metaFilePath(m_databaseName), &error);
+    TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -180,7 +180,7 @@ RepositoryResult MetaRepo::deleteTableEntry(const QString &tableName) const
     }
 
     table.rows.removeAt(targetIndex);
-    return m_store.writeTable(m_store.metaFilePath(m_databaseName), table);
+    return m_store.writeTable(m_store.getMetaFilePath(m_databaseName), table);
 }
 
 TableData MetaRepo::metaTable(QString *error) const
@@ -193,12 +193,12 @@ TableData MetaRepo::metaTable(QString *error) const
         return {};
     }
 
-    return m_store.readTable(m_store.metaFilePath(m_databaseName), error);
+    return m_store.readTable(m_store.getMetaFilePath(m_databaseName), error);
 }
 
-QString MetaRepo::metaFilePath() const
+QString MetaRepo::getMetaFilePath() const
 {
-    return m_store.metaFilePath(m_databaseName);
+    return m_store.getMetaFilePath(m_databaseName);
 }
 
 } // namespace repo
