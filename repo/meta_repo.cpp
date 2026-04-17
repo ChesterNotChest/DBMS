@@ -5,9 +5,6 @@
 
 namespace {
 
-const QStringList kMetaColumns = {QStringLiteral("table_name"),
-                                  QStringLiteral("table_file")};
-
 } // namespace
 
 namespace repo {
@@ -39,7 +36,9 @@ RepositoryResult MetaRepo::initialize() const
         return RepositoryResult::success();
     }
 
-    return m_store.createEmptyTable(m_store.getMetaFilePath(m_databaseName), kMetaColumns);
+    return m_store.createEmptyTable(
+        m_store.getMetaFilePath(m_databaseName),
+        tabledef::schemaColumnNames(getSchema()));
 }
 
 QList<TableEntry> MetaRepo::listTables(QString *error) const
@@ -199,6 +198,11 @@ TableData MetaRepo::metaTable(QString *error) const
 QString MetaRepo::getMetaFilePath() const
 {
     return m_store.getMetaFilePath(m_databaseName);
+}
+
+tabledef::TableSchema MetaRepo::getSchema() const
+{
+    return tabledef::buildDatabaseMetaSchema(m_databaseName);
 }
 
 } // namespace repo

@@ -1,12 +1,18 @@
 #include "repo.h"
 
+#include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
 
 namespace {
 
 const QString kRootFileName = QStringLiteral("root.dbf");
 const QString kMetaFileSuffix = QStringLiteral(".meta");
+const QString kConstraintFileSuffix = QStringLiteral(".con");
 const QString kTableFileSuffix = QStringLiteral(".dat");
 const QString kSortIndexFileSuffix = QStringLiteral(".idx");
 
@@ -119,6 +125,18 @@ QString FlatFileTableStore::getTableFileName(const QString &tableName) const
 QString FlatFileTableStore::getTableFilePath(const QString &databaseName, const QString &tableName) const
 {
     return QDir(getDatabaseDirectory(databaseName)).absoluteFilePath(getTableFileName(tableName));
+}
+
+QString FlatFileTableStore::getConstraintFileName(const QString &tableName) const
+{
+    return tableName + kConstraintFileSuffix;
+}
+
+QString FlatFileTableStore::getConstraintFilePath(const QString &databaseName,
+                                                  const QString &tableName) const
+{
+    return QDir(getDatabaseDirectory(databaseName)).absoluteFilePath(
+        getConstraintFileName(tableName));
 }
 
 QString FlatFileTableStore::getSortIndexDirectory(const QString &databaseName) const

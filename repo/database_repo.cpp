@@ -5,9 +5,6 @@
 
 namespace {
 
-const QStringList kRootColumns = {QStringLiteral("database_name"),
-                                  QStringLiteral("meta_file")};
-
 QString buildMissingNameError(const QString &entityName)
 {
     return QStringLiteral("name for %1 cannot be empty").arg(entityName);
@@ -33,7 +30,9 @@ RepositoryResult DatabaseRepo::initialize() const
         return RepositoryResult::success();
     }
 
-    return m_store.createEmptyTable(m_store.getRootFilePath(), kRootColumns);
+    return m_store.createEmptyTable(
+        m_store.getRootFilePath(),
+        tabledef::schemaColumnNames(getSchema()));
 }
 
 QList<DatabaseEntry> DatabaseRepo::listDatabases(QString *error) const
@@ -248,6 +247,11 @@ TableData DatabaseRepo::rootTable(QString *error) const
 QString DatabaseRepo::getRootFilePath() const
 {
     return m_store.getRootFilePath();
+}
+
+tabledef::TableSchema DatabaseRepo::getSchema() const
+{
+    return tabledef::buildDatabaseRootSchema();
 }
 
 } // namespace repo

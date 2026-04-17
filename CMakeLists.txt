@@ -17,8 +17,10 @@ set(PROJECT_SOURCES
         mainwindow.cpp
         mainwindow.h
         mainwindow.ui
+        constants/table_def.h
         repo/repo.h
         repo/database_repo.cpp
+        repo/constraint_repo.cpp
         repo/meta_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp

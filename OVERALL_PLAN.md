@@ -15,4 +15,29 @@
 2. 设计utils/sql_handler.util，读取字符串（sql），返回字符串（方法名/方法编号）用于处置各种模式匹配，以决定执行哪个task方法。
 3. 设计run.py。启动时检查有没有meta.db，没有就创一个，作为初始化。否则直接打开一个终端，允许输入sql进行操作。
 -------
-↑当前目标
+阶段二extra
+CREATE TABLE 表名 (
+    列名1 数据类型 
+    [NOT NULL] 
+    [DEFAULT 默认值] 
+    [UNIQUE] 
+    [PRIMARY KEY] 
+    [AUTO_INCREMENT]
+    [CHECK(条件)],
+)
+
+ALTER TABLE 表名 ADD COLUMN 列名 数据类型 [约束];
+
+ALTER TABLE 表名 MODIFY COLUMN 列名 新数据类型 [新约束];
+
+ALTER TABLE 表名 DROP 列名;
+
+-- 新增约束
+ALTER TABLE 表名 ADD CONSTRAINT 约束名 UNIQUE(列名);
+ALTER TABLE 表名 ADD CONSTRAINT 约束名 CHECK(条件);
+
+
+
+
+------ 如下不要现在实现，是我自己的备忘 ------
+可以和WHERE一同实现。写个Util。（包括in, [比较符] all, [比较符] any, exist, not exist）
