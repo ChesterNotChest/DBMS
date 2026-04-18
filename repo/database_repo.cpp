@@ -48,10 +48,10 @@ QList<DatabaseEntry> DatabaseRepo::listDatabases(QString *error) const
     const TableData table = m_store.readTable(m_store.getRootFilePath(), error);
     QList<DatabaseEntry> databases;
     for (const TableRow &row : table.rows) {
-        if (row.size() < 2) {
+        if (row.isEmpty()) {
             continue;
         }
-        databases.append(DatabaseEntry{row.at(0), row.at(1)});
+        databases.append(DatabaseEntry{row.at(0)});
     }
     return databases;
 }
@@ -93,16 +93,13 @@ RepositoryResult DatabaseRepo::createDatabase(const QString &databaseName) const
         return directoryReady;
     }
 
-    const MetaRepo metaRepo(databaseName, m_store.getDataRoot());
-    const RepositoryResult metaReady = metaRepo.initialize();
-    if (!metaReady.ok) {
-        return metaReady;
+    const TabRepo tabRepo(databaseName, m_store.getDataRoot());
+    const RepositoryResult tabReady = tabRepo.initialize();
+    if (!tabReady.ok) {
+        return tabReady;
     }
 
-    const QString metaPath = m_store.getMetaFilePath(databaseName);
-    return m_store.appendRow(
-        m_store.getRootFilePath(),
-        TableRow{databaseName, m_store.toStorageRelativePath(metaPath)});
+    return m_store.appendRow(m_store.getRootFilePath(), TableRow{databaseName});
 }
 
 RepositoryResult DatabaseRepo::renameDatabase(const QString &databaseName,
@@ -143,15 +140,6 @@ RepositoryResult DatabaseRepo::renameDatabase(const QString &databaseName,
     }
 
     QDir dataRootDirectory(m_store.getDataRoot());
-    const QString oldMetaName = m_store.getMetaFileName(databaseName);
-    const QString newMetaName = m_store.getMetaFileName(newDatabaseName);
-    if (QFileInfo::exists(m_store.getMetaFilePath(databaseName))
-        && !dataRootDirectory.rename(oldMetaName, newMetaName)) {
-        return RepositoryResult::failure(
-            QStringLiteral("failed to rename meta file '%1' to '%2'")
-                .arg(oldMetaName, newMetaName));
-    }
-
     if (QDir(m_store.getDatabaseDirectory(databaseName)).exists()
         && !dataRootDirectory.rename(databaseName, newDatabaseName)) {
         return RepositoryResult::failure(
@@ -159,28 +147,17 @@ RepositoryResult DatabaseRepo::renameDatabase(const QString &databaseName,
                 .arg(databaseName, newDatabaseName));
     }
 
-    const QString renamedMetaPath = m_store.getMetaFilePath(newDatabaseName);
-    if (QFileInfo::exists(renamedMetaPath)) {
-        TableData metaTable = m_store.readTable(renamedMetaPath, &error);
-        if (!error.isEmpty()) {
-            return RepositoryResult::failure(error);
-        }
-
-        for (TableRow &row : metaTable.rows) {
-            if (row.size() >= 2) {
-                row[1] = m_store.toStorageRelativePath(
-                    m_store.getTableFilePath(newDatabaseName, row.at(0)));
-            }
-        }
-
-        const RepositoryResult metaWrite = m_store.writeTable(renamedMetaPath, metaTable);
-        if (!metaWrite.ok) {
-            return metaWrite;
-        }
+    QDir newDatabaseDirectory(m_store.getDatabaseDirectory(newDatabaseName));
+    const QString oldTabName = m_store.getTabFileName(databaseName);
+    const QString newTabName = m_store.getTabFileName(newDatabaseName);
+    if (QFileInfo::exists(newDatabaseDirectory.absoluteFilePath(oldTabName))
+        && !newDatabaseDirectory.rename(oldTabName, newTabName)) {
+        return RepositoryResult::failure(
+            QStringLiteral("failed to rename table catalog file '%1' to '%2'")
+                .arg(oldTabName, newTabName));
     }
 
-    table.rows[currentIndex] =
-        TableRow{newDatabaseName, m_store.toStorageRelativePath(renamedMetaPath)};
+    table.rows[currentIndex] = TableRow{newDatabaseName};
     return m_store.writeTable(m_store.getRootFilePath(), table);
 }
 
@@ -216,19 +193,7 @@ RepositoryResult DatabaseRepo::deleteDatabase(const QString &databaseName) const
         return writeResult;
     }
 
-    const RepositoryResult removeMeta = m_store.removeFile(m_store.getMetaFilePath(databaseName));
-    if (!removeMeta.ok) {
-        return removeMeta;
-    }
-
-    QDir databaseDirectory(m_store.getDatabaseDirectory(databaseName));
-    if (databaseDirectory.exists() && !databaseDirectory.removeRecursively()) {
-        return RepositoryResult::failure(
-            QStringLiteral("failed to remove database directory '%1'")
-                .arg(databaseDirectory.absolutePath()));
-    }
-
-    return RepositoryResult::success();
+    return m_store.removeDirectoryRecursively(m_store.getDatabaseDirectory(databaseName));
 }
 
 TableData DatabaseRepo::rootTable(QString *error) const

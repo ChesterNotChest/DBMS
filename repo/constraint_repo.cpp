@@ -49,8 +49,38 @@ repo::TableRow toConstraintRow(const tabledef::Constraint &constraint)
         constraint.name,
         tabledef::constraintTypeToString(constraint.type),
         serializeColumns(constraint.columns),
+        constraint.referencedTable,
+        serializeColumns(constraint.referencedColumns),
         constraint.checkClause,
     };
+}
+
+repo::TableData migrateConstraintTableIfNeeded(const repo::TableData &table)
+{
+    const QStringList expectedColumns =
+        tabledef::schemaColumnNames(tabledef::buildTableConstraintSchema());
+    if (table.columns == expectedColumns) {
+        return table;
+    }
+
+    repo::TableData migrated;
+    migrated.columns = expectedColumns;
+    migrated.rows.reserve(table.rows.size());
+    for (const repo::TableRow &row : table.rows) {
+        repo::TableRow migratedRow;
+        migratedRow.reserve(expectedColumns.size());
+        migratedRow.append(row.value(0));
+        migratedRow.append(row.value(1));
+        migratedRow.append(row.value(2));
+
+        const bool looksLegacyRow = row.size() <= 4;
+        migratedRow.append(looksLegacyRow ? QString() : row.value(3));
+        migratedRow.append(looksLegacyRow ? QString() : row.value(4));
+        migratedRow.append(looksLegacyRow ? row.value(3) : row.value(5));
+
+        migrated.rows.append(migratedRow);
+    }
+    return migrated;
 }
 
 bool constraintFromRow(const repo::TableRow &row,
@@ -90,7 +120,29 @@ bool constraintFromRow(const repo::TableRow &row,
         return false;
     }
 
-    *constraint = tabledef::Constraint{row.at(0), type, columns, row.at(3)};
+    const bool looksLegacyRow = row.size() <= 4;
+    const QString referencedTable = looksLegacyRow ? QString() : row.value(3);
+    const QString referencedColumnsText = looksLegacyRow ? QString() : row.value(4);
+    const QString checkClause = looksLegacyRow ? row.value(3) : row.value(5);
+
+    QString referencedColumnsError;
+    const QStringList referencedColumns =
+        deserializeColumns(referencedColumnsText, &referencedColumnsError);
+    if (!referencedColumnsError.isEmpty()) {
+        if (error != nullptr) {
+            *error = referencedColumnsError;
+        }
+        return false;
+    }
+
+    *constraint = tabledef::Constraint{
+        row.at(0),
+        type,
+        columns,
+        referencedTable,
+        referencedColumns,
+        checkClause,
+    };
     return true;
 }
 
@@ -121,13 +173,23 @@ RepositoryResult ConstraintRepo::initialize() const
         return rootReady;
     }
 
-    const RepositoryResult databaseDirReady =
-        m_store.ensureDirectory(m_store.getDatabaseDirectory(m_databaseName));
-    if (!databaseDirReady.ok) {
-        return databaseDirReady;
+    const RepositoryResult tableDirReady =
+        m_store.ensureDirectory(m_store.getTableDirectory(m_databaseName, m_tableName));
+    if (!tableDirReady.ok) {
+        return tableDirReady;
     }
 
     if (m_store.exists(getConstraintFilePath())) {
+        QString error;
+        const TableData table = m_store.readTable(getConstraintFilePath(), &error);
+        if (!error.isEmpty()) {
+            return RepositoryResult::failure(error);
+        }
+
+        const TableData migratedTable = migrateConstraintTableIfNeeded(table);
+        if (migratedTable.columns != table.columns || migratedTable.rows != table.rows) {
+            return m_store.writeTable(getConstraintFilePath(), migratedTable);
+        }
         return RepositoryResult::success();
     }
 

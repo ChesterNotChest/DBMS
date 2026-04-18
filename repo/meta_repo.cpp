@@ -1,16 +1,74 @@
 #include "repo.h"
 
-#include <QDir>
-#include <QFileInfo>
-
 namespace {
+
+repo::TableRow toColumnRow(const tabledef::Column &column, int ordinalPosition)
+{
+    return {
+        column.name,
+        tabledef::columnTypeToString(column.type),
+        QString::number(column.length),
+        tabledef::boolToString(column.notNull),
+        column.defaultValue,
+        tabledef::boolToString(column.autoIncrement),
+        QString::number(ordinalPosition),
+    };
+}
+
+bool columnFromRow(const repo::TableRow &row, tabledef::Column *column, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (column == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("column output pointer cannot be null");
+        }
+        return false;
+    }
+    if (row.size() < 7) {
+        if (error != nullptr) {
+            *error = QStringLiteral("column row is incomplete");
+        }
+        return false;
+    }
+
+    tabledef::ColumnType type = tabledef::ColumnType::Varchar;
+    if (!tabledef::tryParseColumnType(row.at(1), &type)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("unknown column type '%1'").arg(row.at(1));
+        }
+        return false;
+    }
+
+    bool lengthOk = false;
+    const int length = row.at(2).toInt(&lengthOk);
+    if (!lengthOk) {
+        if (error != nullptr) {
+            *error = QStringLiteral("invalid column length '%1'").arg(row.at(2));
+        }
+        return false;
+    }
+
+    *column = tabledef::Column{
+        row.at(0),
+        type,
+        length,
+        tabledef::stringToBool(row.at(3)),
+        row.at(4),
+        tabledef::stringToBool(row.at(5)),
+        QString(),
+    };
+    return true;
+}
 
 } // namespace
 
 namespace repo {
 
-MetaRepo::MetaRepo(QString databaseName, QString dataRoot)
+MetaRepo::MetaRepo(QString databaseName, QString tableName, QString dataRoot)
     : m_databaseName(std::move(databaseName))
+    , m_tableName(std::move(tableName))
     , m_store(std::move(dataRoot))
 {
 }
@@ -20,28 +78,29 @@ RepositoryResult MetaRepo::initialize() const
     if (m_databaseName.trimmed().isEmpty()) {
         return RepositoryResult::failure(QStringLiteral("database name cannot be empty"));
     }
+    if (m_tableName.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("table name cannot be empty"));
+    }
 
     const RepositoryResult rootReady = m_store.ensureDataRoot();
     if (!rootReady.ok) {
         return rootReady;
     }
 
-    const RepositoryResult databaseDirReady =
-        m_store.ensureDirectory(m_store.getDatabaseDirectory(m_databaseName));
-    if (!databaseDirReady.ok) {
-        return databaseDirReady;
+    const RepositoryResult tableDirReady =
+        m_store.ensureDirectory(m_store.getTableDirectory(m_databaseName, m_tableName));
+    if (!tableDirReady.ok) {
+        return tableDirReady;
     }
 
-    if (m_store.exists(m_store.getMetaFilePath(m_databaseName))) {
+    if (m_store.exists(getMetaFilePath())) {
         return RepositoryResult::success();
     }
 
-    return m_store.createEmptyTable(
-        m_store.getMetaFilePath(m_databaseName),
-        tabledef::schemaColumnNames(getSchema()));
+    return m_store.createEmptyTable(getMetaFilePath(), tabledef::schemaColumnNames(getSchema()));
 }
 
-QList<TableEntry> MetaRepo::listTables(QString *error) const
+QList<tabledef::Column> MetaRepo::listColumns(QString *error) const
 {
     const RepositoryResult initResult = initialize();
     if (!initResult.ok) {
@@ -51,32 +110,37 @@ QList<TableEntry> MetaRepo::listTables(QString *error) const
         return {};
     }
 
-    const TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), error);
-    QList<TableEntry> tables;
+    const TableData table = m_store.readTable(getMetaFilePath(), error);
+    QList<tabledef::Column> columns;
     for (const TableRow &row : table.rows) {
-        if (row.size() < 2) {
-            continue;
+        tabledef::Column column;
+        QString parseError;
+        if (!columnFromRow(row, &column, &parseError)) {
+            if (error != nullptr) {
+                *error = parseError;
+            }
+            return {};
         }
-        tables.append(TableEntry{row.at(0), row.at(1)});
+        columns.append(column);
     }
-    return tables;
+    return columns;
 }
 
-bool MetaRepo::hasTable(const QString &tableName, QString *error) const
+bool MetaRepo::hasColumn(const QString &columnName, QString *error) const
 {
-    const QList<TableEntry> tables = listTables(error);
-    for (const TableEntry &table : tables) {
-        if (table.name == tableName) {
+    const QList<tabledef::Column> columns = listColumns(error);
+    for (const tabledef::Column &column : columns) {
+        if (column.name == columnName) {
             return true;
         }
     }
     return false;
 }
 
-RepositoryResult MetaRepo::createTableEntry(const QString &tableName) const
+RepositoryResult MetaRepo::createColumn(const tabledef::Column &column) const
 {
-    if (tableName.trimmed().isEmpty()) {
-        return RepositoryResult::failure(QStringLiteral("table name cannot be empty"));
+    if (column.name.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("column name cannot be empty"));
     }
 
     const RepositoryResult initResult = initialize();
@@ -85,89 +149,86 @@ RepositoryResult MetaRepo::createTableEntry(const QString &tableName) const
     }
 
     QString lookupError;
-    if (hasTable(tableName, &lookupError)) {
+    if (hasColumn(column.name, &lookupError)) {
         return RepositoryResult::failure(
-            QStringLiteral("table '%1' already exists").arg(tableName));
+            QStringLiteral("column '%1' already exists").arg(column.name));
     }
     if (!lookupError.isEmpty()) {
         return RepositoryResult::failure(lookupError);
     }
 
-    const QString tablePath = m_store.getTableFilePath(m_databaseName, tableName);
-    return m_store.appendRow(
-        m_store.getMetaFilePath(m_databaseName),
-        TableRow{tableName, m_store.toStorageRelativePath(tablePath)});
-}
-
-RepositoryResult MetaRepo::renameTableEntry(const QString &tableName,
-                                            const QString &newTableName) const
-{
-    if (tableName.trimmed().isEmpty() || newTableName.trimmed().isEmpty()) {
-        return RepositoryResult::failure(QStringLiteral("table name cannot be empty"));
-    }
-    if (tableName == newTableName) {
-        return RepositoryResult::success();
-    }
-
-    const RepositoryResult initResult = initialize();
-    if (!initResult.ok) {
-        return initResult;
-    }
-
     QString error;
-    TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), &error);
+    const TableData table = m_store.readTable(getMetaFilePath(), &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
 
-    int currentIndex = -1;
-    for (int index = 0; index < table.rows.size(); ++index) {
-        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == tableName) {
-            currentIndex = index;
-        }
-        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == newTableName) {
-            return RepositoryResult::failure(
-                QStringLiteral("table '%1' already exists").arg(newTableName));
-        }
-    }
-
-    if (currentIndex < 0) {
-        return RepositoryResult::failure(
-            QStringLiteral("table '%1' does not exist").arg(tableName));
-    }
-
-    QDir databaseDirectory(m_store.getDatabaseDirectory(m_databaseName));
-    const QString oldFileName = m_store.getTableFileName(tableName);
-    const QString newFileName = m_store.getTableFileName(newTableName);
-    if (QFileInfo::exists(m_store.getTableFilePath(m_databaseName, tableName))
-        && !databaseDirectory.rename(oldFileName, newFileName)) {
-        return RepositoryResult::failure(
-            QStringLiteral("failed to rename table file '%1' to '%2'")
-                .arg(oldFileName, newFileName));
-    }
-
-    table.rows[currentIndex] = TableRow{
-        newTableName,
-        m_store.toStorageRelativePath(m_store.getTableFilePath(m_databaseName, newTableName))};
-    return m_store.writeTable(m_store.getMetaFilePath(m_databaseName), table);
+    return m_store.appendRow(getMetaFilePath(), toColumnRow(column, table.rows.size() + 1));
 }
 
-RepositoryResult MetaRepo::deleteTableEntry(const QString &tableName) const
+RepositoryResult MetaRepo::updateColumn(const QString &columnName,
+                                        const tabledef::Column &column) const
 {
+    if (columnName.trimmed().isEmpty() || column.name.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("column name cannot be empty"));
+    }
+
     const RepositoryResult initResult = initialize();
     if (!initResult.ok) {
         return initResult;
     }
 
     QString error;
-    TableData table = m_store.readTable(m_store.getMetaFilePath(m_databaseName), &error);
+    TableData table = m_store.readTable(getMetaFilePath(), &error);
+    if (!error.isEmpty()) {
+        return RepositoryResult::failure(error);
+    }
+
+    int targetIndex = -1;
+    int ordinalPosition = -1;
+    for (int index = 0; index < table.rows.size(); ++index) {
+        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == columnName) {
+            targetIndex = index;
+            ordinalPosition = table.rows.at(index).size() >= 7
+                                  ? table.rows.at(index).at(6).toInt()
+                                  : index + 1;
+            continue;
+        }
+        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == column.name) {
+            return RepositoryResult::failure(
+                QStringLiteral("column '%1' already exists").arg(column.name));
+        }
+    }
+
+    if (targetIndex < 0) {
+        return RepositoryResult::failure(
+            QStringLiteral("column '%1' does not exist").arg(columnName));
+    }
+
+    table.rows[targetIndex] = toColumnRow(column, ordinalPosition);
+    return m_store.writeTable(getMetaFilePath(), table);
+}
+
+RepositoryResult MetaRepo::deleteColumn(const QString &columnName) const
+{
+    if (columnName.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("column name cannot be empty"));
+    }
+
+    const RepositoryResult initResult = initialize();
+    if (!initResult.ok) {
+        return initResult;
+    }
+
+    QString error;
+    TableData table = m_store.readTable(getMetaFilePath(), &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
 
     int targetIndex = -1;
     for (int index = 0; index < table.rows.size(); ++index) {
-        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == tableName) {
+        if (!table.rows.at(index).isEmpty() && table.rows.at(index).at(0) == columnName) {
             targetIndex = index;
             break;
         }
@@ -175,11 +236,16 @@ RepositoryResult MetaRepo::deleteTableEntry(const QString &tableName) const
 
     if (targetIndex < 0) {
         return RepositoryResult::failure(
-            QStringLiteral("table '%1' does not exist").arg(tableName));
+            QStringLiteral("column '%1' does not exist").arg(columnName));
     }
 
     table.rows.removeAt(targetIndex);
-    return m_store.writeTable(m_store.getMetaFilePath(m_databaseName), table);
+    for (int index = 0; index < table.rows.size(); ++index) {
+        if (table.rows[index].size() >= 7) {
+            table.rows[index][6] = QString::number(index + 1);
+        }
+    }
+    return m_store.writeTable(getMetaFilePath(), table);
 }
 
 TableData MetaRepo::metaTable(QString *error) const
@@ -192,17 +258,17 @@ TableData MetaRepo::metaTable(QString *error) const
         return {};
     }
 
-    return m_store.readTable(m_store.getMetaFilePath(m_databaseName), error);
+    return m_store.readTable(getMetaFilePath(), error);
 }
 
 QString MetaRepo::getMetaFilePath() const
 {
-    return m_store.getMetaFilePath(m_databaseName);
+    return m_store.getMetaFilePath(m_databaseName, m_tableName);
 }
 
 tabledef::TableSchema MetaRepo::getSchema() const
 {
-    return tabledef::buildDatabaseMetaSchema(m_databaseName);
+    return tabledef::buildTableMetaSchema(m_tableName);
 }
 
 } // namespace repo

@@ -21,9 +21,12 @@ RepositoryResult SortIndexRepo::createIndex(const QStringList &columns) const
     if (m_indexName.trimmed().isEmpty()) {
         return RepositoryResult::failure(QStringLiteral("index name cannot be empty"));
     }
+    if (m_sourceTable.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("source table cannot be empty"));
+    }
 
     const RepositoryResult directoryReady =
-        m_store.ensureDirectory(m_store.getSortIndexDirectory(m_databaseName));
+        m_store.ensureDirectory(m_store.getSortIndexDirectory(m_databaseName, m_sourceTable));
     if (!directoryReady.ok) {
         return directoryReady;
     }
@@ -68,7 +71,7 @@ RepositoryResult SortIndexRepo::deleteRow(int rowIndex) const
 
 QString SortIndexRepo::getIndexFilePath() const
 {
-    return m_store.getSortIndexFilePath(m_databaseName, m_indexName, m_sourceTable);
+    return m_store.getSortIndexFilePath(m_databaseName, m_sourceTable, m_indexName);
 }
 
 } // namespace repo

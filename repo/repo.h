@@ -2,17 +2,18 @@
 #define REPO_REPO_H
 
 #include "../constants/table_def.h"
+#include "../utils/table_manu/table_manu.h"
 
 #include <QFile>
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <utility>
 
 namespace repo {
 
 using TableRow = QStringList;
 
-// 仓储层路径配置。只开放目录级调整，文件后缀保持固定。
 class RepoPathConfig
 {
 public:
@@ -52,7 +53,6 @@ private:
     inline static QString s_sortIndexNameSeparator = QStringLiteral("__");
 };
 
-// 统一的二维表数据结构。
 struct TableData
 {
     QStringList columns;
@@ -61,7 +61,6 @@ struct TableData
     bool isRectangular() const;
 };
 
-// 仓储层返回值。
 struct RepositoryResult
 {
     bool ok = false;
@@ -71,21 +70,18 @@ struct RepositoryResult
     static RepositoryResult failure(const QString &errorMessage);
 };
 
-// root.dbf 中的数据库记录。
+// root.dbf 中的一条数据库记录。
 struct DatabaseEntry
 {
     QString name;
-    QString metaFile;
 };
 
-// [database].meta 中的表记录。
+// [database].tab 中的一条表清单记录。
 struct TableEntry
 {
     QString name;
-    QString tableFile;
 };
 
-// 排序索引记录。
 struct SortIndexEntry
 {
     QString name;
@@ -93,7 +89,6 @@ struct SortIndexEntry
     QString indexFile;
 };
 
-// 统一的表文件读写器。
 class FlatFileTableStore
 {
 public:
@@ -104,23 +99,26 @@ public:
     QString getDataRoot() const;
     QString getRootFilePath() const;
 
-    QString getMetaFileName(const QString &databaseName) const;
-    QString getMetaFilePath(const QString &databaseName) const;
+    QString getTabFileName(const QString &databaseName) const;
+    QString getTabFilePath(const QString &databaseName) const;
 
     QString getDatabaseDirectory(const QString &databaseName) const;
+    QString getTableDirectory(const QString &databaseName, const QString &tableName) const;
 
-    QString getTableFileName(const QString &tableName) const;
+    QString getMetaFileName() const;
+    QString getMetaFilePath(const QString &databaseName, const QString &tableName) const;
+
+    QString getTableFileName() const;
     QString getTableFilePath(const QString &databaseName, const QString &tableName) const;
 
-    QString getConstraintFileName(const QString &tableName) const;
+    QString getConstraintFileName() const;
     QString getConstraintFilePath(const QString &databaseName, const QString &tableName) const;
 
-    QString getSortIndexDirectory(const QString &databaseName) const;
-    QString getSortIndexFileName(const QString &indexName,
-                                 const QString &sourceTable = QString()) const;
+    QString getSortIndexDirectory(const QString &databaseName, const QString &tableName) const;
+    QString getSortIndexFileName(const QString &indexName) const;
     QString getSortIndexFilePath(const QString &databaseName,
-                                 const QString &indexName,
-                                 const QString &sourceTable = QString()) const;
+                                 const QString &tableName,
+                                 const QString &indexName) const;
 
     QString toStorageRelativePath(const QString &absolutePath) const;
 
@@ -128,6 +126,7 @@ public:
     RepositoryResult ensureDataRoot() const;
     RepositoryResult ensureDirectory(const QString &path) const;
     RepositoryResult removeFile(const QString &path) const;
+    RepositoryResult removeDirectoryRecursively(const QString &path) const;
 
     TableData readTable(const QString &path, QString *error = nullptr) const;
     RepositoryResult writeTable(const QString &path, const TableData &table) const;
@@ -140,7 +139,6 @@ private:
     QString m_dataRoot;
 };
 
-// root.dbf 仓储。
 class DatabaseRepo
 {
 public:
@@ -161,12 +159,12 @@ private:
     FlatFileTableStore m_store;
 };
 
-// [database].meta 仓储。
-class MetaRepo
+// [database].tab 仓储，用于维护数据库中的表清单。
+class TabRepo
 {
 public:
-    MetaRepo(QString databaseName,
-             QString dataRoot = FlatFileTableStore::defaultDataRoot());
+    TabRepo(QString databaseName,
+            QString dataRoot = FlatFileTableStore::defaultDataRoot());
 
     RepositoryResult initialize() const;
     QList<TableEntry> listTables(QString *error = nullptr) const;
@@ -175,8 +173,8 @@ public:
     RepositoryResult renameTableEntry(const QString &tableName,
                                       const QString &newTableName) const;
     RepositoryResult deleteTableEntry(const QString &tableName) const;
-    TableData metaTable(QString *error = nullptr) const;
-    QString getMetaFilePath() const;
+    TableData tabTable(QString *error = nullptr) const;
+    QString getTabFilePath() const;
     tabledef::TableSchema getSchema() const;
 
 private:
@@ -184,7 +182,31 @@ private:
     FlatFileTableStore m_store;
 };
 
-// [table].con 仓储，用于存储约束定义。
+// [table].meta 仓储，用于维护单张表的列定义。
+class MetaRepo
+{
+public:
+    MetaRepo(QString databaseName,
+             QString tableName,
+             QString dataRoot = FlatFileTableStore::defaultDataRoot());
+
+    RepositoryResult initialize() const;
+    QList<tabledef::Column> listColumns(QString *error = nullptr) const;
+    bool hasColumn(const QString &columnName, QString *error = nullptr) const;
+    RepositoryResult createColumn(const tabledef::Column &column) const;
+    RepositoryResult updateColumn(const QString &columnName,
+                                  const tabledef::Column &column) const;
+    RepositoryResult deleteColumn(const QString &columnName) const;
+    TableData metaTable(QString *error = nullptr) const;
+    QString getMetaFilePath() const;
+    tabledef::TableSchema getSchema() const;
+
+private:
+    QString m_databaseName;
+    QString m_tableName;
+    FlatFileTableStore m_store;
+};
+
 class ConstraintRepo
 {
 public:
@@ -209,7 +231,6 @@ private:
     FlatFileTableStore m_store;
 };
 
-// [table].dat 仓储。
 class TableRepo
 {
 public:
@@ -232,7 +253,6 @@ private:
     FlatFileTableStore m_store;
 };
 
-// 排序索引文件仓储。
 class SortIndexRepo
 {
 public:

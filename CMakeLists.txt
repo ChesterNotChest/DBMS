@@ -18,10 +18,15 @@ set(PROJECT_SOURCES
         mainwindow.h
         mainwindow.ui
         constants/table_def.h
+        utils/table_manu/table_manu.h
+        utils/table_manu/type_utils.cpp
+        utils/table_manu/schema_maint.cpp
+        utils/table_manu/schema_builder.cpp
         repo/repo.h
         repo/database_repo.cpp
         repo/constraint_repo.cpp
         repo/meta_repo.cpp
+        repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
 )
