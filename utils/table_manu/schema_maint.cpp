@@ -1,5 +1,58 @@
 #include "table_manu.h"
 
+#include "../../repo/repo.h"
+
+#include <QSet>
+
+namespace {
+
+QString compositeKey(const QStringList &values)
+{
+    return values.join(QStringLiteral("\x1f"));
+}
+
+bool rowExistsInTable(const repo::TableData &table,
+                      const QStringList &columnNames,
+                      const QStringList &values,
+                      QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    if (columnNames.size() != values.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("foreign key column count does not match referenced column count");
+        }
+        return false;
+    }
+
+    for (const repo::TableRow &row : table.rows) {
+        bool matches = true;
+        for (int index = 0; index < columnNames.size(); ++index) {
+            const int columnIndex = table.columns.indexOf(columnNames.at(index));
+            if (columnIndex < 0) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("column '%1' does not exist").arg(columnNames.at(index));
+                }
+                return false;
+            }
+
+            if (row.value(columnIndex) != values.at(index)) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 namespace tabledef {
 
 QStringList schemaColumnNames(const TableSchema &schema)
@@ -110,6 +163,309 @@ bool hasPrimaryKeyConstraint(const TableSchema &schema)
         }
     }
     return false;
+}
+
+bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs)
+{
+    if (lhs.type != rhs.type || lhs.columns != rhs.columns) {
+        return false;
+    }
+
+    switch (lhs.type) {
+    case ConstraintType::PrimaryKey:
+    case ConstraintType::Unique:
+        return true;
+    case ConstraintType::Check:
+        return lhs.checkClause == rhs.checkClause;
+    case ConstraintType::ForeignKey:
+        return lhs.referencedTable == rhs.referencedTable
+               && lhs.referencedColumns == rhs.referencedColumns;
+    }
+
+    return false;
+}
+
+bool validateConstraintDefinitions(const TableSchema &schema,
+                                   const QString &skipConstraintName,
+                                   QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    for (int index = 0; index < schema.constraints.size(); ++index) {
+        const Constraint &candidate = schema.constraints.at(index);
+        if (!isConstraintDefinitionComplete(candidate)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("constraint '%1' is incomplete").arg(candidate.name);
+            }
+            return false;
+        }
+
+        for (int otherIndex = 0; otherIndex < schema.constraints.size(); ++otherIndex) {
+            if (index == otherIndex) {
+                continue;
+            }
+
+            const Constraint &existing = schema.constraints.at(otherIndex);
+            if (!skipConstraintName.trimmed().isEmpty() && existing.name == skipConstraintName) {
+                continue;
+            }
+
+            if (isPrimaryKeyConstraint(candidate) && isPrimaryKeyConstraint(existing)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("primary key already exists");
+                }
+                return false;
+            }
+
+            if (sameConstraintSemantics(candidate, existing)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("constraint '%1' duplicates existing constraint '%2'")
+                                 .arg(candidate.name, existing.name);
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool validateConstraintAgainstSchema(const TableSchema &schema,
+                                     const Constraint &candidate,
+                                     const QString &skipConstraintName,
+                                     QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    if (!isConstraintDefinitionComplete(candidate)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("constraint '%1' is incomplete").arg(candidate.name);
+        }
+        return false;
+    }
+
+    for (const Constraint &existing : schema.constraints) {
+        if (!skipConstraintName.trimmed().isEmpty() && existing.name == skipConstraintName) {
+            continue;
+        }
+
+        if (isPrimaryKeyConstraint(candidate) && isPrimaryKeyConstraint(existing)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("primary key already exists");
+            }
+            return false;
+        }
+
+        if (sameConstraintSemantics(candidate, existing)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("constraint '%1' duplicates existing constraint '%2'")
+                             .arg(candidate.name, existing.name);
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool validateConstraintRows(const QString &databaseName,
+                            const QString &dataRoot,
+                            const TableSchema &schema,
+                            const QStringList &tableColumns,
+                            const QList<QStringList> &tableRows,
+                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    for (const Constraint &constraint : schema.constraints) {
+        if (isPrimaryKeyConstraint(constraint) || isUniqueConstraint(constraint)) {
+            QSet<QString> seenKeys;
+            for (const QStringList &row : tableRows) {
+                QStringList values;
+                values.reserve(constraint.columns.size());
+                bool hasEmptyValue = false;
+
+                for (const QString &columnName : constraint.columns) {
+                    const int columnIndex = tableColumns.indexOf(columnName);
+                    if (columnIndex < 0) {
+                        if (error != nullptr) {
+                            *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+                        }
+                        return false;
+                    }
+
+                    const QString value = row.value(columnIndex);
+                    if (value.isEmpty()) {
+                        hasEmptyValue = true;
+                    }
+                    values.append(value);
+                }
+
+                if (isPrimaryKeyConstraint(constraint) && hasEmptyValue) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("primary key '%1' cannot contain empty values")
+                                     .arg(constraint.name);
+                    }
+                    return false;
+                }
+
+                if (isUniqueConstraint(constraint) && hasEmptyValue) {
+                    continue;
+                }
+
+                const QString key = compositeKey(values);
+                if (seenKeys.contains(key)) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("constraint '%1' is violated by duplicate values")
+                                     .arg(constraint.name);
+                    }
+                    return false;
+                }
+                seenKeys.insert(key);
+            }
+            continue;
+        }
+
+        if (!isForeignKeyConstraint(constraint)) {
+            continue;
+        }
+        if (!isForeignKeyReferenceComplete(constraint)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("foreign key '%1' is incomplete").arg(constraint.name);
+            }
+            return false;
+        }
+
+        repo::TabRepo tabRepo(databaseName, dataRoot);
+        QString tabError;
+        if (!tabRepo.hasTable(constraint.referencedTable, &tabError)) {
+            if (error != nullptr) {
+                *error = tabError.isEmpty()
+                             ? QStringLiteral("referenced table '%1' does not exist").arg(constraint.referencedTable)
+                             : tabError;
+            }
+            return false;
+        }
+
+        repo::MetaRepo parentMeta(databaseName, constraint.referencedTable, dataRoot);
+        const QList<Column> parentColumns = parentMeta.listColumns(&tabError);
+        if (!tabError.isEmpty()) {
+            if (error != nullptr) {
+                *error = tabError;
+            }
+            return false;
+        }
+
+        for (const QString &referencedColumn : constraint.referencedColumns) {
+            if (!hasColumn(TableSchema{constraint.referencedTable, parentColumns, {}}, referencedColumn)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("referenced column '%1' does not exist").arg(referencedColumn);
+                }
+                return false;
+            }
+        }
+
+        repo::TableData parentTable = repo::TableRepo(databaseName, constraint.referencedTable, dataRoot)
+                                          .readTable(&tabError);
+        if (!tabError.isEmpty()) {
+            if (error != nullptr) {
+                *error = tabError;
+            }
+            return false;
+        }
+
+        for (const QStringList &row : tableRows) {
+            QStringList values;
+            values.reserve(constraint.columns.size());
+            bool hasEmptyValue = false;
+
+            for (const QString &columnName : constraint.columns) {
+                const int columnIndex = tableColumns.indexOf(columnName);
+                if (columnIndex < 0) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+                    }
+                    return false;
+                }
+
+                const QString value = row.value(columnIndex);
+                if (value.isEmpty()) {
+                    hasEmptyValue = true;
+                }
+                values.append(value);
+            }
+
+            if (hasEmptyValue) {
+                continue;
+            }
+
+            QString rowError;
+            if (!rowExistsInTable(parentTable, constraint.referencedColumns, values, &rowError)) {
+                if (error != nullptr) {
+                    *error = rowError.isEmpty()
+                                 ? QStringLiteral("foreign key '%1' references missing parent row")
+                                       .arg(constraint.name)
+                                 : rowError;
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
+                                           const QString &dataRoot,
+                                           const QString &targetTableName,
+                                           QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    repo::TabRepo tabRepo(databaseName, dataRoot);
+    QString tabError;
+    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
+    if (!tabError.isEmpty()) {
+        if (error != nullptr) {
+            *error = tabError;
+        }
+        return false;
+    }
+
+    for (const repo::TableEntry &tableEntry : tableEntries) {
+        if (tableEntry.name == targetTableName) {
+            continue;
+        }
+
+        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, dataRoot);
+        const QList<Constraint> constraints = constraintRepo.listConstraints(&tabError);
+        if (!tabError.isEmpty()) {
+            if (error != nullptr) {
+                *error = tabError;
+            }
+            return false;
+        }
+
+        for (const Constraint &constraint : constraints) {
+            if (isForeignKeyConstraint(constraint) && constraint.referencedTable == targetTableName) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("table '%1' is referenced by foreign key '%2' from table '%3'")
+                                 .arg(targetTableName, constraint.name, tableEntry.name);
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 } // namespace tabledef

@@ -42,6 +42,19 @@ tabledef::Constraint makeUnique(const QString &name, const QStringList &columns)
     return tabledef::Constraint{name, tabledef::ConstraintType::Unique, columns, QString(), {}, QString()};
 }
 
+tabledef::Constraint makeForeignKey(const QString &name,
+                                    const QStringList &columns,
+                                    const QString &referencedTable,
+                                    const QStringList &referencedColumns)
+{
+    return tabledef::Constraint{name,
+                                tabledef::ConstraintType::ForeignKey,
+                                columns,
+                                referencedTable,
+                                referencedColumns,
+                                QString()};
+}
+
 tabledef::TableSchema baseSchema(const QString &tableName)
 {
     tabledef::TableSchema schema;
@@ -52,7 +65,15 @@ tabledef::TableSchema baseSchema(const QString &tableName)
     };
     schema.constraints = {
         makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+
     };
+    return schema;
+}
+
+tabledef::TableSchema tableWithForeignKeyColumn(const QString &tableName)
+{
+    tabledef::TableSchema schema = baseSchema(tableName);
+    schema.columns.append(makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int, 0, true));
     return schema;
 }
 
@@ -164,6 +185,16 @@ private slots:
         const QStringList expectedColumns{QStringLiteral("id"), QStringLiteral("name")};
         QCOMPARE(table.columns, expectedColumns);
         QCOMPARE(table.rows.size(), 0);
+
+        tabledef::TableSchema brokenFkSchema = baseSchema(QStringLiteral("test_table_service_create_fk_table"));
+        brokenFkSchema.constraints.append(makeForeignKey(QStringLiteral("fk_test_table_service_create_fk"),
+                                                        {QStringLiteral("id")},
+                                                        QStringLiteral("missing_parent_table"),
+                                                        {QStringLiteral("id")}));
+        TaskResult brokenFkResult = table_service::createTable(QStringLiteral("test_table_service_create_fk_table"),
+                                                               brokenFkSchema);
+        QVERIFY(!brokenFkResult.success);
+        QVERIFY(brokenFkResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
     void test_dropTable()
@@ -192,6 +223,32 @@ private slots:
         QString error;
         QVERIFY(!tabRepo.hasTable(tableName, &error));
         QVERIFY(error.isEmpty());
+
+        const QString parentTableName = QStringLiteral("test_table_service_drop_parent_table");
+        const QString childTableName = QStringLiteral("test_table_service_drop_child_table");
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    [&]() {
+                        tabledef::TableSchema schema = baseSchema(childTableName);
+                        schema.columns.append(makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int, 0, true));
+                        schema.constraints.append(makeForeignKey(QStringLiteral("fk_%1_parent").arg(childTableName),
+                                                                 {QStringLiteral("parent_id")},
+                                                                 parentTableName,
+                                                                 {QStringLiteral("id")}));
+                        return schema;
+                    }(),
+                    m_dataRoot);
+
+        TaskResult restrictedDrop = table_service::dropTable(parentTableName);
+        QVERIFY(!restrictedDrop.success);
+        QVERIFY(restrictedDrop.errorMessage.contains(QStringLiteral("referenced by foreign key")));
+
+        TaskResult childDrop = table_service::dropTable(childTableName);
+        QVERIFY2(childDrop.success, qPrintable(childDrop.errorMessage));
+
+        TaskResult parentDrop = table_service::dropTable(parentTableName);
+        QVERIFY2(parentDrop.success, qPrintable(parentDrop.errorMessage));
     }
 
     void test_addColumn()
@@ -226,6 +283,24 @@ private slots:
         TaskResult duplicateResult = table_service::addColumn(tableName, addDefinition);
         QVERIFY(!duplicateResult.success);
         QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("already exists")));
+    }
+
+    void test_addColumnRejectsGeneratedConstraintViolation()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_column_violation_db");
+        const QString tableName = QStringLiteral("test_table_service_add_column_violation_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        ColumnDefinition addDefinition;
+        addDefinition.column = makeColumn(QStringLiteral("code"), tabledef::ColumnType::Varchar, 16, false, QStringLiteral("dup"));
+        addDefinition.unique = true;
+
+        TaskResult addResult = table_service::addColumn(tableName, addDefinition);
+        QVERIFY(!addResult.success);
+        QVERIFY(addResult.errorMessage.contains(QStringLiteral("duplicate")));
     }
 
     void test_deleteColumn()
@@ -293,6 +368,24 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_modifyColumnRejectsTypeConversionFailure()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_column_convert_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_column_convert_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+
+        ColumnDefinition modifyDefinition;
+        modifyDefinition.column = makeColumn(QStringLiteral("name"), tabledef::ColumnType::Int, 0, true);
+
+        TaskResult modifyResult = table_service::modifyColumn(tableName,
+                                      QStringLiteral("name"),
+                                      modifyDefinition);
+        QVERIFY(!modifyResult.success);
+        QVERIFY(modifyResult.errorMessage.contains(QStringLiteral("cannot be converted to INT")));
+    }
+
     void test_addConstraint()
     {
         const QString databaseName = QStringLiteral("test_table_service_add_constraint_db");
@@ -311,7 +404,49 @@ private slots:
 
         TaskResult duplicateResult = table_service::addConstraint(tableName, uniqueConstraint);
         QVERIFY(!duplicateResult.success);
-        QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("already exists")));
+        QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_addConstraintRejectsExistingDataViolations()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_constraint_data_db");
+        const QString tableName = QStringLiteral("test_table_service_add_constraint_data_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("alice")}, m_dataRoot);
+
+        const tabledef::Constraint uniqueConstraint = makeUnique(QStringLiteral("uq_test_table_service_name_data"),
+                                                                {QStringLiteral("name")});
+        TaskResult addResult = table_service::addConstraint(tableName, uniqueConstraint);
+        QVERIFY(!addResult.success);
+        QVERIFY(addResult.errorMessage.contains(QStringLiteral("duplicate values")));
+    }
+
+    void test_addConstraintRejectsBrokenForeignKey()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_constraint_fk_db");
+        const QString tableName = QStringLiteral("test_table_service_add_constraint_fk_table");
+        const QString parentTableName = QStringLiteral("test_table_service_add_constraint_fk_parent");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, tableWithForeignKeyColumn(tableName), m_dataRoot);
+
+        const tabledef::Constraint missingParentConstraint = makeForeignKey(QStringLiteral("fk_test_table_service_missing_parent"),
+                                                                            {QStringLiteral("parent_id")},
+                                                                            QStringLiteral("missing_parent_table"),
+                                                                            {QStringLiteral("id")});
+        TaskResult missingParentResult = table_service::addConstraint(tableName, missingParentConstraint);
+        QVERIFY(!missingParentResult.success);
+        QVERIFY(missingParentResult.errorMessage.contains(QStringLiteral("does not exist")));
+
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        const tabledef::Constraint missingColumnConstraint = makeForeignKey(QStringLiteral("fk_test_table_service_missing_column"),
+                                                                            {QStringLiteral("parent_id")},
+                                                                            parentTableName,
+                                                                            {QStringLiteral("missing_id")} );
+        TaskResult missingColumnResult = table_service::addConstraint(tableName, missingColumnConstraint);
+        QVERIFY(!missingColumnResult.success);
+        QVERIFY(missingColumnResult.errorMessage.contains(QStringLiteral("referenced column")));
     }
 
     void test_modifyConstraint()
@@ -341,6 +476,28 @@ private slots:
                                        missingConstraint);
         QVERIFY(!missingResult.success);
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
+    }
+
+    void test_modifyConstraintRejectsBrokenForeignKey()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_constraint_fk_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_constraint_fk_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, tableWithForeignKeyColumn(tableName), m_dataRoot);
+
+        const tabledef::Constraint uniqueConstraint = makeUnique(QStringLiteral("uq_test_table_service_modify_constraint_fk"),
+                                                                {QStringLiteral("parent_id")});
+        QVERIFY(table_service::addConstraint(tableName, uniqueConstraint).success);
+
+        const tabledef::Constraint foreignKeyConstraint = makeForeignKey(QStringLiteral("uq_test_table_service_modify_constraint_fk"),
+                                                                         {QStringLiteral("parent_id")},
+                                                                         QStringLiteral("missing_parent_table"),
+                                                                         {QStringLiteral("id")} );
+        TaskResult modifyResult = table_service::modifyConstraint(tableName,
+                                        QStringLiteral("uq_test_table_service_modify_constraint_fk"),
+                                        foreignKeyConstraint);
+        QVERIFY(!modifyResult.success);
+        QVERIFY(modifyResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
     void test_deleteConstraint()

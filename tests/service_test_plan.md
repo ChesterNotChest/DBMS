@@ -61,6 +61,8 @@
 
 用例 5：调用 `showTables()`，期望只返回这一张表。
 
+用例 6：创建一个引用不存在父表的 FOREIGN KEY 约束表结构，期望失败。
+
 ### `test_dropTable`
 用例 1：在 `test_table_service_drop_db` 中创建 `test_table_service_drop_table_main`。
 
@@ -69,6 +71,8 @@
 用例 3：删除已存在的 `test_table_service_drop_table_main`，期望成功。
 
 用例 4：再次调用 `showTables()`，期望结果为空。
+
+用例 5：创建父表和引用它的子表后，删除父表应失败；删除子表后再删父表应成功。
 
 ### `test_addColumn`
 用例 1：在 `test_table_service_add_column_db/test_table_service_add_column_table` 中先插入一行 `{1, alice}`。
@@ -80,6 +84,11 @@
 用例 4：再次查询表数据，期望原有行自动补入默认值 `18`。
 
 用例 5：重复添加 `age` 列，期望失败。
+
+### `test_addColumnRejectsGeneratedConstraintViolation`
+用例 1：在目标表中先放入两行不同主键但相同业务列数据。
+
+用例 2：新增一个带 `UNIQUE` 的列且默认值相同，期望失败，因为存量数据会违反新约束。
 
 ### `test_deleteColumn`
 用例 1：在 `test_table_service_delete_column_db/test_table_service_delete_column_table` 中先插入一行 `{1, alice, 22}`。
@@ -101,6 +110,11 @@
 
 用例 4：修改不存在的 `missing` 列，期望失败。
 
+### `test_modifyColumnRejectsTypeConversionFailure`
+用例 1：在目标表中先插入一条字符串类型数据。
+
+用例 2：把同名列改成 `INT`，期望失败，因为现有数据无法转换。
+
 ### `test_addConstraint`
 用例 1：在 `test_table_service_add_constraint_db/test_table_service_add_constraint_table` 中创建基础表。
 
@@ -110,6 +124,18 @@
 
 用例 4：再次添加同名约束，期望失败。
 
+### `test_addConstraintRejectsExistingDataViolations`
+用例 1：在目标表中先插入两行 `name` 相同的数据。
+
+用例 2：新增 `UNIQUE(name)`，期望失败，因为存量数据已违规。
+
+### `test_addConstraintRejectsBrokenForeignKey`
+用例 1：在目标表中准备一个外键列，但不创建父表。
+
+用例 2：添加引用不存在父表的 FOREIGN KEY，期望失败。
+
+用例 3：创建父表后，再添加引用不存在父列的 FOREIGN KEY，期望失败。
+
 ### `test_modifyConstraint`
 用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
 
@@ -118,6 +144,11 @@
 用例 3：再次查看 `showCreateTable()`，期望旧名字消失，新名字出现。
 
 用例 4：修改不存在的 `missing` 约束，期望失败。
+
+### `test_modifyConstraintRejectsBrokenForeignKey`
+用例 1：先准备一个可修改的约束。
+
+用例 2：把它改成引用不存在父表的 FOREIGN KEY，期望失败。
 
 ### `test_deleteConstraint`
 用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
