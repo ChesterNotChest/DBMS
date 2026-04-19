@@ -51,6 +51,47 @@ bool rowExistsInTable(const repo::TableData &table,
     return false;
 }
 
+const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &schema,
+                                               const tabledef::Constraint &constraint)
+{
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (!index.isUnique) {
+            continue;
+        }
+        if (index.columnNames == constraint.columns) {
+            return &index;
+        }
+    }
+    return nullptr;
+}
+
+bool validateUniqueConstraintByIndex(const QString &databaseName,
+                                     const QString &dataRoot,
+                                     const tabledef::TableSchema &schema,
+                                     const tabledef::Constraint &constraint,
+                                     QString *error)
+{
+    if (schema.tableName.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const tabledef::IndexMeta *index = matchingUniqueIndex(schema, constraint);
+    if (index == nullptr) {
+        return false;
+    }
+
+    repo::SortIndexRepo sortIndexRepo(databaseName, index->indexName, schema.tableName, dataRoot);
+    QString indexError;
+    if (!sortIndexRepo.validateUniqueKeys(&indexError)) {
+        if (error != nullptr) {
+            *error = indexError;
+        }
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace
 
 namespace tabledef {
@@ -93,6 +134,31 @@ int findConstraintIndex(const TableSchema &schema, const QString &constraintName
 bool hasConstraint(const TableSchema &schema, const QString &constraintName)
 {
     return findConstraintIndex(schema, constraintName) >= 0;
+}
+
+QStringList schemaIndexNames(const TableSchema &schema)
+{
+    QStringList names;
+    names.reserve(schema.indexes.size());
+    for (const IndexMeta &index : schema.indexes) {
+        names.append(index.indexName);
+    }
+    return names;
+}
+
+int findIndexIndex(const TableSchema &schema, const QString &indexName)
+{
+    for (int index = 0; index < schema.indexes.size(); ++index) {
+        if (schema.indexes.at(index).indexName == indexName) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+bool hasIndex(const TableSchema &schema, const QString &indexName)
+{
+    return findIndexIndex(schema, indexName) >= 0;
 }
 
 bool constraintTouchesColumn(const Constraint &constraint, const QString &columnName)
@@ -183,6 +249,72 @@ bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs)
     }
 
     return false;
+}
+
+bool sameIndexSemantics(const IndexMeta &lhs, const IndexMeta &rhs)
+{
+    return lhs.columnNames == rhs.columnNames && lhs.isUnique == rhs.isUnique;
+}
+
+bool validateIndexDefinition(const TableSchema &schema,
+                             const IndexMeta &candidate,
+                             const QString &skipIndexName,
+                             QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    if (candidate.indexName.trimmed().isEmpty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index name cannot be empty");
+        }
+        return false;
+    }
+    if (candidate.columnNames.isEmpty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' must reference at least one column").arg(candidate.indexName);
+        }
+        return false;
+    }
+
+    QSet<QString> uniqueColumns;
+    for (const QString &columnName : candidate.columnNames) {
+        if (!hasColumn(schema, columnName)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+            }
+            return false;
+        }
+        uniqueColumns.insert(columnName);
+    }
+    if (uniqueColumns.size() != candidate.columnNames.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' contains duplicate columns").arg(candidate.indexName);
+        }
+        return false;
+    }
+
+    for (const IndexMeta &existing : schema.indexes) {
+        if (!skipIndexName.trimmed().isEmpty() && existing.indexName == skipIndexName) {
+            continue;
+        }
+        if (existing.indexName == candidate.indexName) {
+            if (error != nullptr) {
+                *error = QStringLiteral("index '%1' already exists").arg(candidate.indexName);
+            }
+            return false;
+        }
+        if (sameIndexSemantics(existing, candidate)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("index '%1' duplicates existing index '%2'")
+                                 .arg(candidate.indexName, existing.indexName);
+            }
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool validateConstraintDefinitions(const TableSchema &schema,
@@ -285,6 +417,11 @@ bool validateConstraintRows(const QString &databaseName,
 
     for (const Constraint &constraint : schema.constraints) {
         if (isPrimaryKeyConstraint(constraint) || isUniqueConstraint(constraint)) {
+            QString indexError;
+            if (validateUniqueConstraintByIndex(databaseName, dataRoot, schema, constraint, &indexError)) {
+                continue;
+            }
+
             QSet<QString> seenKeys;
             for (const QStringList &row : tableRows) {
                 QStringList values;

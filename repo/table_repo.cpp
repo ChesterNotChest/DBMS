@@ -14,7 +14,9 @@ const QString kRootFileName = QStringLiteral("root.dbf");
 const QString kTabFileSuffix = QStringLiteral(".tab");
 const QString kMetaFileName = QStringLiteral("table.meta");
 const QString kConstraintFileName = QStringLiteral("table.con");
+const QString kIndexMetaFileName = QStringLiteral("table.idx");
 const QString kTableFileName = QStringLiteral("table.dat");
+const QString kRowIdFileName = QStringLiteral("table.rid");
 const QString kSortIndexFileSuffix = QStringLiteral(".idx");
 
 QJsonArray toJsonArray(const QStringList &values)
@@ -145,6 +147,17 @@ QString FlatFileTableStore::getTableFilePath(const QString &databaseName, const 
     return QDir(getTableDirectory(databaseName, tableName)).absoluteFilePath(getTableFileName());
 }
 
+QString FlatFileTableStore::getRowIdFileName() const
+{
+    return kRowIdFileName;
+}
+
+QString FlatFileTableStore::getRowIdFilePath(const QString &databaseName,
+                                            const QString &tableName) const
+{
+    return QDir(getTableDirectory(databaseName, tableName)).absoluteFilePath(getRowIdFileName());
+}
+
 QString FlatFileTableStore::getConstraintFileName() const
 {
     return kConstraintFileName;
@@ -155,6 +168,17 @@ QString FlatFileTableStore::getConstraintFilePath(const QString &databaseName,
 {
     return QDir(getTableDirectory(databaseName, tableName)).absoluteFilePath(
         getConstraintFileName());
+}
+
+QString FlatFileTableStore::getIndexMetaFileName() const
+{
+    return kIndexMetaFileName;
+}
+
+QString FlatFileTableStore::getIndexMetaFilePath(const QString &databaseName,
+                                                const QString &tableName) const
+{
+    return QDir(getTableDirectory(databaseName, tableName)).absoluteFilePath(getIndexMetaFileName());
 }
 
 QString FlatFileTableStore::getSortIndexDirectory(const QString &databaseName,

@@ -35,6 +35,17 @@ bool hasColumn(const TableSchema &schema, const QString &columnName);
 int findConstraintIndex(const TableSchema &schema, const QString &constraintName);
 bool hasConstraint(const TableSchema &schema, const QString &constraintName);
 
+// 面向索引定义的 schema 查询工具。
+// 适合在 CREATE INDEX / DROP INDEX / ALTER INDEX 前做快速检查。
+QStringList schemaIndexNames(const TableSchema &schema);
+int findIndexIndex(const TableSchema &schema, const QString &indexName);
+bool hasIndex(const TableSchema &schema, const QString &indexName);
+bool sameIndexSemantics(const IndexMeta &lhs, const IndexMeta &rhs);
+bool validateIndexDefinition(const TableSchema &schema,
+						 const IndexMeta &candidate,
+						 const QString &skipIndexName = QString(),
+						 QString *error = nullptr);
+
 // 判断某个约束是否关联到指定列。
 // 在删除列或修改列时，常用于查找需要联动处理的约束。
 bool constraintTouchesColumn(const Constraint &constraint, const QString &columnName);
@@ -77,6 +88,7 @@ TableSchema buildDatabaseRootSchema();
 TableSchema buildDatabaseTableCatalogSchema(const QString &databaseName = QString());
 TableSchema buildTableMetaSchema(const QString &tableName = QString());
 TableSchema buildTableConstraintSchema(const QString &tableName = QString());
+TableSchema buildTableIndexSchema(const QString &tableName = QString());
 
 } // namespace tabledef
 

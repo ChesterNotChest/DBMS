@@ -111,8 +111,14 @@ public:
     QString getTableFileName() const;
     QString getTableFilePath(const QString &databaseName, const QString &tableName) const;
 
+    QString getRowIdFileName() const;
+    QString getRowIdFilePath(const QString &databaseName, const QString &tableName) const;
+
     QString getConstraintFileName() const;
     QString getConstraintFilePath(const QString &databaseName, const QString &tableName) const;
+
+    QString getIndexMetaFileName() const;
+    QString getIndexMetaFilePath(const QString &databaseName, const QString &tableName) const;
 
     QString getSortIndexDirectory(const QString &databaseName, const QString &tableName) const;
     QString getSortIndexFileName(const QString &indexName) const;
@@ -231,6 +237,29 @@ private:
     FlatFileTableStore m_store;
 };
 
+class IndexRepo
+{
+public:
+    IndexRepo(QString databaseName,
+              QString tableName,
+              QString dataRoot = FlatFileTableStore::defaultDataRoot());
+
+    RepositoryResult initialize() const;
+    QList<tabledef::IndexMeta> listIndexes(QString *error = nullptr) const;
+    bool hasIndex(const QString &indexName, QString *error = nullptr) const;
+    RepositoryResult createIndex(const tabledef::IndexMeta &index) const;
+    RepositoryResult updateIndex(const QString &indexName, const tabledef::IndexMeta &index) const;
+    RepositoryResult deleteIndex(const QString &indexName) const;
+    TableData indexTable(QString *error = nullptr) const;
+    QString getIndexMetaFilePath() const;
+    tabledef::TableSchema getSchema() const;
+
+private:
+    QString m_databaseName;
+    QString m_tableName;
+    FlatFileTableStore m_store;
+};
+
 class TableRepo
 {
 public:
@@ -262,12 +291,23 @@ public:
                   QString dataRoot = FlatFileTableStore::defaultDataRoot());
 
     RepositoryResult createIndex(const QStringList &columns) const;
+    RepositoryResult createIndex(const tabledef::IndexMeta &index,
+                                const TableData &table,
+                                const QStringList &rowLocators) const;
     RepositoryResult dropIndex() const;
     TableData readIndex(QString *error = nullptr) const;
     RepositoryResult replaceIndex(const TableData &table) const;
     RepositoryResult insertRow(const TableRow &row) const;
     RepositoryResult updateRow(int rowIndex, const TableRow &row) const;
     RepositoryResult deleteRow(int rowIndex) const;
+    RepositoryResult rebuild(const TableData &table, const QStringList &rowLocators) const;
+    RepositoryResult insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
+    RepositoryResult updateIndexEntry(const QStringList &oldKeyValues,
+                                      const QStringList &newKeyValues,
+                                      const QString &rowLocator) const;
+    RepositoryResult deleteIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
+    QStringList search(const QStringList &keyValues, QString *error = nullptr) const;
+    bool validateUniqueKeys(QString *error = nullptr) const;
     QString getIndexFilePath() const;
 
 private:

@@ -213,3 +213,39 @@
 用例 3：更新子表中 `id = 10` 的 `parent_id` 为 `2`，期望成功。
 
 用例 4：把父表中 `id = 2` 的主键改成 `3`，期望失败，因为子表已经引用该键。
+
+## 索引与 row id 新增测试
+
+### `test_createIndexAndDropIndex`
+用例 1：创建一张基础表，并先插入两行 `name` 不同的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建普通索引，期望成功，并能通过 `IndexRepo` 读到该索引元数据。
+
+用例 3：通过 `SortIndexRepo::search()` 按索引列查找，期望命中对应行定位。
+
+用例 4：调用 `table_service::dropIndex()` 删除普通索引，期望成功，并且 `IndexRepo` 中不再存在该索引。
+
+用例 5：对同名索引重复创建，期望失败；对空白索引名创建，期望失败。
+
+### `test_createUniqueIndexRejectsDuplicateData`
+用例 1：创建一张基础表，并插入两行 `name` 相同的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name)`，期望失败，因为存量数据存在重复键。
+
+### `test_boundIndexLifecycle`
+用例 1：先给表添加 `UNIQUE(name)` 约束，期望自动生成绑定索引。
+
+用例 2：通过 `IndexRepo::listIndexes()` 读取索引元数据，期望能看到绑定索引名。
+
+用例 3：修改该约束名称，期望绑定索引随之重建或改名，旧索引名不再存在。
+
+用例 4：删除该约束，期望绑定索引和 `table.idx` 记录同步删除。
+
+### `test_incrementalIndexMaintenance`
+用例 1：创建一张带 `UNIQUE(name)` 约束的表，插入两行数据。
+
+用例 2：通过 `repo::FlatFileTableStore` 读取 row id 侧车文件，期望行数与表记录数一致。
+
+用例 3：更新被索引列 `name`，期望 `SortIndexRepo::search()` 能查到新键、查不到旧键。
+
+用例 4：删除其中一行，期望 row id 侧车文件同步缩减，且索引搜索结果同步消失。

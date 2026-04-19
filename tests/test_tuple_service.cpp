@@ -50,6 +50,11 @@ tabledef::Constraint makeForeignKey(const QString &name,
                                 QString()};
 }
 
+tabledef::Constraint makeUnique(const QString &name, const QStringList &columns)
+{
+    return tabledef::Constraint{name, tabledef::ConstraintType::Unique, columns, QString(), {}, QString()};
+}
+
 tabledef::TableSchema parentSchema(const QString &tableName)
 {
     tabledef::TableSchema schema;
@@ -80,6 +85,13 @@ tabledef::TableSchema childSchema(const QString &tableName, const QString &paren
                        parentTableName,
                        {QStringLiteral("id")}),
     };
+    return schema;
+}
+
+tabledef::TableSchema indexedSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema = parentSchema(tableName);
+    schema.constraints.append(makeUnique(QStringLiteral("uq_%1_name").arg(tableName), {QStringLiteral("name")}));
     return schema;
 }
 
@@ -135,6 +147,49 @@ QList<QMap<QString, QString>> makeRows(std::initializer_list<QMap<QString, QStri
 QStringList rowValues(const repo::TableData &table, int rowIndex)
 {
     return table.rows.at(rowIndex);
+}
+
+QStringList loadRowIds(const QString &databaseName,
+                      const QString &tableName,
+                      const QString &dataRoot,
+                      QString *error = nullptr)
+{
+    repo::FlatFileTableStore store(dataRoot);
+    const repo::TableData rowIdTable = store.readTable(store.getRowIdFilePath(databaseName, tableName), error);
+    QStringList rowIds;
+    for (const repo::TableRow &row : rowIdTable.rows) {
+        if (!row.isEmpty()) {
+            rowIds.append(row.first());
+        }
+    }
+    return rowIds;
+}
+
+QString findIndexNameByColumns(const QString &databaseName,
+                               const QString &tableName,
+                               const QString &dataRoot,
+                               const QStringList &columns,
+                               QString *error = nullptr)
+{
+    repo::IndexRepo indexRepo(databaseName, tableName, dataRoot);
+    const QList<tabledef::IndexMeta> indexes = indexRepo.listIndexes(error);
+    for (const tabledef::IndexMeta &index : indexes) {
+        if (index.columnNames == columns) {
+            return index.indexName;
+        }
+    }
+    return {};
+}
+
+QStringList searchIndex(const QString &databaseName,
+                        const QString &tableName,
+                        const QString &indexName,
+                        const QStringList &keyValues,
+                        const QString &dataRoot,
+                        QString *error = nullptr)
+{
+    repo::SortIndexRepo sortIndexRepo(databaseName, indexName, tableName, dataRoot);
+    return sortIndexRepo.search(keyValues, error);
 }
 
 } // namespace
@@ -300,6 +355,88 @@ private slots:
                                          {SimpleCondition{QStringLiteral("id"), QStringLiteral("2")}});
         QVERIFY(!restrictedParentKeyUpdate.success);
         QVERIFY(restrictedParentKeyUpdate.errorMessage.contains(QStringLiteral("would be broken")));
+    }
+
+    void test_incrementalIndexMaintenance()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_incremental_index_db");
+        const QString tableName = QStringLiteral("test_tuple_service_incremental_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, indexedSchema(tableName), m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(tableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                       {QStringLiteral("name"), QStringLiteral("bob")}}),
+                                          })).success);
+
+        QString error;
+        const QStringList rowIdsAfterInsert = loadRowIds(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(rowIdsAfterInsert.size(), 2);
+
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                         tableName,
+                                                         m_dataRoot,
+                                                         {QStringLiteral("name")},
+                                                         &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexName.isEmpty());
+
+        QStringList aliceMatches = searchIndex(databaseName,
+                                               tableName,
+                                               indexName,
+                                               {QStringLiteral("alice")},
+                                               m_dataRoot,
+                                               &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(aliceMatches.size(), 1);
+
+        TaskResult updateResult = tuple_service::updateRows(tableName,
+                                     makeAssignment(QStringLiteral("name"), QStringLiteral("alice_updated")),
+                                     {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+
+        aliceMatches = searchIndex(databaseName,
+                                   tableName,
+                                   indexName,
+                                   {QStringLiteral("alice")},
+                                   m_dataRoot,
+                                   &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(aliceMatches.size(), 0);
+
+        const QStringList updatedMatches = searchIndex(databaseName,
+                                                       tableName,
+                                                       indexName,
+                                                       {QStringLiteral("alice_updated")},
+                                                       m_dataRoot,
+                                                       &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(updatedMatches.size(), 1);
+
+        const QStringList rowIdsAfterUpdate = loadRowIds(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(rowIdsAfterUpdate.size(), 2);
+
+        TaskResult deleteResult = tuple_service::deleteRows(tableName,
+                                    {SimpleCondition{QStringLiteral("id"), QStringLiteral("2")}});
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        const QStringList rowIdsAfterDelete = loadRowIds(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(rowIdsAfterDelete.size(), 1);
+
+        const QStringList bobMatches = searchIndex(databaseName,
+                                                   tableName,
+                                                   indexName,
+                                                   {QStringLiteral("bob")},
+                                                   m_dataRoot,
+                                                   &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(bobMatches.size(), 0);
     }
 
 private:

@@ -125,6 +125,63 @@ QStringList listedTables(const SelectRowsResult &result)
     return names;
 }
 
+QStringList listedIndexes(const QString &databaseName,
+                          const QString &tableName,
+                          const QString &dataRoot,
+                          QString *error = nullptr)
+{
+    repo::IndexRepo indexRepo(databaseName, tableName, dataRoot);
+    const QList<tabledef::IndexMeta> indexes = indexRepo.listIndexes(error);
+    QStringList names;
+    for (const tabledef::IndexMeta &index : indexes) {
+        names.append(index.indexName);
+    }
+    return names;
+}
+
+QString findIndexNameByColumns(const QString &databaseName,
+                               const QString &tableName,
+                               const QString &dataRoot,
+                               const QStringList &columns,
+                               QString *error = nullptr)
+{
+    repo::IndexRepo indexRepo(databaseName, tableName, dataRoot);
+    const QList<tabledef::IndexMeta> indexes = indexRepo.listIndexes(error);
+    for (const tabledef::IndexMeta &index : indexes) {
+        if (index.columnNames == columns) {
+            return index.indexName;
+        }
+    }
+    return {};
+}
+
+QStringList searchIndex(const QString &databaseName,
+                        const QString &tableName,
+                        const QString &indexName,
+                        const QStringList &keyValues,
+                        const QString &dataRoot,
+                        QString *error = nullptr)
+{
+    repo::SortIndexRepo sortIndexRepo(databaseName, indexName, tableName, dataRoot);
+    return sortIndexRepo.search(keyValues, error);
+}
+
+QStringList readRowIds(const QString &databaseName,
+                       const QString &tableName,
+                       const QString &dataRoot,
+                       QString *error = nullptr)
+{
+    repo::FlatFileTableStore store(dataRoot);
+    const repo::TableData table = store.readTable(store.getRowIdFilePath(databaseName, tableName), error);
+    QStringList rowIds;
+    for (const repo::TableRow &row : table.rows) {
+        if (!row.isEmpty()) {
+            rowIds.append(row.first());
+        }
+    }
+    return rowIds;
+}
+
 } // namespace
 
 class TableServiceTest : public QObject
@@ -570,6 +627,122 @@ private slots:
         QVERIFY(createText.text.startsWith(QStringLiteral("CREATE TABLE")));
         QVERIFY(createText.text.contains(QStringLiteral("age")));
         QVERIFY(createText.text.contains(QStringLiteral("CONSTRAINT")));
+    }
+
+    void test_createIndexAndDropIndex()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_index_db");
+        const QString tableName = QStringLiteral("test_table_service_create_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("idx_test_table_service_name"),
+                                                             {QStringLiteral("name")},
+                                                             false);
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(indexName, QStringLiteral("idx_test_table_service_name"));
+
+        const QStringList matches = searchIndex(databaseName,
+                                               tableName,
+                                               indexName,
+                                               {QStringLiteral("alice")},
+                                               m_dataRoot,
+                                               &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(matches.size(), 1);
+
+        TaskResult duplicateResult = table_service::createIndex(tableName,
+                                                                QStringLiteral("idx_test_table_service_name"),
+                                                                {QStringLiteral("name")},
+                                                                false);
+        QVERIFY(!duplicateResult.success);
+        QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("already exists")));
+
+        TaskResult dropResult = table_service::dropIndex(tableName, indexName);
+        QVERIFY2(dropResult.success, qPrintable(dropResult.errorMessage));
+
+        const QStringList indexes = listedIndexes(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexes.contains(indexName));
+    }
+
+    void test_createUniqueIndexRejectsDuplicateData()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_unique_index_db");
+        const QString tableName = QStringLiteral("test_table_service_create_unique_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("alice")}, m_dataRoot);
+
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("uq_test_table_service_name_idx"),
+                                                             {QStringLiteral("name")},
+                                                             true);
+        QVERIFY(!createResult.success);
+        QVERIFY(createResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_boundIndexLifecycle()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_bound_index_db");
+        const QString tableName = QStringLiteral("test_table_service_bound_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        tabledef::Constraint uniqueConstraint = makeUnique(QStringLiteral("uq_test_table_service_name"),
+                                                           {QStringLiteral("name")});
+        TaskResult addResult = table_service::addConstraint(tableName, uniqueConstraint);
+        QVERIFY2(addResult.success, qPrintable(addResult.errorMessage));
+
+        QString error;
+        QString boundIndexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!boundIndexName.isEmpty());
+
+        uniqueConstraint.name = QStringLiteral("uq_test_table_service_name_renamed");
+        uniqueConstraint.indexName = QStringLiteral("uq_test_table_service_name_renamed_idx");
+        TaskResult modifyResult = table_service::modifyConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name"),
+                                                                  uniqueConstraint);
+        QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        const QString renamedIndexName = findIndexNameByColumns(databaseName,
+                                                                tableName,
+                                                                m_dataRoot,
+                                                                {QStringLiteral("name")},
+                                                                &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(renamedIndexName, QStringLiteral("uq_test_table_service_name_renamed_idx"));
+
+        TaskResult deleteResult = table_service::deleteConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name_renamed"));
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        const QStringList remainingIndexes = listedIndexes(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!remainingIndexes.contains(QStringLiteral("uq_test_table_service_name_renamed_idx")));
+        QCOMPARE(findIndexNameByColumns(databaseName,
+                                        tableName,
+                                        m_dataRoot,
+                                        {QStringLiteral("name")},
+                                        &error),
+                 QString());
     }
 
 private:

@@ -1,6 +1,10 @@
 #include "service.h"
 
+#include <QSet>
+
 namespace {
+
+using service::currentDataRoot;
 
 bool valueFitsColumnDefinition(const tabledef::Column &column, const QString &value, QString *error)
 {
@@ -94,6 +98,97 @@ bool rebuildModifiedColumnRows(const tabledef::Column &newColumn,
     return true;
 }
 
+QString boundIndexNameForConstraint(const tabledef::Constraint &constraint)
+{
+    if (!constraint.indexName.trimmed().isEmpty()) {
+        return constraint.indexName.trimmed();
+    }
+    return service::generatedConstraintName(constraint.name, QStringLiteral("idx"));
+}
+
+tabledef::IndexMeta indexMetaForConstraint(const tabledef::Constraint &constraint)
+{
+    return tabledef::IndexMeta{boundIndexNameForConstraint(constraint),
+                               constraint.columns,
+                               tabledef::isUniqueConstraint(constraint)};
+}
+
+QList<tabledef::IndexMeta> indexesTouchingColumn(const tabledef::TableSchema &schema,
+                                                 const QString &columnName)
+{
+    QList<tabledef::IndexMeta> indexes;
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (index.columnNames.contains(columnName)) {
+            indexes.append(index);
+        }
+    }
+    return indexes;
+}
+
+bool hasIncomingForeignKeyReferenceToColumn(const QString &databaseName,
+                                            const QString &targetTableName,
+                                            const QString &targetColumnName,
+                                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    repo::TabRepo tabRepo(databaseName, currentDataRoot);
+    QString tabError;
+    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
+    if (!tabError.isEmpty()) {
+        if (error != nullptr) {
+            *error = tabError;
+        }
+        return true;
+    }
+
+    for (const repo::TableEntry &tableEntry : tableEntries) {
+        if (tableEntry.name == targetTableName) {
+            continue;
+        }
+
+        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
+        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&tabError);
+        if (!tabError.isEmpty()) {
+            if (error != nullptr) {
+                *error = tabError;
+            }
+            return true;
+        }
+
+        for (const tabledef::Constraint &constraint : constraints) {
+            if (!tabledef::isForeignKeyConstraint(constraint)
+                || constraint.referencedTable != targetTableName) {
+                continue;
+            }
+
+            if (constraint.referencedColumns.contains(targetColumnName)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("column '%1' is referenced by foreign key '%2' from table '%3'")
+                                 .arg(targetColumnName, constraint.name, tableEntry.name);
+                }
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool rebuildIndexesForTable(const QString &tableName,
+                            const tabledef::TableSchema &schema,
+                            const repo::TableData &tableData,
+                            QString *error)
+{
+    const QStringList rowIds = service::loadUserTableRowIds(tableName, tableData, nullptr, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return false;
+    }
+    return service::rebuildTableIndexes(tableName, schema, tableData, rowIds, error);
+}
+
 } // namespace
 
 namespace service::table_service {
@@ -179,6 +274,26 @@ TaskResult createTable(const QString &tableName,
         tableRepo.dropTable();
         result.errorMessage = tabResult.error;
         return result;
+    }
+
+    if (!saveUserTableRowIds(tableName, QStringList(), &error)) {
+        tableRepo.dropTable();
+        result.errorMessage = error;
+        return result;
+    }
+
+    repo::TableData emptyTable;
+    emptyTable.columns = tabledef::schemaColumnNames(normalizedSchema);
+    for (const tabledef::Constraint &constraint : normalizedSchema.constraints) {
+        if (!tabledef::isPrimaryKeyConstraint(constraint) && !tabledef::isUniqueConstraint(constraint)) {
+            continue;
+        }
+
+        if (!ensureConstraintBoundIndex(tableName, constraint, emptyTable, &error)) {
+            tableRepo.dropTable();
+            result.errorMessage = error;
+            return result;
+        }
     }
 
     result.success = true;
@@ -348,13 +463,53 @@ TaskResult deleteColumn(const QString &tableName,
 
     repo::MetaRepo metaRepo(normalizedDatabaseName, tableName, currentDataRoot);
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    repo::TableRepo tableRepo(normalizedDatabaseName, tableName, currentDataRoot);
-
     const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&result.errorMessage);
     if (!result.errorMessage.isEmpty()) {
         return result;
     }
 
+    for (const tabledef::Constraint &constraint : constraints) {
+        if (!tabledef::constraintTouchesColumn(constraint, columnName)) {
+            continue;
+        }
+
+        if (tabledef::isPrimaryKeyConstraint(constraint)) {
+            result.errorMessage = QStringLiteral("column '%1' is part of primary key '%2'")
+                                      .arg(columnName, constraint.name);
+            return result;
+        }
+        if (tabledef::isUniqueConstraint(constraint)) {
+            result.errorMessage = QStringLiteral("column '%1' is part of unique constraint '%2'")
+                                      .arg(columnName, constraint.name);
+            return result;
+        }
+        if (tabledef::isForeignKeyConstraint(constraint)) {
+            result.errorMessage = QStringLiteral("column '%1' is part of foreign key '%2'")
+                                      .arg(columnName, constraint.name);
+            return result;
+        }
+    }
+
+    const QList<tabledef::IndexMeta> indexes = schema.indexes;
+    for (const tabledef::IndexMeta &index : indexes) {
+        if (!index.columnNames.contains(columnName)) {
+            continue;
+        }
+        result.errorMessage = QStringLiteral("column '%1' is referenced by index '%2'")
+                                  .arg(columnName, index.indexName);
+        return result;
+    }
+
+    QString incomingFkError;
+    if (hasIncomingForeignKeyReferenceToColumn(normalizedDatabaseName,
+                                               tableName,
+                                               columnName,
+                                               &incomingFkError)) {
+        result.errorMessage = incomingFkError;
+        return result;
+    }
+
+    repo::TableRepo tableRepo(normalizedDatabaseName, tableName, currentDataRoot);
     repo::TableData table = loadUserTableData(tableName, &result.errorMessage);
     if (!result.errorMessage.isEmpty()) {
         return result;
@@ -378,20 +533,17 @@ TaskResult deleteColumn(const QString &tableName,
         return result;
     }
 
-    for (const tabledef::Constraint &constraint : constraints) {
-        if (tabledef::constraintTouchesColumn(constraint, columnName)) {
-            const repo::RepositoryResult deleteConstraintResult =
-                constraintRepo.deleteConstraint(constraint.name);
-            if (!deleteConstraintResult.ok) {
-                result.errorMessage = deleteConstraintResult.error;
-                return result;
-            }
-        }
-    }
-
     const repo::RepositoryResult metaResult = metaRepo.deleteColumn(columnName);
     if (!metaResult.ok) {
         result.errorMessage = metaResult.error;
+        return result;
+    }
+
+    tabledef::TableSchema updatedSchema = loadUserTableSchema(tableName, &result.errorMessage);
+    if (!result.errorMessage.isEmpty()) {
+        return result;
+    }
+    if (!rebuildIndexesForTable(tableName, updatedSchema, table, &result.errorMessage)) {
         return result;
     }
 
@@ -473,6 +625,8 @@ TaskResult modifyColumn(const QString &tableName,
 
     table.columns[columnIndex] = definition.column.name;
 
+    const QList<tabledef::IndexMeta> indexes = schema.indexes;
+
     if (!tabledef::validateConstraintRows(normalizedDatabaseName,
                                           currentDataRoot,
                                           candidateSchema,
@@ -501,6 +655,32 @@ TaskResult modifyColumn(const QString &tableName,
         }
     }
 
+    repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+    for (const tabledef::IndexMeta &index : indexes) {
+        if (!index.columnNames.contains(columnName)) {
+            continue;
+        }
+        tabledef::IndexMeta updatedIndex = index;
+        for (QString &column : updatedIndex.columnNames) {
+            if (column == columnName) {
+                column = definition.column.name;
+            }
+        }
+        QString indexError;
+        if (!indexRepo.hasIndex(index.indexName, &indexError)) {
+            if (!indexError.isEmpty()) {
+                result.errorMessage = indexError;
+                return result;
+            }
+            continue;
+        }
+        const repo::RepositoryResult updateIndexResult = indexRepo.updateIndex(index.indexName, updatedIndex);
+        if (!updateIndexResult.ok) {
+            result.errorMessage = updateIndexResult.error;
+            return result;
+        }
+    }
+
     for (const tabledef::Constraint &constraint : buildGeneratedConstraints(definition)) {
         const repo::RepositoryResult createConstraintResult = constraintRepo.createConstraint(constraint);
         if (!createConstraintResult.ok) {
@@ -512,6 +692,14 @@ TaskResult modifyColumn(const QString &tableName,
     const repo::RepositoryResult updateResult = metaRepo.updateColumn(columnName, definition.column);
     if (!updateResult.ok) {
         result.errorMessage = updateResult.error;
+        return result;
+    }
+
+    tabledef::TableSchema updatedSchema = loadUserTableSchema(tableName, &result.errorMessage);
+    if (!result.errorMessage.isEmpty()) {
+        return result;
+    }
+    if (!rebuildIndexesForTable(tableName, updatedSchema, table, &result.errorMessage)) {
         return result;
     }
 
@@ -532,7 +720,12 @@ TaskResult addConstraint(const QString &tableName,
     }
 
     tabledef::TableSchema candidateSchema = schema;
-    candidateSchema.constraints.append(constraint);
+    tabledef::Constraint storedConstraint = constraint;
+    if ((tabledef::isPrimaryKeyConstraint(storedConstraint) || tabledef::isUniqueConstraint(storedConstraint))
+        && storedConstraint.indexName.trimmed().isEmpty()) {
+        storedConstraint.indexName = boundIndexNameForConstraint(storedConstraint);
+    }
+    candidateSchema.constraints.append(storedConstraint);
     if (!tabledef::validateConstraintDefinitions(candidateSchema, QString(), &error)) {
         result.errorMessage = error;
         return result;
@@ -555,9 +748,15 @@ TaskResult addConstraint(const QString &tableName,
     }
 
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    const repo::RepositoryResult writeResult = constraintRepo.createConstraint(constraint);
+    const repo::RepositoryResult writeResult = constraintRepo.createConstraint(storedConstraint);
     if (!writeResult.ok) {
         result.errorMessage = writeResult.error;
+        return result;
+    }
+
+    if (!ensureConstraintBoundIndex(tableName, storedConstraint, table, &error)) {
+        constraintRepo.deleteConstraint(storedConstraint.name);
+        result.errorMessage = error;
         return result;
     }
     result.success = true;
@@ -584,7 +783,15 @@ TaskResult modifyConstraint(const QString &tableName,
 
     tabledef::TableSchema candidateSchema = schema;
     const int constraintIndex = tabledef::findConstraintIndex(candidateSchema, constraintName);
-    candidateSchema.constraints[constraintIndex] = constraint;
+    const tabledef::Constraint existingConstraint = candidateSchema.constraints.at(constraintIndex);
+    tabledef::Constraint storedConstraint = constraint;
+    if ((tabledef::isPrimaryKeyConstraint(storedConstraint) || tabledef::isUniqueConstraint(storedConstraint))
+        && storedConstraint.indexName.trimmed().isEmpty()) {
+        storedConstraint.indexName = existingConstraint.indexName.trimmed().isEmpty()
+                                         ? boundIndexNameForConstraint(storedConstraint)
+                                         : existingConstraint.indexName;
+    }
+    candidateSchema.constraints[constraintIndex] = storedConstraint;
     if (!tabledef::validateConstraintDefinitions(candidateSchema, QString(), &error)) {
         result.errorMessage = error;
         return result;
@@ -612,6 +819,26 @@ TaskResult modifyConstraint(const QString &tableName,
         result.errorMessage = writeResult.error;
         return result;
     }
+
+    const QString oldBoundIndexName = boundIndexNameForConstraint(existingConstraint);
+    const QString newBoundIndexName = boundIndexNameForConstraint(storedConstraint);
+    const bool oldIsBound = tabledef::isPrimaryKeyConstraint(existingConstraint)
+                            || tabledef::isUniqueConstraint(existingConstraint);
+    const bool newIsBound = tabledef::isPrimaryKeyConstraint(storedConstraint)
+                            || tabledef::isUniqueConstraint(storedConstraint);
+
+    if (oldIsBound && (!newIsBound || oldBoundIndexName != newBoundIndexName)) {
+        repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+        indexRepo.deleteIndex(oldBoundIndexName);
+        repo::SortIndexRepo(normalizedDatabaseName, oldBoundIndexName, tableName, currentDataRoot).dropIndex();
+    }
+
+    if (newIsBound) {
+        if (!ensureConstraintBoundIndex(tableName, storedConstraint, table, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+    }
     result.success = true;
     return result;
 }
@@ -621,12 +848,157 @@ TaskResult deleteConstraint(const QString &tableName,
 {
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    const int constraintIndex = tabledef::findConstraintIndex(schema, constraintName);
+    if (constraintIndex < 0) {
+        result.errorMessage = QStringLiteral("constraint '%1' does not exist").arg(constraintName);
+        return result;
+    }
+
+    const tabledef::Constraint existingConstraint = schema.constraints.at(constraintIndex);
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
     const repo::RepositoryResult writeResult = constraintRepo.deleteConstraint(constraintName);
     if (!writeResult.ok) {
         result.errorMessage = writeResult.error;
         return result;
     }
+
+    if (tabledef::isPrimaryKeyConstraint(existingConstraint)
+        || tabledef::isUniqueConstraint(existingConstraint)) {
+        const QString boundIndexName = boundIndexNameForConstraint(existingConstraint);
+        repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+        indexRepo.deleteIndex(boundIndexName);
+        repo::SortIndexRepo(normalizedDatabaseName, boundIndexName, tableName, currentDataRoot).dropIndex();
+    }
+    result.success = true;
+    return result;
+}
+
+TaskResult createIndex(const QString &tableName,
+                      const QString &indexName,
+                      const QStringList &columnNames,
+                      bool isUnique)
+{
+    TaskResult result;
+    const QString normalizedDatabaseName = normalizeDatabaseName(QString());
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    const tabledef::IndexMeta indexMeta{indexName, columnNames, isUnique};
+    if (!tabledef::validateIndexDefinition(schema, indexMeta, QString(), &error)) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    repo::TableData table = loadUserTableData(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    bool rowIdsInitialized = false;
+    const QStringList rowIds = loadUserTableRowIds(tableName, table, &rowIdsInitialized, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+    if (rowIdsInitialized) {
+        if (!rebuildIndexesForTable(tableName, schema, table, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+    }
+
+    if (isUnique) {
+        QSet<QString> seen;
+        for (const repo::TableRow &row : table.rows) {
+            QStringList values;
+            values.reserve(columnNames.size());
+            for (const QString &columnName : columnNames) {
+                const int columnIndex = table.columns.indexOf(columnName);
+                if (columnIndex < 0) {
+                    result.errorMessage = QStringLiteral("column '%1' does not exist").arg(columnName);
+                    return result;
+                }
+                values.append(row.value(columnIndex));
+            }
+            const QString key = values.join(QStringLiteral("\x1f"));
+            if (seen.contains(key)) {
+                result.errorMessage = QStringLiteral("index '%1' contains duplicate key values").arg(indexName);
+                return result;
+            }
+            seen.insert(key);
+        }
+    }
+
+    repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+    const repo::RepositoryResult metadataResult = indexRepo.createIndex(indexMeta);
+    if (!metadataResult.ok) {
+        result.errorMessage = metadataResult.error;
+        return result;
+    }
+
+    const repo::RepositoryResult treeResult = repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot)
+                                                  .createIndex(indexMeta, table, rowIds);
+    if (!treeResult.ok) {
+        indexRepo.deleteIndex(indexName);
+        result.errorMessage = treeResult.error;
+        return result;
+    }
+
+    result.success = true;
+    return result;
+}
+
+TaskResult dropIndex(const QString &tableName,
+                    const QString &indexName)
+{
+    TaskResult result;
+    const QString normalizedDatabaseName = normalizeDatabaseName(QString());
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if ((tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint))
+            && boundIndexNameForConstraint(constraint) == indexName) {
+            result.errorMessage = QStringLiteral("index '%1' is bound to constraint '%2'")
+                                     .arg(indexName, constraint.name);
+            return result;
+        }
+    }
+
+    if (!tabledef::hasIndex(schema, indexName)) {
+        result.errorMessage = QStringLiteral("index '%1' does not exist").arg(indexName);
+        return result;
+    }
+
+    repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+    const repo::RepositoryResult metadataResult = indexRepo.deleteIndex(indexName);
+    if (!metadataResult.ok) {
+        result.errorMessage = metadataResult.error;
+        return result;
+    }
+
+    const repo::RepositoryResult treeResult = repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot).dropIndex();
+    if (!treeResult.ok) {
+        result.errorMessage = treeResult.error;
+        return result;
+    }
+
     result.success = true;
     return result;
 }
