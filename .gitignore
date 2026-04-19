@@ -1,6 +1,7 @@
 # This file is used to ignore files which are generated
 # ----------------------------------------------------------------------------
 BUILD_WINDOWS_QT_MSVC2022_DEBUG.md
+DBMS*
 *~
 *.autosave
 *.a
