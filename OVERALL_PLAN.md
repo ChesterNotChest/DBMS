@@ -49,3 +49,10 @@ ALTER TABLE 表名 ADD CONSTRAINT 约束名 CHECK(条件);
 
 ------ 如下不要现在实现，是我自己的备忘 ------
 可以和WHERE一同实现。写个Util。（包括in, [比较符] all, [比较符] any, exist, not exist）
+
+
+先做表级排它锁
+DDL 锁整个表目录
+DML 写操作锁 table.dat
+FK 检查时按固定顺序同时锁相关表，避免死锁
+这条路线最稳。

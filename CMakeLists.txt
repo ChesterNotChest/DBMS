@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Test)
 
 set(PROJECT_SOURCES
         main.cpp
@@ -22,6 +22,15 @@ set(PROJECT_SOURCES
         utils/table_manu/type_utils.cpp
         utils/table_manu/schema_maint.cpp
         utils/table_manu/schema_builder.cpp
+        service/service.h
+        service/database_service.cpp
+        service/table_service.cpp
+        service/tuple_service.cpp
+        service/table_dml_service.cpp
+        utils/service_common/service_common.h
+        utils/service_common/name_normalize.cpp
+        utils/service_common/constraint_worker.cpp
+        utils/service_common/sql_stringifier.cpp
         repo/repo.h
         repo/database_repo.cpp
         repo/constraint_repo.cpp
@@ -29,6 +38,10 @@ set(PROJECT_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
+        tests/service_test_entry.h
+        tests/test_database_service.cpp
+        tests/test_table_service.cpp
+        tests/test_tuple_service.cpp
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -54,7 +67,7 @@ else()
     endif()
 endif()
 
-target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Test)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
