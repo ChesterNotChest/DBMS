@@ -52,7 +52,7 @@ validationMode
 它输出：success、errorMessage、affectedRowCount。
 
 deleteRows(
-targetDatab aseName,
+targetDatabaseName,
 targetTableName,
 targetTableKind,
 targetSchema,
