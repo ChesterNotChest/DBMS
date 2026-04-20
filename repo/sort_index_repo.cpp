@@ -192,11 +192,22 @@ QJsonObject buildTreeDocument(const tabledef::IndexMeta &index,
     QList<BPlusNode> allNodes;
     QList<int> currentLevelIds;
     int nextId = 0;
+    int previousLeafId = -1;
+
+    auto nodeById = [&allNodes](int id) -> BPlusNode * {
+        for (BPlusNode &node : allNodes) {
+            if (node.id == id) {
+                return &node;
+            }
+        }
+        return nullptr;
+    };
 
     for (int offset = 0; offset < entries.size(); offset += maxLeafKeys) {
         BPlusNode leaf;
         leaf.id = nextId++;
         leaf.leaf = true;
+        leaf.next = -1;
         const int upper = qMin(entries.size(), offset + maxLeafKeys);
         for (int index = offset; index < upper; ++index) {
             const IndexEntry &entry = entries.at(index);
@@ -210,6 +221,17 @@ QJsonObject buildTreeDocument(const tabledef::IndexMeta &index,
                 leaf.values.append(bucket);
             }
         }
+        if (previousLeafId >= 0) {
+            BPlusNode *previousLeaf = nodeById(previousLeafId);
+            if (previousLeaf == nullptr) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("failed to link index leaf chain");
+                }
+                return {};
+            }
+            previousLeaf->next = leaf.id;
+        }
+        previousLeafId = leaf.id;
         currentLevelIds.append(leaf.id);
         allNodes.append(leaf);
     }
@@ -220,15 +242,6 @@ QJsonObject buildTreeDocument(const tabledef::IndexMeta &index,
         allNodes.append(root);
         currentLevelIds.append(root.id);
     }
-
-    auto nodeById = [&allNodes](int id) -> BPlusNode * {
-        for (BPlusNode &node : allNodes) {
-            if (node.id == id) {
-                return &node;
-            }
-        }
-        return nullptr;
-    };
 
     while (currentLevelIds.size() > 1) {
         QList<int> nextLevelIds;

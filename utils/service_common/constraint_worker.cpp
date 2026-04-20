@@ -533,7 +533,10 @@ bool ensureConstraintBoundIndex(const QString &tableName,
     const QString boundIndexName = constraint.indexName.trimmed().isEmpty()
                                        ? generatedConstraintName(constraint.name, QStringLiteral("idx"))
                                        : constraint.indexName;
-    const tabledef::IndexMeta indexMeta{boundIndexName, constraint.columns, tabledef::isUniqueConstraint(constraint)};
+    const tabledef::IndexMeta indexMeta{boundIndexName,
+                                        constraint.columns,
+                                        tabledef::isPrimaryKeyConstraint(constraint)
+                                            || tabledef::isUniqueConstraint(constraint)};
 
     if (indexRepo.hasIndex(boundIndexName, error)) {
         logIndexMaintenance(QStringLiteral("bound index exists, rebuild %1")

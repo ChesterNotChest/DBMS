@@ -370,12 +370,16 @@ private slots:
                                                        {QStringLiteral("name"), QStringLiteral("alice")}}),
                                               makeRow({{QStringLiteral("id"), QStringLiteral("2")},
                                                        {QStringLiteral("name"), QStringLiteral("bob")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                                                       {QStringLiteral("name"), QStringLiteral("carol")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("4")},
+                                                       {QStringLiteral("name"), QStringLiteral("diana")}}),
                                           })).success);
 
         QString error;
         const QStringList rowIdsAfterInsert = loadRowIds(databaseName, tableName, m_dataRoot, &error);
         QVERIFY(error.isEmpty());
-        QCOMPARE(rowIdsAfterInsert.size(), 2);
+        QCOMPARE(rowIdsAfterInsert.size(), 4);
 
         const QString indexName = findIndexNameByColumns(databaseName,
                                                          tableName,
@@ -395,14 +399,14 @@ private slots:
         QCOMPARE(aliceMatches.size(), 1);
 
         TaskResult updateResult = tuple_service::updateRows(tableName,
-                                     makeAssignment(QStringLiteral("name"), QStringLiteral("alice_updated")),
-                                     {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+                                                                         makeAssignment(QStringLiteral("name"), QStringLiteral("diana_updated")),
+                                                                         {SimpleCondition{QStringLiteral("id"), QStringLiteral("4")}});
         QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
 
         aliceMatches = searchIndex(databaseName,
                                    tableName,
                                    indexName,
-                                   {QStringLiteral("alice")},
+                                                                     {QStringLiteral("diana")},
                                    m_dataRoot,
                                    &error);
         QVERIFY(error.isEmpty());
@@ -411,7 +415,7 @@ private slots:
         const QStringList updatedMatches = searchIndex(databaseName,
                                                        tableName,
                                                        indexName,
-                                                       {QStringLiteral("alice_updated")},
+                                                                                                             {QStringLiteral("diana_updated")},
                                                        m_dataRoot,
                                                        &error);
         QVERIFY(error.isEmpty());
@@ -419,7 +423,7 @@ private slots:
 
         const QStringList rowIdsAfterUpdate = loadRowIds(databaseName, tableName, m_dataRoot, &error);
         QVERIFY(error.isEmpty());
-        QCOMPARE(rowIdsAfterUpdate.size(), 2);
+        QCOMPARE(rowIdsAfterUpdate.size(), 4);
 
         TaskResult deleteResult = tuple_service::deleteRows(tableName,
                                     {SimpleCondition{QStringLiteral("id"), QStringLiteral("2")}});
@@ -427,7 +431,7 @@ private slots:
 
         const QStringList rowIdsAfterDelete = loadRowIds(databaseName, tableName, m_dataRoot, &error);
         QVERIFY(error.isEmpty());
-        QCOMPARE(rowIdsAfterDelete.size(), 1);
+        QCOMPARE(rowIdsAfterDelete.size(), 3);
 
         const QStringList bobMatches = searchIndex(databaseName,
                                                    tableName,

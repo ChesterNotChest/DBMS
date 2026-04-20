@@ -110,7 +110,8 @@ tabledef::IndexMeta indexMetaForConstraint(const tabledef::Constraint &constrain
 {
     return tabledef::IndexMeta{boundIndexNameForConstraint(constraint),
                                constraint.columns,
-                               tabledef::isUniqueConstraint(constraint)};
+                               tabledef::isPrimaryKeyConstraint(constraint)
+                                   || tabledef::isUniqueConstraint(constraint)};
 }
 
 QList<tabledef::IndexMeta> indexesTouchingColumn(const tabledef::TableSchema &schema,
@@ -245,7 +246,15 @@ TaskResult createTable(const QString &tableName,
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
     repo::TableRepo tableRepo(normalizedDatabaseName, tableName, currentDataRoot);
 
-    const repo::RepositoryResult tableCreated = tableRepo.createTable(tabledef::schemaColumnNames(normalizedSchema));
+    tabledef::TableSchema storedSchema = normalizedSchema;
+    for (tabledef::Constraint &constraint : storedSchema.constraints) {
+        if ((tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint))
+            && constraint.indexName.trimmed().isEmpty()) {
+            constraint.indexName = boundIndexNameForConstraint(constraint);
+        }
+    }
+
+    const repo::RepositoryResult tableCreated = tableRepo.createTable(tabledef::schemaColumnNames(storedSchema));
     if (!tableCreated.ok) {
         result.errorMessage = tableCreated.error;
         return result;
@@ -260,7 +269,7 @@ TaskResult createTable(const QString &tableName,
         }
     }
 
-    for (const tabledef::Constraint &constraint : normalizedSchema.constraints) {
+    for (const tabledef::Constraint &constraint : storedSchema.constraints) {
         const repo::RepositoryResult constraintResult = constraintRepo.createConstraint(constraint);
         if (!constraintResult.ok) {
             tableRepo.dropTable();
@@ -283,8 +292,8 @@ TaskResult createTable(const QString &tableName,
     }
 
     repo::TableData emptyTable;
-    emptyTable.columns = tabledef::schemaColumnNames(normalizedSchema);
-    for (const tabledef::Constraint &constraint : normalizedSchema.constraints) {
+    emptyTable.columns = tabledef::schemaColumnNames(storedSchema);
+    for (const tabledef::Constraint &constraint : storedSchema.constraints) {
         if (!tabledef::isPrimaryKeyConstraint(constraint) && !tabledef::isUniqueConstraint(constraint)) {
             continue;
         }
@@ -814,7 +823,7 @@ TaskResult modifyConstraint(const QString &tableName,
     }
 
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    const repo::RepositoryResult writeResult = constraintRepo.updateConstraint(constraintName, constraint);
+    const repo::RepositoryResult writeResult = constraintRepo.updateConstraint(constraintName, storedConstraint);
     if (!writeResult.ok) {
         result.errorMessage = writeResult.error;
         return result;

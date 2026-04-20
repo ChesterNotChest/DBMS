@@ -1,6 +1,9 @@
 #include "../service/service.h"
 
 #include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 #include "service_test_entry.h"
@@ -180,6 +183,33 @@ QStringList readRowIds(const QString &databaseName,
         }
     }
     return rowIds;
+}
+
+bool readSortIndexIsUnique(const QString &databaseName,
+                           const QString &tableName,
+                           const QString &indexName,
+                           const QString &dataRoot,
+                           QString *error = nullptr)
+{
+    repo::FlatFileTableStore store(dataRoot);
+    QFile file(store.getSortIndexFilePath(databaseName, tableName, indexName));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to open sort index file");
+        }
+        return false;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("sort index file is not a json object");
+        }
+        return false;
+    }
+
+    const QJsonObject meta = document.object().value(QStringLiteral("meta")).toObject();
+    return meta.value(QStringLiteral("isUnique")).toBool(false);
 }
 
 } // namespace
@@ -677,6 +707,27 @@ private slots:
         QVERIFY(!indexes.contains(indexName));
     }
 
+    void test_primaryKeyBoundIndexIsUnique()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_pk_index_unique_db");
+        const QString tableName = QStringLiteral("test_table_service_pk_index_unique_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        QString error;
+        const QString pkIndexName = findIndexNameByColumns(databaseName,
+                                                           tableName,
+                                                           m_dataRoot,
+                                                           {QStringLiteral("id")},
+                                                           &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!pkIndexName.isEmpty());
+
+        const bool isUnique = readSortIndexIsUnique(databaseName, tableName, pkIndexName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(isUnique);
+    }
+
     void test_createUniqueIndexRejectsDuplicateData()
     {
         const QString databaseName = QStringLiteral("test_table_service_create_unique_index_db");
@@ -721,6 +772,18 @@ private slots:
                                                                   QStringLiteral("uq_test_table_service_name"),
                                                                   uniqueConstraint);
         QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        repo::ConstraintRepo modifiedConstraintRepo(databaseName, tableName, m_dataRoot);
+        const QList<tabledef::Constraint> modifiedConstraints = modifiedConstraintRepo.listConstraints(&error);
+        QVERIFY(error.isEmpty());
+        bool foundRenamedConstraint = false;
+        for (const tabledef::Constraint &constraint : modifiedConstraints) {
+            if (constraint.name == QStringLiteral("uq_test_table_service_name_renamed")) {
+                QCOMPARE(constraint.indexName, QStringLiteral("uq_test_table_service_name_renamed_idx"));
+                foundRenamedConstraint = true;
+            }
+        }
+        QVERIFY(foundRenamedConstraint);
 
         const QString renamedIndexName = findIndexNameByColumns(databaseName,
                                                                 tableName,
