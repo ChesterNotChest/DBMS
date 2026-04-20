@@ -212,6 +212,33 @@ bool readSortIndexIsUnique(const QString &databaseName,
     return meta.value(QStringLiteral("isUnique")).toBool(false);
 }
 
+QString readSortIndexSourceTable(const QString &databaseName,
+                                 const QString &tableName,
+                                 const QString &indexName,
+                                 const QString &dataRoot,
+                                 QString *error = nullptr)
+{
+    repo::FlatFileTableStore store(dataRoot);
+    QFile file(store.getSortIndexFilePath(databaseName, tableName, indexName));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to open sort index file");
+        }
+        return {};
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("sort index file is not a json object");
+        }
+        return {};
+    }
+
+    const QJsonObject meta = document.object().value(QStringLiteral("meta")).toObject();
+    return meta.value(QStringLiteral("sourceTable")).toString();
+}
+
 } // namespace
 
 class TableServiceTest : public QObject
@@ -453,6 +480,49 @@ private slots:
                            missingDefinition);
         QVERIFY(!missingResult.success);
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
+    }
+
+    void test_modifyColumnRenamesIndexedColumn()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_column_rename_index_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_column_rename_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        TaskResult createIndexResult = table_service::createIndex(tableName,
+                                                                  QStringLiteral("idx_test_table_service_name"),
+                                                                  {QStringLiteral("name")},
+                                                                  false);
+        QVERIFY2(createIndexResult.success, qPrintable(createIndexResult.errorMessage));
+
+        ColumnDefinition modifyDefinition;
+        modifyDefinition.column = makeColumn(QStringLiteral("full_name"), tabledef::ColumnType::Varchar, 64, true);
+
+        TaskResult modifyResult = table_service::modifyColumn(tableName,
+                                                             QStringLiteral("name"),
+                                                             modifyDefinition);
+        QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("full_name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(indexName, QStringLiteral("idx_test_table_service_name"));
+
+        const QStringList matches = searchIndex(databaseName,
+                                               tableName,
+                                               indexName,
+                                               {QStringLiteral("alice")},
+                                               m_dataRoot,
+                                               &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(matches.size(), 1);
     }
 
     void test_modifyColumnRejectsTypeConversionFailure()
@@ -728,6 +798,24 @@ private slots:
         QVERIFY(isUnique);
     }
 
+    void test_sortIndexPersistsSourceTable()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_sort_index_source_table_db");
+        const QString tableName = QStringLiteral("test_table_service_sort_index_source_table_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const QString indexName = QStringLiteral("pk_%1_id__idx").arg(tableName);
+        QString error;
+        const QString sourceTable = readSortIndexSourceTable(databaseName,
+                                                             tableName,
+                                                             indexName,
+                                                             m_dataRoot,
+                                                             &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(sourceTable, tableName);
+    }
+
     void test_createUniqueIndexRejectsDuplicateData()
     {
         const QString databaseName = QStringLiteral("test_table_service_create_unique_index_db");
@@ -743,6 +831,32 @@ private slots:
                                                              true);
         QVERIFY(!createResult.success);
         QVERIFY(createResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_createUniqueIndexIgnoresEmptyValues()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_unique_index_empty_db");
+        const QString tableName = QStringLiteral("test_table_service_create_unique_index_empty_table");
+        ensureDatabase(databaseName, m_dataRoot);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 64, false),
+        };
+        schema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+        };
+        ensureTable(databaseName, tableName, schema, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QString()}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QString()}, m_dataRoot);
+
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("uq_test_table_service_empty_name_idx"),
+                                                             {QStringLiteral("name")},
+                                                             true);
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
     }
 
     void test_boundIndexLifecycle()

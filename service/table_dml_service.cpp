@@ -338,7 +338,8 @@ bool buildCandidateRow(const tabledef::TableSchema &schema,
     return true;
 }
 
-bool checkKeyUniqueness(const tabledef::TableSchema &schema,
+bool checkKeyUniqueness(const QString &databaseName,
+                        const tabledef::TableSchema &schema,
                         const repo::TableData &table,
                         QString *error)
 {
@@ -353,7 +354,7 @@ bool checkKeyUniqueness(const tabledef::TableSchema &schema,
         }
 
         QString indexError;
-        const bool validatedByIndex = validateConstraintRowsByIndex(service::currentDatabase,
+        const bool validatedByIndex = validateConstraintRowsByIndex(databaseName,
                                                                      schema.tableName,
                                                                      schema,
                                                                      constraint,
@@ -880,7 +881,7 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
             return result;
         }
 
-        if (!checkKeyUniqueness(targetSchema, candidateTable, &error)) {
+        if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
             if (!allUniqueCovered) {
                 result.errorMessage = error;
                 return result;
@@ -1033,7 +1034,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
             return result;
         }
 
-        if (!checkKeyUniqueness(targetSchema, candidateTable, &error)) {
+        if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
             if (!allUniqueCovered) {
                 result.errorMessage = error;
                 return result;
@@ -1157,7 +1158,7 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     }
 
     if (validationMode == ValidationMode::UserData) {
-        if (!checkKeyUniqueness(targetSchema, candidateTable, &error)) {
+        if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
             result.errorMessage = error;
             return result;
         }

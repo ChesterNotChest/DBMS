@@ -622,6 +622,12 @@ TaskResult modifyColumn(const QString &tableName,
         return result;
     }
 
+    const QStringList rowIds = loadUserTableRowIds(tableName, table, nullptr, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (columnIndex >= table.columns.size()) {
         result.errorMessage = QStringLiteral("column '%1' does not exist").arg(columnName);
         return result;
@@ -687,6 +693,21 @@ TaskResult modifyColumn(const QString &tableName,
         if (!updateIndexResult.ok) {
             result.errorMessage = updateIndexResult.error;
             return result;
+        }
+
+        if (isRename) {
+            repo::SortIndexRepo sortIndexRepo(normalizedDatabaseName, index.indexName, tableName, currentDataRoot);
+            const repo::RepositoryResult dropResult = sortIndexRepo.dropIndex();
+            if (!dropResult.ok) {
+                result.errorMessage = dropResult.error;
+                return result;
+            }
+
+            const repo::RepositoryResult recreateResult = sortIndexRepo.createIndex(updatedIndex, table, rowIds);
+            if (!recreateResult.ok) {
+                result.errorMessage = recreateResult.error;
+                return result;
+            }
         }
     }
 
@@ -933,13 +954,21 @@ TaskResult createIndex(const QString &tableName,
         for (const repo::TableRow &row : table.rows) {
             QStringList values;
             values.reserve(columnNames.size());
+            bool hasEmptyValue = false;
             for (const QString &columnName : columnNames) {
                 const int columnIndex = table.columns.indexOf(columnName);
                 if (columnIndex < 0) {
                     result.errorMessage = QStringLiteral("column '%1' does not exist").arg(columnName);
                     return result;
                 }
-                values.append(row.value(columnIndex));
+                const QString value = row.value(columnIndex);
+                if (value.isEmpty()) {
+                    hasEmptyValue = true;
+                }
+                values.append(value);
+            }
+            if (hasEmptyValue) {
+                continue;
             }
             const QString key = values.join(QStringLiteral("\x1f"));
             if (seen.contains(key)) {

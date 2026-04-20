@@ -179,6 +179,7 @@ QVector<IndexEntry> buildEntries(const repo::TableData &table,
 }
 
 QJsonObject buildTreeDocument(const tabledef::IndexMeta &index,
+                              const QString &sourceTable,
                               const QVector<IndexEntry> &entries,
                               QString *error)
 {
@@ -275,7 +276,7 @@ QJsonObject buildTreeDocument(const tabledef::IndexMeta &index,
     QJsonObject document;
     QJsonObject meta;
     meta.insert(QStringLiteral("indexName"), index.indexName);
-    meta.insert(QStringLiteral("sourceTable"), QString());
+    meta.insert(QStringLiteral("sourceTable"), sourceTable);
     meta.insert(QStringLiteral("columnNames"), toJsonArray(index.columnNames));
     meta.insert(QStringLiteral("isUnique"), index.isUnique);
     meta.insert(QStringLiteral("order"), kOrder);
@@ -658,7 +659,7 @@ RepositoryResult SortIndexRepo::createIndex(const tabledef::IndexMeta &index,
         return RepositoryResult::failure(QStringLiteral("sort index '%1' already exists").arg(m_indexName));
     }
 
-    const QJsonObject document = buildTreeDocument(index, effectiveEntries, &error);
+    const QJsonObject document = buildTreeDocument(index, m_sourceTable, effectiveEntries, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -741,7 +742,7 @@ RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringLis
         }
     }
 
-    const QJsonObject rebuilt = buildTreeDocument(index, effectiveEntries, &error);
+    const QJsonObject rebuilt = buildTreeDocument(index, m_sourceTable, effectiveEntries, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -771,7 +772,7 @@ RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, c
     const tabledef::IndexMeta index{metaObject.value(QStringLiteral("indexName")).toString(),
                                     fromJsonArray(metaObject.value(QStringLiteral("columnNames")).toArray()),
                                     isUnique};
-    const QJsonObject rebuilt = buildTreeDocument(index, entries, &error);
+    const QJsonObject rebuilt = buildTreeDocument(index, m_sourceTable, entries, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -799,7 +800,7 @@ RepositoryResult SortIndexRepo::deleteIndexEntry(const QStringList &keyValues, c
     const tabledef::IndexMeta index{metaObject.value(QStringLiteral("indexName")).toString(),
                                     fromJsonArray(metaObject.value(QStringLiteral("columnNames")).toArray()),
                                     isUnique};
-    const QJsonObject rebuilt = buildTreeDocument(index, entries, &error);
+    const QJsonObject rebuilt = buildTreeDocument(index, m_sourceTable, entries, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
@@ -836,7 +837,7 @@ RepositoryResult SortIndexRepo::updateIndexEntry(const QStringList &oldKeyValues
     const tabledef::IndexMeta index{metaObject.value(QStringLiteral("indexName")).toString(),
                                     fromJsonArray(metaObject.value(QStringLiteral("columnNames")).toArray()),
                                     isUnique};
-    const QJsonObject rebuilt = buildTreeDocument(index, entries, &error);
+    const QJsonObject rebuilt = buildTreeDocument(index, m_sourceTable, entries, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
     }
