@@ -245,8 +245,6 @@ bool validateConstraintRows(const QString &databaseName,
     if (error != nullptr) {
         error->clear();
     }
-    Q_UNUSED(databaseName);
-    Q_UNUSED(dataRoot);
 
     for (const tabledef::Constraint &constraint : schema.constraints) {
         if (tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint)) {

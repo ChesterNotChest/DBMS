@@ -98,8 +98,9 @@ QString foreignKeyActionToString(ForeignKeyAction action)
         return QStringLiteral("SET NULL");
     case ForeignKeyAction::SetDefault:
         return QStringLiteral("SET DEFAULT");
+    default:
+        return QStringLiteral("NO ACTION");
     }
-    return QStringLiteral("NO ACTION");
 }
 
 bool tryParseForeignKeyAction(const QString &value, ForeignKeyAction *action)

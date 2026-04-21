@@ -802,6 +802,54 @@ bool validateAllMutationStates(const QMap<QString, TableMutationState> &states, 
     return true;
 }
 
+void appendRollbackError(QString *error, const QString &rollbackError)
+{
+    if (error == nullptr || rollbackError.isEmpty()) {
+        return;
+    }
+    if (error->isEmpty()) {
+        *error = rollbackError;
+        return;
+    }
+    *error += QStringLiteral("; rollback failed: %1").arg(rollbackError);
+}
+
+bool restoreTableArtifacts(const QString &databaseName,
+                           const QString &tableName,
+                           const tabledef::TableSchema &schema,
+                           const repo::TableData &table,
+                           const QStringList &rowIds,
+                           QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    repo::FlatFileTableStore store(currentDataRoot);
+    const repo::RepositoryResult writeResult =
+        writeTargetTable(store,
+                         service::TargetTableKind::TableDat,
+                         databaseName,
+                         tableName,
+                         table);
+    if (!writeResult.ok) {
+        if (error != nullptr) {
+            *error = writeResult.error;
+        }
+        return false;
+    }
+
+    CurrentDatabaseGuard databaseGuard(databaseName);
+    if (!service::saveUserTableRowIds(tableName, rowIds, error)) {
+        return false;
+    }
+    if (!service::rebuildTableIndexes(tableName, schema, table, rowIds, error)) {
+        return false;
+    }
+
+    return true;
+}
+
 bool commitMutationStates(const QMap<QString, TableMutationState> &states, QString *error)
 {
     if (error != nullptr) {
@@ -855,18 +903,15 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
 
     for (int index = appliedKeys.size() - 1; index >= 0; --index) {
         const TableMutationState &state = states.value(appliedKeys.at(index));
-        writeTargetTable(store,
-                         service::TargetTableKind::TableDat,
-                         state.databaseName,
-                         state.tableName,
-                         state.originalTable);
-        CurrentDatabaseGuard databaseGuard(state.databaseName);
-        service::saveUserTableRowIds(state.tableName, state.originalRowIds, nullptr);
-        service::rebuildTableIndexes(state.tableName,
-                                     state.schema,
-                                     state.originalTable,
-                                     state.originalRowIds,
-                                     nullptr);
+        QString rollbackError;
+        if (!restoreTableArtifacts(state.databaseName,
+                                   state.tableName,
+                                   state.schema,
+                                   state.originalTable,
+                                   state.originalRowIds,
+                                   &rollbackError)) {
+            appendRollbackError(error, rollbackError);
+        }
     }
 
     return false;
@@ -1881,7 +1926,15 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
     if (targetTableKind == TargetTableKind::TableDat) {
         CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -1891,9 +1944,15 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
                                 candidateRowIds,
                                 insertedRowIndexes,
                                 &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
-            saveUserTableRowIds(targetTableName, currentRowIds, nullptr);
-            rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, nullptr);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -2111,7 +2170,15 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     if (targetTableKind == TargetTableKind::TableDat) {
         CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -2122,9 +2189,15 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                 candidateRowIds,
                                 matchedRowIndexes,
                                 &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
-            saveUserTableRowIds(targetTableName, currentRowIds, nullptr);
-            rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, nullptr);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -2316,7 +2389,15 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     if (targetTableKind == TargetTableKind::TableDat) {
         CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -2326,9 +2407,15 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
                                 currentRowIds,
                                 matchedRowIndexes,
                                 &error)) {
-            writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
-            saveUserTableRowIds(targetTableName, currentRowIds, nullptr);
-            rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, nullptr);
+            QString rollbackError;
+            if (!restoreTableArtifacts(databaseName,
+                                       targetTableName,
+                                       targetSchema,
+                                       currentTable,
+                                       currentRowIds,
+                                       &rollbackError)) {
+                appendRollbackError(&error, rollbackError);
+            }
             result.errorMessage = error;
             return result;
         }
