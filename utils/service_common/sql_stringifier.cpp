@@ -2,6 +2,7 @@
 
 namespace service {
 
+// 把 schema 对象转成 SQL/描述文本，避免 service 层直接拼接格式字符串。
 QString formatColumnDefinition(const tabledef::Column &column)
 {
     QStringList parts;
@@ -46,6 +47,7 @@ QString formatConstraintDefinition(const tabledef::Constraint &constraint)
     return constraint.name;
 }
 
+// 统一 CREATE TABLE 的输出格式，供 show create 直接复用。
 QString buildCreateTableText(const tabledef::TableSchema &schema)
 {
     QStringList lines;

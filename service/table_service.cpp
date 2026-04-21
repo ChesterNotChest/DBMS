@@ -5,6 +5,7 @@
 namespace {
 
 using service::currentDataRoot;
+using service::validateScalarValue;
 
 bool valueFitsColumnDefinition(const tabledef::Column &column, const QString &value, QString *error)
 {
@@ -21,43 +22,7 @@ bool valueFitsColumnDefinition(const tabledef::Column &column, const QString &va
         }
         return true;
     }
-
-    switch (column.type) {
-    case tabledef::ColumnType::Int: {
-        bool ok = false;
-        value.toLongLong(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to INT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Float: {
-        bool ok = false;
-        value.toDouble(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to FLOAT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Varchar:
-        if (column.length > 0 && value.size() > column.length) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' exceeds VARCHAR length %2")
-                             .arg(value)
-                             .arg(column.length);
-            }
-            return false;
-        }
-        return true;
-    }
-
-    return true;
+    return validateScalarValue(column, value, error);
 }
 
 bool rebuildModifiedColumnRows(const tabledef::Column &newColumn,

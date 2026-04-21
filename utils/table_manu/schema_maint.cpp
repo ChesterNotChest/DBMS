@@ -1,64 +1,10 @@
 #include "table_manu.h"
 
+#include "../service_common/service_common.h"
+
 #include "../../repo/repo.h"
 
 #include <QSet>
-
-namespace {
-
-QString compositeKey(const QStringList &values)
-{
-    QString signature;
-    for (const QString &value : values) {
-        signature.append(QString::number(value.size()));
-        signature.append(QLatin1Char(':'));
-        signature.append(value);
-        signature.append(QLatin1Char(';'));
-    }
-    return signature;
-}
-
-bool rowExistsInTable(const repo::TableData &table,
-                      const QStringList &columnNames,
-                      const QStringList &values,
-                      QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-
-    if (columnNames.size() != values.size()) {
-        if (error != nullptr) {
-            *error = QStringLiteral("foreign key column count does not match referenced column count");
-        }
-        return false;
-    }
-
-    for (const repo::TableRow &row : table.rows) {
-        bool matches = true;
-        for (int index = 0; index < columnNames.size(); ++index) {
-            const int columnIndex = table.columns.indexOf(columnNames.at(index));
-            if (columnIndex < 0) {
-                if (error != nullptr) {
-                    *error = QStringLiteral("column '%1' does not exist").arg(columnNames.at(index));
-                }
-                return false;
-            }
-
-            if (row.value(columnIndex) != values.at(index)) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-} // namespace
 
 namespace tabledef {
 
@@ -386,7 +332,7 @@ bool validateConstraintRows(const QString &databaseName,
                     continue;
                 }
 
-                const QString key = compositeKey(values);
+                const QString key = service::compositeKeySignature(values);
                 if (seenKeys.contains(key)) {
                     if (error != nullptr) {
                         *error = QStringLiteral("constraint '%1' is violated by duplicate values")
@@ -473,7 +419,7 @@ bool validateConstraintRows(const QString &databaseName,
             }
 
             QString rowError;
-            if (!rowExistsInTable(parentTable, constraint.referencedColumns, values, &rowError)) {
+            if (!service::rowExistsInTable(parentTable, constraint.referencedColumns, values, &rowError)) {
                 if (error != nullptr) {
                     *error = rowError.isEmpty()
                                  ? QStringLiteral("foreign key '%1' references missing parent row")

@@ -83,6 +83,7 @@ void logIndexMaintenance(const QString &message)
 
 namespace service {
 
+// 字段与约束的基础校验。
 bool validateColumnDefinition(const ColumnDefinition &definition, QString *error)
 {
     if (error != nullptr) {
@@ -117,6 +118,108 @@ bool validateColumnDefinition(const ColumnDefinition &definition, QString *error
     return true;
 }
 
+bool validateScalarValue(const tabledef::Column &column, const QString &value, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    if (value.isEmpty()) {
+        return true;
+    }
+
+    switch (column.type) {
+    case tabledef::ColumnType::Int: {
+        bool ok = false;
+        value.toLongLong(&ok);
+        if (!ok) {
+            if (error != nullptr) {
+                *error = QStringLiteral("value '%1' cannot be converted to INT").arg(value);
+            }
+            return false;
+        }
+        return true;
+    }
+    case tabledef::ColumnType::Float: {
+        bool ok = false;
+        value.toDouble(&ok);
+        if (!ok) {
+            if (error != nullptr) {
+                *error = QStringLiteral("value '%1' cannot be converted to FLOAT").arg(value);
+            }
+            return false;
+        }
+        return true;
+    }
+    case tabledef::ColumnType::Varchar:
+        if (column.length > 0 && value.size() > column.length) {
+            if (error != nullptr) {
+                *error = QStringLiteral("value '%1' exceeds VARCHAR length %2")
+                             .arg(value)
+                             .arg(column.length);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    return true;
+}
+
+// 复合键与 FK 行匹配。
+QString compositeKeySignature(const QStringList &values)
+{
+    QString signature;
+    for (const QString &value : values) {
+        signature.append(QString::number(value.size()));
+        signature.append(QLatin1Char(':'));
+        signature.append(value);
+        signature.append(QLatin1Char(';'));
+    }
+    return signature;
+}
+
+bool rowExistsInTable(const repo::TableData &table,
+                      const QStringList &columnNames,
+                      const QStringList &values,
+                      QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    if (columnNames.size() != values.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("foreign key column count does not match referenced column count");
+        }
+        return false;
+    }
+
+    for (const repo::TableRow &row : table.rows) {
+        bool matches = true;
+        for (int index = 0; index < columnNames.size(); ++index) {
+            const int columnIndex = table.columns.indexOf(columnNames.at(index));
+            if (columnIndex < 0) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("column '%1' does not exist").arg(columnNames.at(index));
+                }
+                return false;
+            }
+
+            if (row.value(columnIndex) != values.at(index)) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// 约束构造与派生约束生成。
 tabledef::Constraint makeConstraint(const QString &constraintName,
                                     tabledef::ConstraintType type,
                                     const QStringList &columns,
@@ -179,6 +282,7 @@ QList<tabledef::Constraint> buildGeneratedConstraints(const ColumnDefinition &de
     return constraints;
 }
 
+// 表/索引/row-id 的通用载入与维护。
 QList<tabledef::IndexMeta> loadUserTableIndexes(const QString &tableName, QString *error)
 {
     if (error != nullptr) {

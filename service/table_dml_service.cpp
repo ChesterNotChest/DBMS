@@ -6,6 +6,8 @@
 namespace {
 
 using service::currentDataRoot;
+using service::compositeKeySignature;
+using service::validateScalarValue;
 
 QString effectiveDatabaseName(const QString &targetDatabaseName)
 {
@@ -62,18 +64,6 @@ QStringList loadRowIdsForTargetTable(service::TargetTableKind targetTableKind,
     }
 
     return service::loadUserTableRowIds(targetTableName, currentTable, rowIdsInitialized, error);
-}
-
-QString compositeKey(const QStringList &values)
-{
-    QString signature;
-    for (const QString &value : values) {
-        signature.append(QString::number(value.size()));
-        signature.append(QLatin1Char(':'));
-        signature.append(value);
-        signature.append(QLatin1Char(';'));
-    }
-    return signature;
 }
 
 const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &schema,
@@ -177,7 +167,7 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
                 continue;
             }
 
-            const QString key = compositeKey(values);
+            const QString key = compositeKeySignature(values);
             if (seenCandidateKeys.contains(key)) {
                 if (error != nullptr) {
                     *error = QStringLiteral("constraint '%1' is violated by duplicate values").arg(constraint.name);
@@ -233,54 +223,6 @@ bool validateConstraintRowsByIndex(const QString &databaseName,
             *error = indexError;
         }
         return false;
-    }
-
-    return true;
-}
-
-bool validateScalarValue(const tabledef::Column &column, const QString &value, QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-
-    if (value.isEmpty()) {
-        return true;
-    }
-
-    switch (column.type) {
-    case tabledef::ColumnType::Int: {
-        bool ok = false;
-        value.toLongLong(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to INT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Float: {
-        bool ok = false;
-        value.toDouble(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to FLOAT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Varchar:
-        if (column.length > 0 && value.size() > column.length) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' exceeds VARCHAR length %2")
-                             .arg(value)
-                             .arg(column.length);
-            }
-            return false;
-        }
-        return true;
     }
 
     return true;
@@ -413,7 +355,7 @@ bool checkKeyUniqueness(const QString &databaseName,
                 continue;
             }
 
-            const QString key = compositeKey(values);
+            const QString key = compositeKeySignature(values);
             if (seenKeys.contains(key)) {
                 if (error != nullptr) {
                     *error = QStringLiteral("constraint '%1' is violated by duplicate values")
@@ -426,44 +368,6 @@ bool checkKeyUniqueness(const QString &databaseName,
     }
 
     return true;
-}
-
-bool rowExistsInTable(const repo::TableData &table,
-                      const QStringList &columnNames,
-                      const QStringList &values,
-                      QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-    if (columnNames.size() != values.size()) {
-        if (error != nullptr) {
-            *error = QStringLiteral("foreign key column count does not match referenced column count");
-        }
-        return false;
-    }
-
-    for (const repo::TableRow &row : table.rows) {
-        bool matches = true;
-        for (int index = 0; index < columnNames.size(); ++index) {
-            const int columnIndex = table.columns.indexOf(columnNames.at(index));
-            if (columnIndex < 0) {
-                if (error != nullptr) {
-                    *error = QStringLiteral("column '%1' does not exist").arg(columnNames.at(index));
-                }
-                return false;
-            }
-            if (row.value(columnIndex) != values.at(index)) {
-                matches = false;
-                break;
-            }
-        }
-        if (matches) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 bool validateOutgoingForeignKeys(const QString &databaseName,
@@ -518,7 +422,7 @@ bool validateOutgoingForeignKeys(const QString &databaseName,
             }
 
             QString rowError;
-            if (!rowExistsInTable(parentTable, constraint.referencedColumns, values, &rowError)) {
+            if (!service::rowExistsInTable(parentTable, constraint.referencedColumns, values, &rowError)) {
                 if (!rowError.isEmpty()) {
                     if (error != nullptr) {
                         *error = rowError;
@@ -614,7 +518,7 @@ bool validateIncomingForeignKeys(const QString &databaseName,
                 }
 
                 QString rowError;
-                if (!rowExistsInTable(candidateTable, constraint.referencedColumns, values, &rowError)) {
+                if (!service::rowExistsInTable(candidateTable, constraint.referencedColumns, values, &rowError)) {
                     if (!rowError.isEmpty()) {
                         if (error != nullptr) {
                             *error = rowError;
