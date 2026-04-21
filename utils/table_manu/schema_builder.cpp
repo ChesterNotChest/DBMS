@@ -67,10 +67,29 @@ TableSchema buildTableConstraintSchema(const QString &tableName)
         Column{QStringLiteral("referenced_table"), ColumnType::Varchar, 255, false},
         Column{QStringLiteral("referenced_columns"), ColumnType::Varchar, 1024, false},
         Column{QStringLiteral("check_clause"), ColumnType::Varchar, 2048, false},
+        Column{QStringLiteral("index_name"), ColumnType::Varchar, 255, false},
     };
     schema.constraints = {
         Constraint{QStringLiteral("pk_constraint_name"), ConstraintType::PrimaryKey,
                    {QStringLiteral("constraint_name")}, QString(), {}, QString()},
+    };
+    return schema;
+}
+
+TableSchema buildTableIndexSchema(const QString &tableName)
+{
+    Q_UNUSED(tableName);
+
+    TableSchema schema;
+    schema.tableName = QStringLiteral("table.idx");
+    schema.columns = {
+        Column{QStringLiteral("index_name"), ColumnType::Varchar, 255, true},
+        Column{QStringLiteral("column_names"), ColumnType::Varchar, 1024, true},
+        Column{QStringLiteral("is_unique"), ColumnType::Varchar, 8, true},
+    };
+    schema.constraints = {
+        Constraint{QStringLiteral("pk_index_name"), ConstraintType::PrimaryKey,
+                   {QStringLiteral("index_name")}, QString(), {}, QString(), QString()},
     };
     return schema;
 }

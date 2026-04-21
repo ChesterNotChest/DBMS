@@ -34,6 +34,7 @@ set(PROJECT_SOURCES
         repo/repo.h
         repo/database_repo.cpp
         repo/constraint_repo.cpp
+        repo/index_repo.cpp
         repo/meta_repo.cpp
         repo/tab_repo.cpp
         repo/table_repo.cpp

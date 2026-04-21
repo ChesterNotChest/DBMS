@@ -52,6 +52,7 @@ repo::TableRow toConstraintRow(const tabledef::Constraint &constraint)
         constraint.referencedTable,
         serializeColumns(constraint.referencedColumns),
         constraint.checkClause,
+        constraint.indexName,
     };
 }
 
@@ -77,6 +78,7 @@ repo::TableData migrateConstraintTableIfNeeded(const repo::TableData &table)
         migratedRow.append(looksLegacyRow ? QString() : row.value(3));
         migratedRow.append(looksLegacyRow ? QString() : row.value(4));
         migratedRow.append(looksLegacyRow ? row.value(3) : row.value(5));
+        migratedRow.append(row.size() >= 7 ? row.value(6) : QString());
 
         migrated.rows.append(migratedRow);
     }
@@ -124,6 +126,7 @@ bool constraintFromRow(const repo::TableRow &row,
     const QString referencedTable = looksLegacyRow ? QString() : row.value(3);
     const QString referencedColumnsText = looksLegacyRow ? QString() : row.value(4);
     const QString checkClause = looksLegacyRow ? row.value(3) : row.value(5);
+    const QString indexName = row.size() >= 7 ? row.value(6) : QString();
 
     QString referencedColumnsError;
     const QStringList referencedColumns =
@@ -142,6 +145,7 @@ bool constraintFromRow(const repo::TableRow &row,
         referencedTable,
         referencedColumns,
         checkClause,
+        indexName,
     };
     return true;
 }

@@ -61,6 +61,8 @@
 
 用例 5：调用 `showTables()`，期望只返回这一张表。
 
+用例 6：创建一个引用不存在父表的 FOREIGN KEY 约束表结构，期望失败。
+
 ### `test_dropTable`
 用例 1：在 `test_table_service_drop_db` 中创建 `test_table_service_drop_table_main`。
 
@@ -69,6 +71,8 @@
 用例 3：删除已存在的 `test_table_service_drop_table_main`，期望成功。
 
 用例 4：再次调用 `showTables()`，期望结果为空。
+
+用例 5：创建父表和引用它的子表后，删除父表应失败；删除子表后再删父表应成功。
 
 ### `test_addColumn`
 用例 1：在 `test_table_service_add_column_db/test_table_service_add_column_table` 中先插入一行 `{1, alice}`。
@@ -80,6 +84,11 @@
 用例 4：再次查询表数据，期望原有行自动补入默认值 `18`。
 
 用例 5：重复添加 `age` 列，期望失败。
+
+### `test_addColumnRejectsGeneratedConstraintViolation`
+用例 1：在目标表中先放入两行不同主键但相同业务列数据。
+
+用例 2：新增一个带 `UNIQUE` 的列且默认值相同，期望失败，因为存量数据会违反新约束。
 
 ### `test_deleteColumn`
 用例 1：在 `test_table_service_delete_column_db/test_table_service_delete_column_table` 中先插入一行 `{1, alice, 22}`。
@@ -101,6 +110,16 @@
 
 用例 4：修改不存在的 `missing` 列，期望失败。
 
+### `test_modifyColumnRejectsEmptyDefinitionName`
+用例 1：在 `test_table_service_modify_column_empty_name_db/test_table_service_modify_column_empty_name_table` 中创建基础表。
+
+用例 2：把 `name` 列修改成一个空列名定义，期望失败，错误信息提示列名不能为空。
+
+### `test_modifyColumnRejectsTypeConversionFailure`
+用例 1：在目标表中先插入一条字符串类型数据。
+
+用例 2：把同名列改成 `INT`，期望失败，因为现有数据无法转换。
+
 ### `test_addConstraint`
 用例 1：在 `test_table_service_add_constraint_db/test_table_service_add_constraint_table` 中创建基础表。
 
@@ -110,6 +129,23 @@
 
 用例 4：再次添加同名约束，期望失败。
 
+### `test_addConstraintRejectsDuplicateConstraintName`
+用例 1：在 `test_table_service_add_constraint_name_dup_db/test_table_service_add_constraint_name_dup_table` 中创建基础表。
+
+用例 2：添加与现有主键同名的 `UNIQUE(name)` 约束，期望失败，错误信息提示约束名已存在。
+
+### `test_addConstraintRejectsExistingDataViolations`
+用例 1：在目标表中先插入两行 `name` 相同的数据。
+
+用例 2：新增 `UNIQUE(name)`，期望失败，因为存量数据已违规。
+
+### `test_addConstraintRejectsBrokenForeignKey`
+用例 1：在目标表中准备一个外键列，但不创建父表。
+
+用例 2：添加引用不存在父表的 FOREIGN KEY，期望失败。
+
+用例 3：创建父表后，再添加引用不存在父列的 FOREIGN KEY，期望失败。
+
 ### `test_modifyConstraint`
 用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
 
@@ -118,6 +154,11 @@
 用例 3：再次查看 `showCreateTable()`，期望旧名字消失，新名字出现。
 
 用例 4：修改不存在的 `missing` 约束，期望失败。
+
+### `test_modifyConstraintRejectsBrokenForeignKey`
+用例 1：先准备一个可修改的约束。
+
+用例 2：把它改成引用不存在父表的 FOREIGN KEY，期望失败。
 
 ### `test_deleteConstraint`
 用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
@@ -182,3 +223,46 @@
 用例 3：更新子表中 `id = 10` 的 `parent_id` 为 `2`，期望成功。
 
 用例 4：把父表中 `id = 2` 的主键改成 `3`，期望失败，因为子表已经引用该键。
+
+## 索引与 row id 新增测试
+
+### `test_createIndexAndDropIndex`
+用例 1：创建一张基础表，并先插入两行 `name` 不同的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建普通索引，期望成功，并能通过 `IndexRepo` 读到该索引元数据。
+
+用例 3：通过 `SortIndexRepo::search()` 按索引列查找，期望命中对应行定位。
+
+用例 4：调用 `table_service::dropIndex()` 删除普通索引，期望成功，并且 `IndexRepo` 中不再存在该索引。
+
+用例 5：对同名索引重复创建，期望失败；对空白索引名创建，期望失败。
+
+### `test_createUniqueIndexRejectsDuplicateData`
+用例 1：创建一张基础表，并插入两行 `name` 相同的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name)`，期望失败，因为存量数据存在重复键。
+
+### `test_createUniqueIndexHandlesSeparatorLikeValues`
+用例 1：创建一张带 `name`、`age` 列的基础表，并插入两行包含旧分隔符特征值的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name, age)`，期望成功。
+
+用例 3：分别按两组复合键值调用 `SortIndexRepo::search()`，期望都能命中各自对应的行定位。
+
+### `test_boundIndexLifecycle`
+用例 1：先给表添加 `UNIQUE(name)` 约束，期望自动生成绑定索引。
+
+用例 2：通过 `IndexRepo::listIndexes()` 读取索引元数据，期望能看到绑定索引名。
+
+用例 3：修改该约束名称，期望绑定索引随之重建或改名，旧索引名不再存在。
+
+用例 4：删除该约束，期望绑定索引和 `table.idx` 记录同步删除。
+
+### `test_incrementalIndexMaintenance`
+用例 1：创建一张带 `UNIQUE(name)` 约束的表，插入两行数据。
+
+用例 2：通过 `repo::FlatFileTableStore` 读取 row id 侧车文件，期望行数与表记录数一致。
+
+用例 3：更新被索引列 `name`，期望 `SortIndexRepo::search()` 能查到新键、查不到旧键。
+
+用例 4：删除其中一行，期望 row id 侧车文件同步缩减，且索引搜索结果同步消失。

@@ -24,6 +24,15 @@ enum class ConstraintType {
     ForeignKey
 };
 
+// 单个索引的结构化定义。
+// indexName 是逻辑索引名；columnNames 记录参与索引的列；isUnique 标识是否唯一索引。
+struct IndexMeta
+{
+    QString indexName;
+    QStringList columnNames;
+    bool isUnique = false;
+};
+
 // 单个字段的结构化定义。
 // 它既可以描述用户表中的一列，也可以描述 root.dbf / .tab / .meta / .con 这些系统二维表的一列。
 struct Column
@@ -49,6 +58,7 @@ struct Constraint
     QString referencedTable;
     QStringList referencedColumns;
     QString checkClause;
+    QString indexName;
 };
 
 // 一张二维表的完整 schema 定义。
@@ -58,6 +68,7 @@ struct TableSchema
     QString tableName;
     QList<Column> columns;
     QList<Constraint> constraints;
+    QList<IndexMeta> indexes;
 };
 
 } // namespace tabledef

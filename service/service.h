@@ -158,6 +158,14 @@ TaskResult modifyColumn(const QString &tableName,
 TaskResult addConstraint(const QString &tableName,
                          const tabledef::Constraint &constraint);
 
+TaskResult createIndex(const QString &tableName,
+                      const QString &indexName,
+                      const QStringList &columnNames,
+                      bool isUnique);
+
+TaskResult dropIndex(const QString &tableName,
+                    const QString &indexName);
+
 TaskResult modifyConstraint(const QString &tableName,
                             const QString &constraintName,
                             const tabledef::Constraint &constraint);

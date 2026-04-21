@@ -35,6 +35,17 @@ bool hasColumn(const TableSchema &schema, const QString &columnName);
 int findConstraintIndex(const TableSchema &schema, const QString &constraintName);
 bool hasConstraint(const TableSchema &schema, const QString &constraintName);
 
+// 面向索引定义的 schema 查询工具。
+// 适合在 CREATE INDEX / DROP INDEX / ALTER INDEX 前做快速检查。
+QStringList schemaIndexNames(const TableSchema &schema);
+int findIndexIndex(const TableSchema &schema, const QString &indexName);
+bool hasIndex(const TableSchema &schema, const QString &indexName);
+bool sameIndexSemantics(const IndexMeta &lhs, const IndexMeta &rhs);
+bool validateIndexDefinition(const TableSchema &schema,
+						 const IndexMeta &candidate,
+						 const QString &skipIndexName = QString(),
+						 QString *error = nullptr);
+
 // 判断某个约束是否关联到指定列。
 // 在删除列或修改列时，常用于查找需要联动处理的约束。
 bool constraintTouchesColumn(const Constraint &constraint, const QString &columnName);
@@ -52,6 +63,20 @@ bool constraintTypeRequiresReferenceTarget(ConstraintType type);
 bool isForeignKeyReferenceComplete(const Constraint &constraint);
 bool isConstraintDefinitionComplete(const Constraint &constraint);
 bool hasPrimaryKeyConstraint(const TableSchema &schema);
+bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs);
+bool validateConstraintDefinitions(const TableSchema &schema,
+								   const QString &skipConstraintName = QString(),
+								   QString *error = nullptr);
+bool validateConstraintRows(const QString &databaseName,
+							const QString &dataRoot,
+							const TableSchema &schema,
+							const QStringList &tableColumns,
+							const QList<QStringList> &tableRows,
+							QString *error = nullptr);
+bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
+										   const QString &dataRoot,
+										   const QString &targetTableName,
+										   QString *error = nullptr);
 
 // 系统表 schema 构造器。
 // 这些函数统一定义 root.dbf、[database].tab、[table]/table.meta、[table]/table.con 的结构。
@@ -59,6 +84,7 @@ TableSchema buildDatabaseRootSchema();
 TableSchema buildDatabaseTableCatalogSchema(const QString &databaseName = QString());
 TableSchema buildTableMetaSchema(const QString &tableName = QString());
 TableSchema buildTableConstraintSchema(const QString &tableName = QString());
+TableSchema buildTableIndexSchema(const QString &tableName = QString());
 
 } // namespace tabledef
 
