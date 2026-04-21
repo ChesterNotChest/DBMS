@@ -85,4 +85,50 @@ bool tryParseConstraintType(const QString &value, ConstraintType *type)
     return false;
 }
 
+QString foreignKeyActionToString(ForeignKeyAction action)
+{
+    switch (action) {
+    case ForeignKeyAction::NoAction:
+        return QStringLiteral("NO ACTION");
+    case ForeignKeyAction::Restrict:
+        return QStringLiteral("RESTRICT");
+    case ForeignKeyAction::Cascade:
+        return QStringLiteral("CASCADE");
+    case ForeignKeyAction::SetNull:
+        return QStringLiteral("SET NULL");
+    case ForeignKeyAction::SetDefault:
+        return QStringLiteral("SET DEFAULT");
+    default:
+        return QStringLiteral("NO ACTION");
+    }
+}
+
+bool tryParseForeignKeyAction(const QString &value, ForeignKeyAction *action)
+{
+    if (action == nullptr) {
+        return false;
+    }
+    if (value == QStringLiteral("NO ACTION") || value == QStringLiteral("NO_ACTION")) {
+        *action = ForeignKeyAction::NoAction;
+        return true;
+    }
+    if (value == QStringLiteral("RESTRICT")) {
+        *action = ForeignKeyAction::Restrict;
+        return true;
+    }
+    if (value == QStringLiteral("CASCADE")) {
+        *action = ForeignKeyAction::Cascade;
+        return true;
+    }
+    if (value == QStringLiteral("SET NULL") || value == QStringLiteral("SET_NULL")) {
+        *action = ForeignKeyAction::SetNull;
+        return true;
+    }
+    if (value == QStringLiteral("SET DEFAULT") || value == QStringLiteral("SET_DEFAULT")) {
+        *action = ForeignKeyAction::SetDefault;
+        return true;
+    }
+    return false;
+}
+
 } // namespace tabledef

@@ -21,6 +21,10 @@ bool tryParseColumnType(const QString &value, ColumnType *type);
 QString constraintTypeToString(ConstraintType type);
 bool tryParseConstraintType(const QString &value, ConstraintType *type);
 
+// FOREIGN KEY 动作与持久化字符串之间的互转工具。
+QString foreignKeyActionToString(ForeignKeyAction action);
+bool tryParseForeignKeyAction(const QString &value, ForeignKeyAction *action);
+
 // 从 schema 中提取出二维表表头列名。
 // repo 在创建 root.dbf / .tab / .meta / .con 这类系统表时会直接使用它。
 QStringList schemaColumnNames(const TableSchema &schema);
@@ -67,16 +71,6 @@ bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs);
 bool validateConstraintDefinitions(const TableSchema &schema,
 								   const QString &skipConstraintName = QString(),
 								   QString *error = nullptr);
-bool validateConstraintRows(const QString &databaseName,
-							const QString &dataRoot,
-							const TableSchema &schema,
-							const QStringList &tableColumns,
-							const QList<QStringList> &tableRows,
-							QString *error = nullptr);
-bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
-										   const QString &dataRoot,
-										   const QString &targetTableName,
-										   QString *error = nullptr);
 
 // 系统表 schema 构造器。
 // 这些函数统一定义 root.dbf、[database].tab、[table]/table.meta、[table]/table.con 的结构。

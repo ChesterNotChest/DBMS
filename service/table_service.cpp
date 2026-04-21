@@ -5,6 +5,9 @@
 namespace {
 
 using service::currentDataRoot;
+using service::validateConstraintRows;
+using service::validateNoIncomingForeignKeyReferences;
+using service::validateScalarValue;
 
 bool valueFitsColumnDefinition(const tabledef::Column &column, const QString &value, QString *error)
 {
@@ -21,43 +24,7 @@ bool valueFitsColumnDefinition(const tabledef::Column &column, const QString &va
         }
         return true;
     }
-
-    switch (column.type) {
-    case tabledef::ColumnType::Int: {
-        bool ok = false;
-        value.toLongLong(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to INT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Float: {
-        bool ok = false;
-        value.toDouble(&ok);
-        if (!ok) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to FLOAT").arg(value);
-            }
-            return false;
-        }
-        return true;
-    }
-    case tabledef::ColumnType::Varchar:
-        if (column.length > 0 && value.size() > column.length) {
-            if (error != nullptr) {
-                *error = QStringLiteral("value '%1' exceeds VARCHAR length %2")
-                             .arg(value)
-                             .arg(column.length);
-            }
-            return false;
-        }
-        return true;
-    }
-
-    return true;
+    return validateScalarValue(column, value, error);
 }
 
 bool rebuildModifiedColumnRows(const tabledef::Column &newColumn,
@@ -216,12 +183,12 @@ TaskResult createTable(const QString &tableName,
         result.errorMessage = error;
         return result;
     }
-    if (!tabledef::validateConstraintRows(normalizedDatabaseName,
-                                          currentDataRoot,
-                                          normalizedSchema,
-                                          tabledef::schemaColumnNames(normalizedSchema),
-                                          QList<QStringList>(),
-                                          &error)) {
+    if (!validateConstraintRows(normalizedDatabaseName,
+                                currentDataRoot,
+                                normalizedSchema,
+                                tabledef::schemaColumnNames(normalizedSchema),
+                                QList<QStringList>(),
+                                &error)) {
         result.errorMessage = error;
         return result;
     }
@@ -331,10 +298,10 @@ TaskResult dropTable(const QString &tableName)
         return result;
     }
 
-    if (!tabledef::validateNoIncomingForeignKeyReferences(normalizedDatabaseName,
-                                                           currentDataRoot,
-                                                           tableName,
-                                                           &error)) {
+    if (!validateNoIncomingForeignKeyReferences(normalizedDatabaseName,
+                                                currentDataRoot,
+                                                tableName,
+                                                &error)) {
         result.errorMessage = error;
         return result;
     }
@@ -410,12 +377,12 @@ TaskResult addColumn(const QString &tableName,
         result.errorMessage = error;
         return result;
     }
-    if (!tabledef::validateConstraintRows(normalizedDatabaseName,
-                                          currentDataRoot,
-                                          candidateSchema,
-                                          table.columns,
-                                          table.rows,
-                                          &error)) {
+    if (!validateConstraintRows(normalizedDatabaseName,
+                                currentDataRoot,
+                                candidateSchema,
+                                table.columns,
+                                table.rows,
+                                &error)) {
         result.errorMessage = error;
         return result;
     }
@@ -685,12 +652,12 @@ TaskResult modifyColumn(const QString &tableName,
 
     table.columns[columnIndex] = definition.column.name;
 
-    if (!tabledef::validateConstraintRows(normalizedDatabaseName,
-                                          currentDataRoot,
-                                          candidateSchema,
-                                          table.columns,
-                                          table.rows,
-                                          &error)) {
+    if (!validateConstraintRows(normalizedDatabaseName,
+                                currentDataRoot,
+                                candidateSchema,
+                                table.columns,
+                                table.rows,
+                                &error)) {
         result.errorMessage = error;
         return result;
     }
@@ -931,12 +898,12 @@ TaskResult addConstraint(const QString &tableName,
         return result;
     }
 
-    if (!tabledef::validateConstraintRows(normalizedDatabaseName,
-                                          currentDataRoot,
-                                          candidateSchema,
-                                          table.columns,
-                                          table.rows,
-                                          &error)) {
+    if (!validateConstraintRows(normalizedDatabaseName,
+                                currentDataRoot,
+                                candidateSchema,
+                                table.columns,
+                                table.rows,
+                                &error)) {
         result.errorMessage = error;
         return result;
     }
@@ -1001,12 +968,12 @@ TaskResult modifyConstraint(const QString &tableName,
         return result;
     }
 
-    if (!tabledef::validateConstraintRows(normalizedDatabaseName,
-                                          currentDataRoot,
-                                          candidateSchema,
-                                          table.columns,
-                                          table.rows,
-                                          &error)) {
+    if (!validateConstraintRows(normalizedDatabaseName,
+                                currentDataRoot,
+                                candidateSchema,
+                                table.columns,
+                                table.rows,
+                                &error)) {
         result.errorMessage = error;
         return result;
     }

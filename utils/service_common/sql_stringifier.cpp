@@ -2,6 +2,7 @@
 
 namespace service {
 
+// 把 schema 对象转成 SQL/描述文本，避免 service 层直接拼接格式字符串。
 QString formatColumnDefinition(const tabledef::Column &column)
 {
     QStringList parts;
@@ -36,16 +37,28 @@ QString formatConstraintDefinition(const tabledef::Constraint &constraint)
     case tabledef::ConstraintType::Check:
         return QStringLiteral("CONSTRAINT %1 CHECK (%2)").arg(constraint.name, constraint.checkClause);
     case tabledef::ConstraintType::ForeignKey:
-        return QStringLiteral("CONSTRAINT %1 FOREIGN KEY (%2) REFERENCES %3(%4)")
-            .arg(constraint.name,
-                 columnList,
-                 constraint.referencedTable,
-                 constraint.referencedColumns.join(QStringLiteral(", ")));
+    {
+        QString definition = QStringLiteral("CONSTRAINT %1 FOREIGN KEY (%2) REFERENCES %3(%4)")
+                                 .arg(constraint.name,
+                                      columnList,
+                                      constraint.referencedTable,
+                                      constraint.referencedColumns.join(QStringLiteral(", ")));
+        if (constraint.onDeleteAction != tabledef::ForeignKeyAction::NoAction) {
+            definition.append(QStringLiteral(" ON DELETE %1")
+                                  .arg(tabledef::foreignKeyActionToString(constraint.onDeleteAction)));
+        }
+        if (constraint.onUpdateAction != tabledef::ForeignKeyAction::NoAction) {
+            definition.append(QStringLiteral(" ON UPDATE %1")
+                                  .arg(tabledef::foreignKeyActionToString(constraint.onUpdateAction)));
+        }
+        return definition;
+    }
     }
 
     return constraint.name;
 }
 
+// 统一 CREATE TABLE 的输出格式，供 show create 直接复用。
 QString buildCreateTableText(const tabledef::TableSchema &schema)
 {
     QStringList lines;
