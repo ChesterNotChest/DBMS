@@ -11,7 +11,7 @@
  * - column 节点：🔑主键 / 📎普通列，自动识别
  */
 #include "structure_panel.h"
-#include "../../service/service.h"
+#include "service/service.h"
 #include <QHeaderView>
 #include <QTextStream>
 #include <QFile>

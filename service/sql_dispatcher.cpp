@@ -18,27 +18,33 @@ SqlExecResult SqlDispatcher::execute(const QString& sql) {
 
 SqlExecResult SqlDispatcher::dispatch(const sqlparser::ParseResult& p) {
     if (!p.success)
-        return {false, p.errorMessage, p.errorMessage};
+        return {false, p.errorMessage, p.errorMessage, -1, {}, p.commandType, p.payload};
 
     const QString& cmd = p.commandType;
 
-    if (cmd == "CREATE_DATABASE") return execCreateDatabase(p);
-    if (cmd == "DROP_DATABASE")   return execDropDatabase(p);
-    if (cmd == "USE_DATABASE")    return execUseDatabase(p);
-    if (cmd == "SHOW_DATABASES")  return execShowDatabases(p);
+    auto fillMeta = [&](SqlExecResult &&r) -> SqlExecResult {
+        r.commandType = cmd;
+        r.payload = p.payload;
+        return std::move(r);
+    };
 
-    if (cmd == "CREATE_TABLE")    return execCreateTable(p);
-    if (cmd == "DROP_TABLE")      return execDropTable(p);
-    if (cmd == "ALTER_TABLE")     return execAlterTable(p);
-    if (cmd == "SHOW_TABLES")     return execShowTables(p);
-    if (cmd == "DESC_TABLE")      return execDescTable(p);
+    if (cmd == "CREATE_DATABASE") return fillMeta(execCreateDatabase(p));
+    if (cmd == "DROP_DATABASE")   return fillMeta(execDropDatabase(p));
+    if (cmd == "USE_DATABASE")    return fillMeta(execUseDatabase(p));
+    if (cmd == "SHOW_DATABASES")  return fillMeta(execShowDatabases(p));
 
-    if (cmd == "SELECT") return execSelect(p);
-    if (cmd == "INSERT") return execInsert(p);
-    if (cmd == "UPDATE") return execUpdate(p);
-    if (cmd == "DELETE") return execDelete(p);
+    if (cmd == "CREATE_TABLE")    return fillMeta(execCreateTable(p));
+    if (cmd == "DROP_TABLE")      return fillMeta(execDropTable(p));
+    if (cmd == "ALTER_TABLE")     return fillMeta(execAlterTable(p));
+    if (cmd == "SHOW_TABLES")     return fillMeta(execShowTables(p));
+    if (cmd == "DESC_TABLE")      return fillMeta(execDescTable(p));
 
-    return {false, "Unknown command: " + cmd};
+    if (cmd == "SELECT") return fillMeta(execSelect(p));
+    if (cmd == "INSERT") return fillMeta(execInsert(p));
+    if (cmd == "UPDATE") return fillMeta(execUpdate(p));
+    if (cmd == "DELETE") return fillMeta(execDelete(p));
+
+    return {false, "Unknown command: " + cmd, "", -1, {}, cmd, p.payload};
 }
 
 // ============================================================
@@ -178,7 +184,8 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     QStringList projection = p.payload["projection"].toStringList();
-    QList<SimpleCondition> conditions = buildConditions(p);
+    // WHERE 尚未完整实现，暂不传递条件
+    QList<SimpleCondition> conditions;
 
     auto r = tuple_service::selectRows(table, projection, conditions);
     if (r.success)
@@ -229,7 +236,8 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     auto assignments = p.payload["assignments"].value<QMap<QString, QVariant>>();
-    QList<SimpleCondition> conditions = buildConditions(p);
+    // WHERE 尚未完整实现，暂不传递条件
+    QList<SimpleCondition> conditions;
 
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
@@ -247,7 +255,8 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
         return {false, "No database selected"};
 
     QString table = p.payload["tableName"].toString();
-    QList<SimpleCondition> conditions = buildConditions(p);
+    // WHERE 尚未完整实现，暂不传递条件
+    QList<SimpleCondition> conditions;
 
     auto r = tuple_service::deleteRows(table, conditions);
     if (r.success)
@@ -259,18 +268,6 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
 // ============================================================
 //  辅助
 // ============================================================
-QList<SimpleCondition> SqlDispatcher::buildConditions(const sqlparser::ParseResult& p) {
-    QList<SimpleCondition> conditions;
-    QString col = p.payload["whereColumn"].toString();
-    if (!col.isEmpty()) {
-        SimpleCondition sc;
-        sc.columnName = col;
-        sc.value = p.payload["whereValue"].toString();
-        conditions.append(sc);
-    }
-    return conditions;
-}
-
 QString SqlDispatcher::formatSelectResult(const SelectRowsResult& r) {
     if (!r.success) return "Error: " + r.errorMessage;
 

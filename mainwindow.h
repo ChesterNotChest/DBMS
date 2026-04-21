@@ -14,7 +14,6 @@
 #include <QLineEdit>
 #include <QApplication>
 #include <QTime>
-#include <QRegularExpression>
 #include <QKeyEvent>
 
 #include "display/structure_panel.h"

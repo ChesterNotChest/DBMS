@@ -43,9 +43,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupMenuBar();
     setupToolBar();
-    setupLayout();
 
     service::setDataRoot(dataRoot());
+    setupLayout();
 
     m_resultPanel->showLog("DBMS 启动成功 " + QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
 }
@@ -245,16 +245,17 @@ void MainWindow::onExecuteRequested(const QString &sql)
         }
 
         // 检测 DDL：CREATE / DROP / ALTER → 刷新结构树
-        QString up = sql.toUpper();
-        if (up.contains("CREATE") || up.contains("DROP") || up.contains("ALTER")) {
+        if (r.commandType.startsWith("CREATE_") ||
+            r.commandType.startsWith("DROP_") ||
+            r.commandType.startsWith("ALTER_")) {
             m_structurePanel->refresh();
         }
 
         // 检测 USE：更新当前数据库状态
-        if (up.startsWith("USE")) {
-            QStringList parts = sql.trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (parts.size() >= 2) {
-                m_currentDatabase = parts[1].trimmed().chopped(1); // 去掉末尾 ;
+        if (r.commandType == "USE_DATABASE") {
+            QString dbName = r.payload["databaseName"].toString();
+            if (!dbName.isEmpty()) {
+                m_currentDatabase = dbName;
                 m_currentTable.clear();
                 updateStatusDbLabel();
                 m_structurePanel->selectDatabase(m_currentDatabase);
@@ -418,10 +419,10 @@ void MainWindow::onAbout()
         "版本：1.0<br>"
         "基于 Qt6 + CSV 文件存储<br><br>"
         "支持：<br>"
-        "CREATE / USE / DROP / SHOW<br>"
+        "CREATE DATABASE / USE / DROP / SHOW DATABASES<br>"
+        "CREATE TABLE / DROP TABLE / ALTER TABLE / DESC<br>"
         "INSERT / SELECT / UPDATE / DELETE<br>"
-        "ORDER BY / LIMIT / GROUP BY / HAVING<br>"
-        "JOIN / LIKE / 聚合函数 / 子查询<br><br>"
+        "WHERE 简单条件<br><br>"
         "快捷键：F5执行 · Ctrl+N新建 · Ctrl+W关闭");
 }
 

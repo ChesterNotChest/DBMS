@@ -16,11 +16,13 @@ namespace service {
  * SQL 执行结果，统一返回 success / errorMessage / text
  */
 struct SqlExecResult {
-    bool    success       = false;
-    QString errorMessage;
-    QString text;            // 用于 UI 显示的文本
-    int     affectedRows = -1;
+    bool        success       = false;
+    QString     errorMessage;
+    QString     text;            // 用于 UI 显示的文本
+    int         affectedRows = -1;
     SelectRowsResult selectResult;  // SELECT 的结果
+    QString     commandType;     // 解析器返回的命令类型
+    QVariantMap payload;         // 解析器返回的参数（如 databaseName, tableName）
 };
 
 /**
@@ -56,7 +58,6 @@ private:
     SqlExecResult execDelete(const sqlparser::ParseResult& p);
 
     // 辅助
-    QList<SimpleCondition> buildConditions(const sqlparser::ParseResult& p);
     QString formatSelectResult(const SelectRowsResult& r);
 };
 

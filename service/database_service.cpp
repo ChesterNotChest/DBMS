@@ -170,12 +170,12 @@ SelectRowsResult showDatabases()
 // ── 结构树专用：返回所有数据库名称列表 ──
 QStringList listAllDatabases()
 {
-    repo::DatabaseRepo repo(currentDataRoot);
-    QString error;
-    auto entries = repo.listDatabases(&error);
-    if (!error.isEmpty()) return {};
+    auto result = showDatabases();
+    if (!result.success) return {};
     QStringList names;
-    for (const auto &e : entries) names.append(e.name);
+    for (const auto &row : result.resultTable.rows) {
+        if (!row.isEmpty()) names.append(row[0]);
+    }
     return names;
 }
 
@@ -183,12 +183,16 @@ QStringList listAllDatabases()
 QStringList listTablesInDatabase(const QString &databaseName)
 {
     if (databaseName.isEmpty()) return {};
-    repo::TabRepo repo(databaseName, currentDataRoot);
-    QString error;
-    auto entries = repo.listTables(&error);
-    if (!error.isEmpty()) return {};
+    // showTables() 依赖 currentDatabase，临时切换
+    QString savedDb = currentDatabase;
+    currentDatabase = databaseName;
+    auto result = table_service::showTables();
+    currentDatabase = savedDb;
+    if (!result.success) return {};
     QStringList names;
-    for (const auto &e : entries) names.append(e.name);
+    for (const auto &row : result.resultTable.rows) {
+        if (!row.isEmpty()) names.append(row[0]);
+    }
     return names;
 }
 

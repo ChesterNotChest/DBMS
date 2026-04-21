@@ -157,4 +157,11 @@ ParseResult parseSql(const QString& sql);
 
 } // namespace sqlparser
 
+// QVariant 中存储自定义类型必须注册元类型
+Q_DECLARE_METATYPE(sqlparser::ColumnDef)
+Q_DECLARE_METATYPE(QVector<sqlparser::ColumnDef>)
+Q_DECLARE_METATYPE(QVector<QVector<QVariant>>)
+typedef QMap<QString, QVariant> QMapStringQVariant;
+Q_DECLARE_METATYPE(QMapStringQVariant)
+
 #endif // SQL_PARSER_SQL_PARSER_H

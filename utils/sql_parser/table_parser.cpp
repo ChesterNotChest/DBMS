@@ -88,9 +88,16 @@ ParseResult parseTableSql(const QString& sql) {
             }
 
             if (upper == "CONSTRAINT" || upper == "UNIQUE" || upper == "CHECK" || upper == "FOREIGN") {
-                // 跳过约束定义直到括号结束
-                while (i < rparen && tokens[i].type != TokenType::COMMA && tokens[i].type != TokenType::RPAREN)
+                // 跳过约束定义，尊重括号深度
+                int depth = 0;
+                while (i < rparen) {
+                    if (tokens[i].type == TokenType::LPAREN) depth++;
+                    else if (tokens[i].type == TokenType::RPAREN) {
+                        if (depth == 0) break;
+                        depth--;
+                    }
                     ++i;
+                }
                 continue;
             }
 
