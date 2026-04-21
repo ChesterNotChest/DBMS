@@ -68,11 +68,10 @@ WhereCondition extractSimpleWhere(const QVector<SqlToken>& tokens) {
 // ============================================================
 //  parseTupleSql
 // ============================================================
-ParseResult parseTupleSql(const QString& sql) {
-    auto tokens = SqlTokenizer::tokenize(sql);
+ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& tokens) {
     if (tokens.isEmpty()) return {false, "Empty input", "UNKNOWN", {}};
 
-    auto [cmdType, payload] = classifySql(sql, tokens);
+    auto [cmdType, payload] = classifySql("", tokens);
 
     // ── SELECT ──
     if (cmdType == "SELECT") {
@@ -283,18 +282,18 @@ ParseResult parseSql(const QString& sql) {
     // 数据库级
     if (cmdType == "CREATE_DATABASE" || cmdType == "DROP_DATABASE" ||
         cmdType == "USE_DATABASE"   || cmdType == "SHOW_DATABASES")
-        return parseDatabaseSql(sql);
+        return parseDatabaseSql(sql, tokens);
 
     // 表级
     if (cmdType == "CREATE_TABLE" || cmdType == "DROP_TABLE" ||
         cmdType == "ALTER_TABLE"  || cmdType == "SHOW_TABLES" ||
         cmdType == "DESC_TABLE")
-        return parseTableSql(sql);
+        return parseTableSql(sql, tokens);
 
     // 元组级
     if (cmdType == "SELECT" || cmdType == "INSERT" ||
         cmdType == "UPDATE"  || cmdType == "DELETE")
-        return parseTupleSql(sql);
+        return parseTupleSql(sql, tokens);
 
     return {false, "Unsupported SQL statement", "UNKNOWN", {}};
 }

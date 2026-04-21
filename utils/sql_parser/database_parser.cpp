@@ -65,8 +65,7 @@ QString extractDatabaseName(const QVector<SqlToken>& tokens) {
 // ============================================================
 //  parseDatabaseSql
 // ============================================================
-ParseResult parseDatabaseSql(const QString& sql) {
-    auto tokens = tokenize(sql);
+ParseResult parseDatabaseSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (tokens.isEmpty()) return {false, "Empty input", "UNKNOWN", {}};
 
     auto [cmdType, payload] = classifySql(sql, tokens);

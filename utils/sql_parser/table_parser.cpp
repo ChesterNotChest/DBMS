@@ -21,8 +21,7 @@ static int findKeyword(const QVector<SqlToken>& tokens, TokenType type, int from
 // ============================================================
 //  parseTableSql
 // ============================================================
-ParseResult parseTableSql(const QString& sql) {
-    auto tokens = SqlTokenizer::tokenize(sql);
+ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (tokens.isEmpty()) return {false, "Empty input", "UNKNOWN", {}};
 
     auto [cmdType, payload] = classifySql(sql, tokens);

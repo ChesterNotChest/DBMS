@@ -144,13 +144,13 @@ WhereCondition extractSimpleWhere(const QVector<SqlToken>& tokens);
 // ============================================================
 
 /** 解析数据库级 SQL（CREATE/DROP/USE/SHOW DATABASE） */
-ParseResult parseDatabaseSql(const QString& sql);
+ParseResult parseDatabaseSql(const QString& sql, const QVector<SqlToken>& tokens);
 
 /** 解析表级 SQL（CREATE/DROP/ALTER/SHOW TABLES/DESC） */
-ParseResult parseTableSql(const QString& sql);
+ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens);
 
 /** 解析元组级 SQL（SELECT/INSERT/UPDATE/DELETE） */
-ParseResult parseTupleSql(const QString& sql);
+ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens);
 
 /** 统一入口：自动判断类型并解析 */
 ParseResult parseSql(const QString& sql);
@@ -160,6 +160,8 @@ ParseResult parseSql(const QString& sql);
 // QVariant 中存储自定义类型必须注册元类型
 Q_DECLARE_METATYPE(sqlparser::ColumnDef)
 Q_DECLARE_METATYPE(QVector<sqlparser::ColumnDef>)
+Q_DECLARE_METATYPE(sqlparser::ConstraintDef)
+Q_DECLARE_METATYPE(QVector<sqlparser::ConstraintDef>)
 Q_DECLARE_METATYPE(QVector<QVector<QVariant>>)
 typedef QMap<QString, QVariant> QMapStringQVariant;
 Q_DECLARE_METATYPE(QMapStringQVariant)
