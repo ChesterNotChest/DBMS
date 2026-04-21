@@ -71,16 +71,6 @@ bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs);
 bool validateConstraintDefinitions(const TableSchema &schema,
 								   const QString &skipConstraintName = QString(),
 								   QString *error = nullptr);
-bool validateConstraintRows(const QString &databaseName,
-							const QString &dataRoot,
-							const TableSchema &schema,
-							const QStringList &tableColumns,
-							const QList<QStringList> &tableRows,
-							QString *error = nullptr);
-bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
-										   const QString &dataRoot,
-										   const QString &targetTableName,
-										   QString *error = nullptr);
 
 // 系统表 schema 构造器。
 // 这些函数统一定义 root.dbf、[database].tab、[table]/table.meta、[table]/table.con 的结构。

@@ -79,10 +79,14 @@ tabledef::TableSchema baseSchema(const QString &tableName)
     return schema;
 }
 
-tabledef::TableSchema tableWithForeignKeyColumn(const QString &tableName)
+tabledef::TableSchema tableWithForeignKeyColumn(const QString &tableName,
+                                                bool parentIdNotNull = true)
 {
     tabledef::TableSchema schema = baseSchema(tableName);
-    schema.columns.append(makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int, 0, true));
+    schema.columns.append(makeColumn(QStringLiteral("parent_id"),
+                                     tabledef::ColumnType::Int,
+                                     0,
+                                     parentIdNotNull));
     return schema;
 }
 
@@ -762,7 +766,7 @@ private slots:
         const QString childTableName = QStringLiteral("test_table_service_fk_action_child");
         ensureDatabase(databaseName, m_dataRoot);
         ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
-        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName, false), m_dataRoot);
 
         const tabledef::Constraint foreignKey = makeForeignKey(QStringLiteral("fk_test_table_service_parent"),
                                                                {QStringLiteral("parent_id")},
@@ -792,6 +796,38 @@ private slots:
         QVERIFY2(createText.success, qPrintable(createText.errorMessage));
         QVERIFY(createText.text.contains(QStringLiteral("ON DELETE CASCADE")));
         QVERIFY(createText.text.contains(QStringLiteral("ON UPDATE SET NULL")));
+    }
+
+    void test_addForeignKeyConstraintRejectsInvalidActionColumns()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_fk_action_reject_db");
+        const QString parentTableName = QStringLiteral("test_table_service_fk_action_reject_parent");
+        const QString notNullChildTableName = QStringLiteral("test_table_service_fk_action_reject_not_null_child");
+        const QString noDefaultChildTableName = QStringLiteral("test_table_service_fk_action_reject_no_default_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, notNullChildTableName, tableWithForeignKeyColumn(notNullChildTableName), m_dataRoot);
+        ensureTable(databaseName, noDefaultChildTableName, tableWithForeignKeyColumn(noDefaultChildTableName, false), m_dataRoot);
+
+        const tabledef::Constraint setNullOnNotNull = makeForeignKey(QStringLiteral("fk_test_table_service_set_null_not_null"),
+                                                                     {QStringLiteral("parent_id")},
+                                                                     parentTableName,
+                                                                     {QStringLiteral("id")},
+                                                                     tabledef::ForeignKeyAction::SetNull,
+                                                                     tabledef::ForeignKeyAction::NoAction);
+        TaskResult setNullResult = table_service::addConstraint(notNullChildTableName, setNullOnNotNull);
+        QVERIFY(!setNullResult.success);
+        QVERIFY(setNullResult.errorMessage.contains(QStringLiteral("cannot use SET NULL")));
+
+        const tabledef::Constraint setDefaultWithoutDefault = makeForeignKey(QStringLiteral("fk_test_table_service_set_default_no_default"),
+                                                                             {QStringLiteral("parent_id")},
+                                                                             parentTableName,
+                                                                             {QStringLiteral("id")},
+                                                                             tabledef::ForeignKeyAction::NoAction,
+                                                                             tabledef::ForeignKeyAction::SetDefault);
+        TaskResult setDefaultResult = table_service::addConstraint(noDefaultChildTableName, setDefaultWithoutDefault);
+        QVERIFY(!setDefaultResult.success);
+        QVERIFY(setDefaultResult.errorMessage.contains(QStringLiteral("cannot use SET DEFAULT")));
     }
 
     void test_addConstraintRejectsDuplicateConstraintName()

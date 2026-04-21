@@ -19,6 +19,16 @@ bool rowExistsInTable(const repo::TableData &table,
                       const QStringList &columnNames,
                       const QStringList &values,
                       QString *error);
+bool validateConstraintRows(const QString &databaseName,
+                            const QString &dataRoot,
+                            const tabledef::TableSchema &schema,
+                            const QStringList &tableColumns,
+                            const QList<QStringList> &tableRows,
+                            QString *error = nullptr);
+bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
+                                            const QString &dataRoot,
+                                            const QString &targetTableName,
+                                            QString *error = nullptr);
 QList<tabledef::Constraint> buildGeneratedConstraints(const ColumnDefinition &definition);
 tabledef::Constraint makeConstraint(const QString &constraintName,
                                     tabledef::ConstraintType type,

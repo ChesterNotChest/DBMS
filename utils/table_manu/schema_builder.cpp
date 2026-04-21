@@ -1,3 +1,9 @@
+/*
+ * 范围：只放 schema 构造器。
+ * 这里放：系统表、meta / con / idx 的 schema 生成。
+ * 不放：校验、持久化、DDL / DML 编排。
+ */
+
 #include "table_manu.h"
 
 namespace tabledef {
