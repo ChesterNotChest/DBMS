@@ -365,6 +365,24 @@ private slots:
         QCOMPARE(projectedRows.resultTable.rows.size(), 1);
         const QStringList projectedRow{QStringLiteral("bob")};
         QCOMPARE(rowValues(projectedRows.resultTable, 0), projectedRow);
+
+        SelectRowsResult limitedRows = tuple_service::selectRows(tableName,
+                                                                 {QStringLiteral("*")},
+                                                                 {},
+                                                                 1);
+        QVERIFY2(limitedRows.success, qPrintable(limitedRows.errorMessage));
+        QCOMPARE(limitedRows.resultTable.columns, expectedColumns);
+        QCOMPARE(limitedRows.resultTable.rows.size(), 1);
+        QCOMPARE(rowValues(limitedRows.resultTable, 0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("alice")}));
+
+        SelectRowsResult zeroRows = tuple_service::selectRows(tableName,
+                                                              {QStringLiteral("*")},
+                                                              {},
+                                                              0);
+        QVERIFY2(zeroRows.success, qPrintable(zeroRows.errorMessage));
+        QCOMPARE(zeroRows.resultTable.columns, expectedColumns);
+        QCOMPARE(zeroRows.resultTable.rows.size(), 0);
     }
 
     void test_insertRows()

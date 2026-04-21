@@ -1636,16 +1636,26 @@ bool applyForeignKeyCascade(const QString &databaseName,
 repo::TableData projectRows(const repo::TableData &table,
                             const QStringList &projectionColumns,
                             const QList<service::SimpleCondition> &conditions,
+                            int limit,
                             QString *error)
 {
     if (error != nullptr) {
         error->clear();
+    }
+    if (limit < -1) {
+        if (error != nullptr) {
+            *error = QStringLiteral("limit cannot be less than -1");
+        }
+        return {};
     }
 
     if (projectionColumns.size() == 1 && projectionColumns.first() == QStringLiteral("*")) {
         repo::TableData result = table;
         result.rows.clear();
         for (const repo::TableRow &row : table.rows) {
+            if (limit >= 0 && result.rows.size() >= limit) {
+                break;
+            }
             if (!rowMatchesConditions(row, table, conditions, error)) {
                 if (error != nullptr && !error->isEmpty()) {
                     return {};
@@ -1669,6 +1679,9 @@ repo::TableData projectRows(const repo::TableData &table,
     }
 
     for (const repo::TableRow &row : table.rows) {
+        if (limit >= 0 && result.rows.size() >= limit) {
+            break;
+        }
         if (!rowMatchesConditions(row, table, conditions, error)) {
             if (error != nullptr && !error->isEmpty()) {
                 return {};
@@ -1777,7 +1790,8 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
                                              TargetTableKind targetTableKind,
                                              const tabledef::TableSchema &targetSchema,
                                              const QStringList &projectionColumns,
-                                             const QList<SimpleCondition> &simpleConditions) const
+                                             const QList<SimpleCondition> &simpleConditions,
+                                             int limit) const
 {
     SelectRowsResult result;
 
@@ -1805,7 +1819,7 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
         return result;
     }
 
-    result.resultTable = projectRows(table, projectionColumns, simpleConditions, &error);
+    result.resultTable = projectRows(table, projectionColumns, simpleConditions, limit, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
