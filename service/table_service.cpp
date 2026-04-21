@@ -433,14 +433,50 @@ TaskResult addColumn(const QString &tableName,
     for (const tabledef::Constraint &constraint : generatedConstraints) {
         const repo::RepositoryResult constraintResult = constraintRepo.createConstraint(constraint);
         if (!constraintResult.ok) {
+            for (const tabledef::Constraint &createdConstraint : generatedConstraints) {
+                if (createdConstraint.name == constraint.name) {
+                    break;
+                }
+                if (tabledef::isPrimaryKeyConstraint(createdConstraint)
+                    || tabledef::isUniqueConstraint(createdConstraint)) {
+                    removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
+                }
+                constraintRepo.deleteConstraint(createdConstraint.name);
+            }
             metaRepo.deleteColumn(definition.column.name);
             result.errorMessage = constraintResult.error;
             return result;
         }
     }
 
+    for (const tabledef::Constraint &constraint : generatedConstraints) {
+        if (!tabledef::isPrimaryKeyConstraint(constraint)
+            && !tabledef::isUniqueConstraint(constraint)) {
+            continue;
+        }
+        if (!ensureConstraintBoundIndex(tableName, constraint, table, &error)) {
+            for (const tabledef::Constraint &createdConstraint : generatedConstraints) {
+                if (tabledef::isPrimaryKeyConstraint(createdConstraint)
+                    || tabledef::isUniqueConstraint(createdConstraint)) {
+                    removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
+                }
+                constraintRepo.deleteConstraint(createdConstraint.name);
+            }
+            metaRepo.deleteColumn(definition.column.name);
+            result.errorMessage = error;
+            return result;
+        }
+    }
+
     const repo::RepositoryResult writeResult = tableRepo.replaceTable(table);
     if (!writeResult.ok) {
+        for (const tabledef::Constraint &createdConstraint : generatedConstraints) {
+            if (tabledef::isPrimaryKeyConstraint(createdConstraint)
+                || tabledef::isUniqueConstraint(createdConstraint)) {
+                removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
+            }
+            constraintRepo.deleteConstraint(createdConstraint.name);
+        }
         result.errorMessage = writeResult.error;
         return result;
     }
@@ -621,6 +657,7 @@ TaskResult modifyColumn(const QString &tableName,
         result.errorMessage = error;
         return result;
     }
+    const repo::TableData originalTable = table;
 
     const QStringList rowIds = loadUserTableRowIds(tableName, table, nullptr, &error);
     if (!error.isEmpty()) {
@@ -689,32 +726,111 @@ TaskResult modifyColumn(const QString &tableName,
             }
             continue;
         }
+
+        repo::SortIndexRepo sortIndexRepo(normalizedDatabaseName, index.indexName, tableName, currentDataRoot);
+
+        if (isRename) {
+            if (updatedIndex.indexName == index.indexName) {
+                const repo::RepositoryResult dropResult = sortIndexRepo.dropIndex();
+                if (!dropResult.ok) {
+                    result.errorMessage = dropResult.error;
+                    return result;
+                }
+
+                const repo::RepositoryResult recreateResult = sortIndexRepo.createIndex(updatedIndex, table, rowIds);
+                if (!recreateResult.ok) {
+                    sortIndexRepo.createIndex(index, table, rowIds);
+                    result.errorMessage = recreateResult.error;
+                    return result;
+                }
+
+                const repo::RepositoryResult updateIndexResult = indexRepo.updateIndex(index.indexName, updatedIndex);
+                if (!updateIndexResult.ok) {
+                    sortIndexRepo.dropIndex();
+                    sortIndexRepo.createIndex(index, table, rowIds);
+                    result.errorMessage = updateIndexResult.error;
+                    return result;
+                }
+            } else {
+                repo::SortIndexRepo renamedSortIndexRepo(normalizedDatabaseName,
+                                                         updatedIndex.indexName,
+                                                         tableName,
+                                                         currentDataRoot);
+                const repo::RepositoryResult recreateResult = renamedSortIndexRepo.createIndex(updatedIndex, table, rowIds);
+                if (!recreateResult.ok) {
+                    result.errorMessage = recreateResult.error;
+                    return result;
+                }
+
+                const repo::RepositoryResult updateIndexResult = indexRepo.updateIndex(index.indexName, updatedIndex);
+                if (!updateIndexResult.ok) {
+                    renamedSortIndexRepo.dropIndex();
+                    result.errorMessage = updateIndexResult.error;
+                    return result;
+                }
+
+                const repo::RepositoryResult dropResult = sortIndexRepo.dropIndex();
+                if (!dropResult.ok) {
+                    result.errorMessage = dropResult.error;
+                    return result;
+                }
+            }
+            continue;
+        }
+
         const repo::RepositoryResult updateIndexResult = indexRepo.updateIndex(index.indexName, updatedIndex);
         if (!updateIndexResult.ok) {
             result.errorMessage = updateIndexResult.error;
             return result;
-        }
-
-        if (isRename) {
-            repo::SortIndexRepo sortIndexRepo(normalizedDatabaseName, index.indexName, tableName, currentDataRoot);
-            const repo::RepositoryResult dropResult = sortIndexRepo.dropIndex();
-            if (!dropResult.ok) {
-                result.errorMessage = dropResult.error;
-                return result;
-            }
-
-            const repo::RepositoryResult recreateResult = sortIndexRepo.createIndex(updatedIndex, table, rowIds);
-            if (!recreateResult.ok) {
-                result.errorMessage = recreateResult.error;
-                return result;
-            }
         }
     }
 
     for (const tabledef::Constraint &constraint : buildGeneratedConstraints(definition)) {
         const repo::RepositoryResult createConstraintResult = constraintRepo.createConstraint(constraint);
         if (!createConstraintResult.ok) {
+            for (const tabledef::Constraint &createdConstraint : buildGeneratedConstraints(definition)) {
+                if (createdConstraint.name == constraint.name) {
+                    break;
+                }
+                if (tabledef::isPrimaryKeyConstraint(createdConstraint)
+                    || tabledef::isUniqueConstraint(createdConstraint)) {
+                    removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
+                }
+                constraintRepo.deleteConstraint(createdConstraint.name);
+            }
+            for (const tabledef::Constraint &removedConstraint : schema.constraints) {
+                if (tabledef::constraintTouchesColumn(removedConstraint, columnName)) {
+                    constraintRepo.createConstraint(removedConstraint);
+                    if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                        || tabledef::isUniqueConstraint(removedConstraint)) {
+                        ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+                    }
+                }
+            }
+            tableRepo.replaceTable(originalTable);
             result.errorMessage = createConstraintResult.error;
+            return result;
+        }
+        if ((tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint))
+            && !ensureConstraintBoundIndex(tableName, constraint, table, &error)) {
+            for (const tabledef::Constraint &createdConstraint : buildGeneratedConstraints(definition)) {
+                if (tabledef::isPrimaryKeyConstraint(createdConstraint)
+                    || tabledef::isUniqueConstraint(createdConstraint)) {
+                    removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
+                }
+                constraintRepo.deleteConstraint(createdConstraint.name);
+            }
+            for (const tabledef::Constraint &removedConstraint : schema.constraints) {
+                if (tabledef::constraintTouchesColumn(removedConstraint, columnName)) {
+                    constraintRepo.createConstraint(removedConstraint);
+                    if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                        || tabledef::isUniqueConstraint(removedConstraint)) {
+                        ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+                    }
+                }
+            }
+            tableRepo.replaceTable(originalTable);
+            result.errorMessage = error;
             return result;
         }
     }
@@ -843,28 +959,38 @@ TaskResult modifyConstraint(const QString &tableName,
         return result;
     }
 
-    repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    const repo::RepositoryResult writeResult = constraintRepo.updateConstraint(constraintName, storedConstraint);
-    if (!writeResult.ok) {
-        result.errorMessage = writeResult.error;
-        return result;
-    }
-
     const QString oldBoundIndexName = boundIndexNameForConstraint(existingConstraint);
     const QString newBoundIndexName = boundIndexNameForConstraint(storedConstraint);
     const bool oldIsBound = tabledef::isPrimaryKeyConstraint(existingConstraint)
                             || tabledef::isUniqueConstraint(existingConstraint);
     const bool newIsBound = tabledef::isPrimaryKeyConstraint(storedConstraint)
                             || tabledef::isUniqueConstraint(storedConstraint);
+    const bool removeOldBoundIndex = oldIsBound && (!newIsBound || oldBoundIndexName != newBoundIndexName);
 
-    if (oldIsBound && (!newIsBound || oldBoundIndexName != newBoundIndexName)) {
-        repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
-        indexRepo.deleteIndex(oldBoundIndexName);
-        repo::SortIndexRepo(normalizedDatabaseName, oldBoundIndexName, tableName, currentDataRoot).dropIndex();
+    if (removeOldBoundIndex) {
+        QString removeError;
+        if (!removeConstraintBoundIndex(tableName, constraintName, &removeError)) {
+            result.errorMessage = removeError;
+            return result;
+        }
+    }
+
+    repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
+    const repo::RepositoryResult writeResult = constraintRepo.updateConstraint(constraintName, storedConstraint);
+    if (!writeResult.ok) {
+        if (removeOldBoundIndex) {
+            ensureConstraintBoundIndex(tableName, existingConstraint, table, nullptr);
+        }
+        result.errorMessage = writeResult.error;
+        return result;
     }
 
     if (newIsBound) {
         if (!ensureConstraintBoundIndex(tableName, storedConstraint, table, &error)) {
+            if (removeOldBoundIndex) {
+                constraintRepo.updateConstraint(constraintName, existingConstraint);
+                ensureConstraintBoundIndex(tableName, existingConstraint, table, nullptr);
+            }
             result.errorMessage = error;
             return result;
         }
@@ -892,19 +1018,20 @@ TaskResult deleteConstraint(const QString &tableName,
     }
 
     const tabledef::Constraint existingConstraint = schema.constraints.at(constraintIndex);
+    if (tabledef::isPrimaryKeyConstraint(existingConstraint)
+        || tabledef::isUniqueConstraint(existingConstraint)) {
+        QString removeError;
+        if (!removeConstraintBoundIndex(tableName, constraintName, &removeError)) {
+            result.errorMessage = removeError;
+            return result;
+        }
+    }
+
     repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
     const repo::RepositoryResult writeResult = constraintRepo.deleteConstraint(constraintName);
     if (!writeResult.ok) {
         result.errorMessage = writeResult.error;
         return result;
-    }
-
-    if (tabledef::isPrimaryKeyConstraint(existingConstraint)
-        || tabledef::isUniqueConstraint(existingConstraint)) {
-        const QString boundIndexName = boundIndexNameForConstraint(existingConstraint);
-        repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
-        indexRepo.deleteIndex(boundIndexName);
-        repo::SortIndexRepo(normalizedDatabaseName, boundIndexName, tableName, currentDataRoot).dropIndex();
     }
     result.success = true;
     return result;
@@ -1024,16 +1151,17 @@ TaskResult dropIndex(const QString &tableName,
         return result;
     }
 
+    const repo::RepositoryResult treeResult =
+        repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot).dropIndex();
+    if (!treeResult.ok) {
+        result.errorMessage = treeResult.error;
+        return result;
+    }
+
     repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
     const repo::RepositoryResult metadataResult = indexRepo.deleteIndex(indexName);
     if (!metadataResult.ok) {
         result.errorMessage = metadataResult.error;
-        return result;
-    }
-
-    const repo::RepositoryResult treeResult = repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot).dropIndex();
-    if (!treeResult.ok) {
-        result.errorMessage = treeResult.error;
         return result;
     }
 

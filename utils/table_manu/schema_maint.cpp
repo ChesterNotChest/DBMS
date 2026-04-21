@@ -414,14 +414,11 @@ bool validateConstraintRows(const QString &databaseName,
     if (error != nullptr) {
         error->clear();
     }
+    Q_UNUSED(databaseName);
+    Q_UNUSED(dataRoot);
 
     for (const Constraint &constraint : schema.constraints) {
         if (isPrimaryKeyConstraint(constraint) || isUniqueConstraint(constraint)) {
-            QString indexError;
-            if (validateUniqueConstraintByIndex(databaseName, dataRoot, schema, constraint, &indexError)) {
-                continue;
-            }
-
             QSet<QString> seenKeys;
             for (const QStringList &row : tableRows) {
                 QStringList values;

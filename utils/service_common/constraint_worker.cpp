@@ -583,6 +583,13 @@ bool removeConstraintBoundIndex(const QString &tableName,
         error->clear();
     }
 
+    if (qEnvironmentVariableIsSet("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE")) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to remove file '%1'").arg(QStringLiteral("<test-injected>"));
+        }
+        return false;
+    }
+
     const QString databaseName = normalizeDatabaseName(QString());
     QString schemaError;
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &schemaError);
@@ -607,9 +614,22 @@ bool removeConstraintBoundIndex(const QString &tableName,
                                            : constraint.indexName;
         logIndexMaintenance(QStringLiteral("remove bound index %1")
                     .arg(boundIndexName));
+        const repo::RepositoryResult treeResult =
+            repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot).dropIndex();
+        if (!treeResult.ok) {
+            if (error != nullptr) {
+                *error = treeResult.error;
+            }
+            return false;
+        }
         repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
-        indexRepo.deleteIndex(boundIndexName);
-        repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot).dropIndex();
+        const repo::RepositoryResult metadataResult = indexRepo.deleteIndex(boundIndexName);
+        if (!metadataResult.ok) {
+            if (error != nullptr) {
+                *error = metadataResult.error;
+            }
+            return false;
+        }
         return true;
     }
 

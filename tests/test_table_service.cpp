@@ -1,6 +1,7 @@
 #include "../service/service.h"
 
 #include <QDir>
+#include <QJsonArray>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -212,6 +213,81 @@ bool readSortIndexIsUnique(const QString &databaseName,
     return meta.value(QStringLiteral("isUnique")).toBool(false);
 }
 
+bool readSortIndexLeftmostLeafNext(const QString &databaseName,
+                                   const QString &tableName,
+                                   const QString &indexName,
+                                   const QString &dataRoot,
+                                   int *nextLeafId,
+                                   bool *nextLeafExists,
+                                   QString *error = nullptr)
+{
+    if (nextLeafId != nullptr) {
+        *nextLeafId = -1;
+    }
+    if (nextLeafExists != nullptr) {
+        *nextLeafExists = false;
+    }
+
+    repo::FlatFileTableStore store(dataRoot);
+    QFile file(store.getSortIndexFilePath(databaseName, tableName, indexName));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to open sort index file");
+        }
+        return false;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("sort index file is not a json object");
+        }
+        return false;
+    }
+
+    const QJsonObject root = document.object();
+    const QJsonArray nodes = root.value(QStringLiteral("nodes")).toArray();
+    QMap<int, QJsonObject> nodesById;
+    for (const QJsonValue &nodeValue : nodes) {
+        const QJsonObject nodeObject = nodeValue.toObject();
+        nodesById.insert(nodeObject.value(QStringLiteral("id")).toInt(-1), nodeObject);
+    }
+
+    int nodeId = root.value(QStringLiteral("rootId")).toInt(-1);
+    if (!nodesById.contains(nodeId)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("sort index root is missing");
+        }
+        return false;
+    }
+
+    while (!nodesById.value(nodeId).value(QStringLiteral("leaf")).toBool(true)) {
+        const QJsonArray children = nodesById.value(nodeId).value(QStringLiteral("children")).toArray();
+        if (children.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("sort index tree is malformed");
+            }
+            return false;
+        }
+        nodeId = children.first().toInt(-1);
+        if (!nodesById.contains(nodeId)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("sort index tree is malformed");
+            }
+            return false;
+        }
+    }
+
+    if (nextLeafId != nullptr) {
+        *nextLeafId = nodesById.value(nodeId).value(QStringLiteral("next")).toInt(-1);
+    }
+    if (nextLeafExists != nullptr && nextLeafId != nullptr && *nextLeafId >= 0) {
+        *nextLeafExists = nodesById.contains(*nextLeafId)
+                           && nodesById.value(*nextLeafId).value(QStringLiteral("leaf")).toBool(true);
+    }
+    return true;
+}
+
 QString readSortIndexSourceTable(const QString &databaseName,
                                  const QString &tableName,
                                  const QString &indexName,
@@ -417,6 +493,34 @@ private slots:
         QVERIFY(addResult.errorMessage.contains(QStringLiteral("duplicate")));
     }
 
+    void test_addColumnCreatesBoundIndex()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_column_bound_index_db");
+        const QString tableName = QStringLiteral("test_table_service_add_column_bound_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        ColumnDefinition addDefinition;
+        addDefinition.column = makeColumn(QStringLiteral("code"), tabledef::ColumnType::Varchar, 16, false);
+        addDefinition.unique = true;
+
+        TaskResult addResult = table_service::addColumn(tableName, addDefinition);
+        QVERIFY2(addResult.success, qPrintable(addResult.errorMessage));
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("code")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexName.isEmpty());
+
+        const bool isUnique = readSortIndexIsUnique(databaseName, tableName, indexName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(isUnique);
+    }
+
     void test_deleteColumn()
     {
         const QString databaseName = QStringLiteral("test_table_service_delete_column_db");
@@ -543,6 +647,36 @@ private slots:
         QVERIFY(modifyResult.errorMessage.contains(QStringLiteral("cannot be converted to INT")));
     }
 
+    void test_modifyColumnCreatesBoundIndex()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_column_bound_index_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_column_bound_index_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, agedSchema(tableName), m_dataRoot);
+
+        ColumnDefinition modifyDefinition;
+        modifyDefinition.column = makeColumn(QStringLiteral("age"), tabledef::ColumnType::Int, 0, false);
+        modifyDefinition.unique = true;
+
+        TaskResult modifyResult = table_service::modifyColumn(tableName,
+                                                             QStringLiteral("age"),
+                                                             modifyDefinition);
+        QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("age")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexName.isEmpty());
+
+        const bool isUnique = readSortIndexIsUnique(databaseName, tableName, indexName, m_dataRoot, &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(isUnique);
+    }
+
     void test_addConstraint()
     {
         const QString databaseName = QStringLiteral("test_table_service_add_constraint_db");
@@ -635,6 +769,48 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_modifyConstraintSurfacesBoundIndexDeletionFailure()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_constraint_delete_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_constraint_delete_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const tabledef::Constraint originalConstraint = makeUnique(QStringLiteral("uq_test_table_service_name"),
+                                                                  {QStringLiteral("name")});
+        QVERIFY(table_service::addConstraint(tableName, originalConstraint).success);
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexName.isEmpty());
+
+        qputenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE", QByteArrayLiteral("1"));
+
+        const tabledef::Constraint modifiedConstraint = makeUnique(QStringLiteral("uq_test_table_service_name_renamed"),
+                                                                  {QStringLiteral("name")});
+        const tabledef::Constraint modifiedConstraintWithNewIndex = [&]() {
+            tabledef::Constraint constraint = modifiedConstraint;
+            constraint.indexName = QStringLiteral("uq_test_table_service_name_renamed_idx");
+            return constraint;
+        }();
+        TaskResult modifyResult = table_service::modifyConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name"),
+                                                                  modifiedConstraintWithNewIndex);
+        qunsetenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE");
+        QVERIFY(!modifyResult.success);
+        QVERIFY(modifyResult.errorMessage.contains(QStringLiteral("failed to remove file")));
+
+        TextResult createText = table_service::showCreateTable(tableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("uq_test_table_service_name")));
+        QVERIFY(!createText.text.contains(QStringLiteral("uq_test_table_service_name_renamed")));
+    }
+
     void test_modifyConstraintRejectsBrokenForeignKey()
     {
         const QString databaseName = QStringLiteral("test_table_service_modify_constraint_fk_db");
@@ -679,6 +855,39 @@ private slots:
                                        QStringLiteral("missing"));
         QVERIFY(!missingResult.success);
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
+    }
+
+    void test_deleteConstraintSurfacesBoundIndexDeletionFailure()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_delete_constraint_delete_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_delete_constraint_delete_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const tabledef::Constraint uniqueConstraint = makeUnique(QStringLiteral("uq_test_table_service_name"),
+                                                                 {QStringLiteral("name")});
+        QVERIFY(table_service::addConstraint(tableName, uniqueConstraint).success);
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!indexName.isEmpty());
+
+        qputenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE", QByteArrayLiteral("1"));
+
+        TaskResult deleteResult = table_service::deleteConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name"));
+        qunsetenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE");
+        QVERIFY(!deleteResult.success);
+        QVERIFY(deleteResult.errorMessage.contains(QStringLiteral("failed to remove file")));
+
+        TextResult createText = table_service::showCreateTable(tableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("uq_test_table_service_name")));
     }
 
     void test_showTables()
@@ -775,6 +984,42 @@ private slots:
         const QStringList indexes = listedIndexes(databaseName, tableName, m_dataRoot, &error);
         QVERIFY(error.isEmpty());
         QVERIFY(!indexes.contains(indexName));
+
+        repo::FlatFileTableStore store(m_dataRoot);
+        QVERIFY(!QFile(store.getSortIndexFilePath(databaseName, tableName, indexName)).exists());
+    }
+
+    void test_sortIndexLeafNextChain()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_sort_index_leaf_next_db");
+        const QString tableName = QStringLiteral("test_table_service_sort_index_leaf_next_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("3"), QStringLiteral("carol")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("4"), QStringLiteral("diana")}, m_dataRoot);
+
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("idx_test_table_service_leaf_next"),
+                                                             {QStringLiteral("name")},
+                                                             false);
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        QString error;
+        int nextLeafId = -1;
+        bool nextLeafExists = false;
+        QVERIFY2(readSortIndexLeftmostLeafNext(databaseName,
+                                               tableName,
+                                               QStringLiteral("idx_test_table_service_leaf_next"),
+                                               m_dataRoot,
+                                               &nextLeafId,
+                                               &nextLeafExists,
+                                               &error),
+                 qPrintable(error));
+        QVERIFY(nextLeafId >= 0);
+        QVERIFY(nextLeafExists);
     }
 
     void test_primaryKeyBoundIndexIsUnique()

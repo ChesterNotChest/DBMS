@@ -346,20 +346,11 @@ bool checkKeyUniqueness(const QString &databaseName,
     if (error != nullptr) {
         error->clear();
     }
+    Q_UNUSED(databaseName);
 
     for (const tabledef::Constraint &constraint : schema.constraints) {
         if (!tabledef::isPrimaryKeyConstraint(constraint)
             && !tabledef::isUniqueConstraint(constraint)) {
-            continue;
-        }
-
-        QString indexError;
-        const bool validatedByIndex = validateConstraintRowsByIndex(databaseName,
-                                                                     schema.tableName,
-                                                                     schema,
-                                                                     constraint,
-                                                                     &indexError);
-        if (validatedByIndex) {
             continue;
         }
 
@@ -869,23 +860,21 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
 
     if (validationMode == ValidationMode::UserData) {
         QString indexError;
-        const bool allUniqueCovered = validateChangedRowsAgainstUniqueIndexes(databaseName,
-                                                                              targetTableName,
-                                                                              targetSchema,
-                                                                              candidateTable,
-                                                                              candidateRowIds,
-                                                                              insertedRowIndexes,
-                                                                              &indexError);
+        validateChangedRowsAgainstUniqueIndexes(databaseName,
+                                                targetTableName,
+                                                targetSchema,
+                                                candidateTable,
+                                                candidateRowIds,
+                                                insertedRowIndexes,
+                                                &indexError);
         if (!indexError.isEmpty()) {
             result.errorMessage = indexError;
             return result;
         }
 
         if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
-            if (!allUniqueCovered) {
-                result.errorMessage = error;
-                return result;
-            }
+            result.errorMessage = error;
+            return result;
         }
         if (targetTableKind == TargetTableKind::TableDat
             && !validateOutgoingForeignKeys(databaseName, currentDataRoot, targetSchema, candidateTable, &error)) {
@@ -1022,23 +1011,21 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
 
     if (validationMode == ValidationMode::UserData) {
         QString indexError;
-        const bool allUniqueCovered = validateChangedRowsAgainstUniqueIndexes(databaseName,
-                                                                              targetTableName,
-                                                                              targetSchema,
-                                                                              candidateTable,
-                                                                              candidateRowIds,
-                                                                              matchedRowIndexes,
-                                                                              &indexError);
+        validateChangedRowsAgainstUniqueIndexes(databaseName,
+                                                targetTableName,
+                                                targetSchema,
+                                                candidateTable,
+                                                candidateRowIds,
+                                                matchedRowIndexes,
+                                                &indexError);
         if (!indexError.isEmpty()) {
             result.errorMessage = indexError;
             return result;
         }
 
         if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
-            if (!allUniqueCovered) {
-                result.errorMessage = error;
-                return result;
-            }
+            result.errorMessage = error;
+            return result;
         }
         if (targetTableKind == TargetTableKind::TableDat
             && !validateOutgoingForeignKeys(databaseName, currentDataRoot, targetSchema, candidateTable, &error)) {
