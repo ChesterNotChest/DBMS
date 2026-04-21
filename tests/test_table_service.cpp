@@ -97,6 +97,46 @@ tabledef::TableSchema agedSchema(const QString &tableName)
     return schema;
 }
 
+tabledef::TableSchema selfReferenceSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema = baseSchema(tableName);
+    schema.columns.append(makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int, 0, false));
+    schema.constraints.append(makeForeignKey(QStringLiteral("fk_%1_self_parent").arg(tableName),
+                                             {QStringLiteral("parent_id")},
+                                             tableName,
+                                             {QStringLiteral("id")},
+                                             tabledef::ForeignKeyAction::Cascade,
+                                             tabledef::ForeignKeyAction::Cascade));
+    return schema;
+}
+
+tabledef::TableSchema codeParentSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema = baseSchema(tableName);
+    schema.columns.append(makeColumn(QStringLiteral("code"), tabledef::ColumnType::Varchar, 32, true));
+    schema.constraints.append(makeUnique(QStringLiteral("uq_%1_code").arg(tableName),
+                                         {QStringLiteral("code")}));
+    return schema;
+}
+
+tabledef::TableSchema plainCodeParentSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema = baseSchema(tableName);
+    schema.columns.append(makeColumn(QStringLiteral("code"), tabledef::ColumnType::Varchar, 32, true));
+    return schema;
+}
+
+tabledef::TableSchema codeChildSchema(const QString &tableName, const QString &parentTableName)
+{
+    tabledef::TableSchema schema = baseSchema(tableName);
+    schema.columns.append(makeColumn(QStringLiteral("parent_code"), tabledef::ColumnType::Varchar, 32, true));
+    schema.constraints.append(makeForeignKey(QStringLiteral("fk_%1_parent_code").arg(tableName),
+                                             {QStringLiteral("parent_code")},
+                                             parentTableName,
+                                             {QStringLiteral("code")}));
+    return schema;
+}
+
 void ensureDatabase(const QString &databaseName, const QString &dataRoot)
 {
     Q_UNUSED(dataRoot);
@@ -429,6 +469,22 @@ private slots:
         QVERIFY(brokenFkResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_createTableWithSelfReferenceForeignKey()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_self_ref_db");
+        const QString tableName = QStringLiteral("test_table_service_create_self_ref_table");
+        ensureDatabase(databaseName, m_dataRoot);
+
+        TaskResult createResult = table_service::createTable(tableName, selfReferenceSchema(tableName));
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        TextResult createText = table_service::showCreateTable(tableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("fk_%1_self_parent").arg(tableName)));
+        QVERIFY(createText.text.contains(QStringLiteral("ON DELETE CASCADE")));
+        QVERIFY(createText.text.contains(QStringLiteral("ON UPDATE CASCADE")));
+    }
+
     void test_dropTable()
     {
         const QString databaseName = QStringLiteral("test_table_service_drop_db");
@@ -593,6 +649,34 @@ private slots:
         TaskResult missingResult = table_service::deleteColumn(tableName, QStringLiteral("missing"));
         QVERIFY(!missingResult.success);
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
+    }
+
+    void test_deleteColumnRejectsForeignKeyColumns()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_delete_column_fk_db");
+        const QString parentTableName = QStringLiteral("test_table_service_delete_column_fk_parent");
+        const QString childTableName = QStringLiteral("test_table_service_delete_column_fk_child");
+        const QString codeParentTableName = QStringLiteral("test_table_service_delete_column_fk_code_parent");
+        const QString codeChildTableName = QStringLiteral("test_table_service_delete_column_fk_code_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName), m_dataRoot);
+        QVERIFY(table_service::addConstraint(childTableName,
+                                             makeForeignKey(QStringLiteral("fk_test_table_service_delete_column_parent"),
+                                                            {QStringLiteral("parent_id")},
+                                                            parentTableName,
+                                                            {QStringLiteral("id")})).success);
+
+        TaskResult childColumnDelete = table_service::deleteColumn(childTableName, QStringLiteral("parent_id"));
+        QVERIFY(!childColumnDelete.success);
+        QVERIFY(childColumnDelete.errorMessage.contains(QStringLiteral("foreign key")));
+
+        ensureTable(databaseName, codeParentTableName, plainCodeParentSchema(codeParentTableName), m_dataRoot);
+        ensureTable(databaseName, codeChildTableName, codeChildSchema(codeChildTableName, codeParentTableName), m_dataRoot);
+
+        TaskResult incomingColumnDelete = table_service::deleteColumn(codeParentTableName, QStringLiteral("code"));
+        QVERIFY(!incomingColumnDelete.success);
+        QVERIFY(incomingColumnDelete.errorMessage.contains(QStringLiteral("referenced by foreign key")));
     }
 
     void test_modifyColumn()
@@ -915,6 +999,53 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_modifyForeignKeyConstraintWithActions()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_fk_action_db");
+        const QString parentTableName = QStringLiteral("test_table_service_modify_fk_action_parent");
+        const QString childTableName = QStringLiteral("test_table_service_modify_fk_action_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName, false), m_dataRoot);
+
+        const tabledef::Constraint originalConstraint = makeForeignKey(QStringLiteral("fk_test_table_service_modify_parent"),
+                                                                       {QStringLiteral("parent_id")},
+                                                                       parentTableName,
+                                                                       {QStringLiteral("id")});
+        QVERIFY(table_service::addConstraint(childTableName, originalConstraint).success);
+
+        const tabledef::Constraint modifiedConstraint = makeForeignKey(QStringLiteral("fk_test_table_service_modify_parent"),
+                                                                       {QStringLiteral("parent_id")},
+                                                                       parentTableName,
+                                                                       {QStringLiteral("id")},
+                                                                       tabledef::ForeignKeyAction::Cascade,
+                                                                       tabledef::ForeignKeyAction::SetNull);
+        TaskResult modifyResult = table_service::modifyConstraint(childTableName,
+                                                                  QStringLiteral("fk_test_table_service_modify_parent"),
+                                                                  modifiedConstraint);
+        QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        QString error;
+        repo::ConstraintRepo constraintRepo(databaseName, childTableName, m_dataRoot);
+        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&error);
+        QVERIFY(error.isEmpty());
+
+        bool foundConstraint = false;
+        for (const tabledef::Constraint &constraint : constraints) {
+            if (constraint.name == QStringLiteral("fk_test_table_service_modify_parent")) {
+                QCOMPARE(constraint.onDeleteAction, tabledef::ForeignKeyAction::Cascade);
+                QCOMPARE(constraint.onUpdateAction, tabledef::ForeignKeyAction::SetNull);
+                foundConstraint = true;
+            }
+        }
+        QVERIFY(foundConstraint);
+
+        TextResult createText = table_service::showCreateTable(childTableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("ON DELETE CASCADE")));
+        QVERIFY(createText.text.contains(QStringLiteral("ON UPDATE SET NULL")));
+    }
+
     void test_modifyConstraintUpdatesExistingBoundIndexMetadata()
     {
         const QString databaseName = QStringLiteral("test_table_service_modify_constraint_meta_db");
@@ -1053,6 +1184,35 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_deleteForeignKeyConstraintRemovesProtection()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_delete_fk_constraint_db");
+        const QString parentTableName = QStringLiteral("test_table_service_delete_fk_constraint_parent");
+        const QString childTableName = QStringLiteral("test_table_service_delete_fk_constraint_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName), m_dataRoot);
+
+        const tabledef::Constraint foreignKey = makeForeignKey(QStringLiteral("fk_test_table_service_delete_fk"),
+                                                               {QStringLiteral("parent_id")},
+                                                               parentTableName,
+                                                               {QStringLiteral("id")},
+                                                               tabledef::ForeignKeyAction::Cascade,
+                                                               tabledef::ForeignKeyAction::Cascade);
+        QVERIFY(table_service::addConstraint(childTableName, foreignKey).success);
+
+        TaskResult restrictedDrop = table_service::dropTable(parentTableName);
+        QVERIFY(!restrictedDrop.success);
+        QVERIFY(restrictedDrop.errorMessage.contains(QStringLiteral("referenced by foreign key")));
+
+        TaskResult deleteResult = table_service::deleteConstraint(childTableName,
+                                                                  QStringLiteral("fk_test_table_service_delete_fk"));
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        TaskResult parentDrop = table_service::dropTable(parentTableName);
+        QVERIFY2(parentDrop.success, qPrintable(parentDrop.errorMessage));
+    }
+
     void test_deleteConstraintSurfacesBoundIndexDeletionFailure()
     {
         const QString databaseName = QStringLiteral("test_table_service_delete_constraint_delete_fail_db");
@@ -1116,6 +1276,29 @@ private slots:
         QVERIFY(describeResult.text.contains(QStringLiteral("name")));
         QVERIFY(describeResult.text.contains(QStringLiteral("age")));
         QVERIFY(describeResult.text.contains(QStringLiteral("UNIQUE")));
+    }
+
+    void test_describeTableShowsForeignKeyActions()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_describe_fk_action_db");
+        const QString parentTableName = QStringLiteral("test_table_service_describe_fk_action_parent");
+        const QString childTableName = QStringLiteral("test_table_service_describe_fk_action_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName, false), m_dataRoot);
+        QVERIFY(table_service::addConstraint(childTableName,
+                                             makeForeignKey(QStringLiteral("fk_test_table_service_describe_parent"),
+                                                            {QStringLiteral("parent_id")},
+                                                            parentTableName,
+                                                            {QStringLiteral("id")},
+                                                            tabledef::ForeignKeyAction::Cascade,
+                                                            tabledef::ForeignKeyAction::SetNull)).success);
+
+        TextResult describeResult = table_service::describeTable(childTableName);
+        QVERIFY2(describeResult.success, qPrintable(describeResult.errorMessage));
+        QVERIFY(describeResult.text.contains(QStringLiteral("FOREIGN KEY")));
+        QVERIFY(describeResult.text.contains(QStringLiteral("ON DELETE CASCADE")));
+        QVERIFY(describeResult.text.contains(QStringLiteral("ON UPDATE SET NULL")));
     }
 
     void test_showCreateTable()

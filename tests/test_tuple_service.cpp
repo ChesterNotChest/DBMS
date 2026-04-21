@@ -394,6 +394,31 @@ private slots:
         QVERIFY(invalidChildInsert.errorMessage.contains(QStringLiteral("missing parent row")));
     }
 
+    void test_insertRowsSelfReferenceBatch()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_insert_self_ref_db");
+        const QString tableName = QStringLiteral("test_tuple_service_insert_self_ref_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, selfReferenceSchema(tableName), m_dataRoot);
+
+        TaskResult insertResult = tuple_service::insertRows(tableName,
+                                                            makeRows({
+                                                                makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                                         {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                                         {QStringLiteral("note"), QStringLiteral("child")}}),
+                                                                makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                                         {QStringLiteral("note"), QStringLiteral("root")}}),
+                                                            }));
+        QVERIFY2(insertResult.success, qPrintable(insertResult.errorMessage));
+
+        const repo::TableData table = loadTable(databaseName, tableName, m_dataRoot);
+        QCOMPARE(table.rows.size(), 2);
+        QCOMPARE(rowValues(table, 0),
+                 QStringList({QStringLiteral("2"), QStringLiteral("1"), QStringLiteral("child")}));
+        QCOMPARE(rowValues(table, 1),
+                 QStringList({QStringLiteral("1"), QString(), QStringLiteral("root")}));
+    }
+
     void test_deleteRows()
     {
         const QString databaseName = QStringLiteral("test_tuple_service_delete_db");
@@ -1144,6 +1169,51 @@ private slots:
         QCOMPARE(childTable.rows.size(), 1);
         QCOMPARE(rowValues(childTable, 0),
                  QStringList({QStringLiteral("10"), QStringLiteral("0"), QStringLiteral("child")}));
+    }
+
+    void test_deleteRowsSetDefaultRejectsMissingDefaultParentAndRollsBack()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_delete_set_default_missing_parent_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_delete_set_default_missing_parent_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_delete_set_default_missing_parent_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                true,
+                                QStringLiteral("0"),
+                                tabledef::ForeignKeyAction::SetDefault,
+                                tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child")}}),
+                                          })).success);
+
+        TaskResult deleteResult = tuple_service::deleteRows(parentTableName,
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY(!deleteResult.success);
+        QVERIFY(deleteResult.errorMessage.contains(QStringLiteral("missing parent row")));
+
+        const repo::TableData parentTable = loadTable(databaseName, parentTableName, m_dataRoot);
+        QCOMPARE(parentTable.rows.size(), 1);
+        QCOMPARE(rowValues(parentTable, 0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("alice")}));
+
+        const repo::TableData childTable = loadTable(databaseName, childTableName, m_dataRoot);
+        QCOMPARE(childTable.rows.size(), 1);
+        QCOMPARE(rowValues(childTable, 0),
+                 QStringList({QStringLiteral("10"), QStringLiteral("1"), QStringLiteral("child")}));
     }
 
     void test_updateRowsSetDefaultRejectsMissingDefaultParentAndRollsBack()
