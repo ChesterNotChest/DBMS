@@ -378,15 +378,4 @@ TextResult showCreateTable(const QString &tableName)
     return result;
 }
 
-// ── 结构树专用：返回指定表的列名列表 ──
-QStringList listTableColumns(const QString &tableName)
-{
-    QString error;
-    tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
-    if (!error.isEmpty()) return {};
-    QStringList cols;
-    for (const tabledef::Column &c : schema.columns) cols.append(c.name);
-    return cols;
-}
-
 } // namespace service::table_service

@@ -167,33 +167,4 @@ SelectRowsResult showDatabases()
                                  {});
 }
 
-// ── 结构树专用：返回所有数据库名称列表 ──
-QStringList listAllDatabases()
-{
-    auto result = showDatabases();
-    if (!result.success) return {};
-    QStringList names;
-    for (const auto &row : result.resultTable.rows) {
-        if (!row.isEmpty()) names.append(row[0]);
-    }
-    return names;
-}
-
-// ── 结构树专用：返回指定数据库下的所有表名称 ──
-QStringList listTablesInDatabase(const QString &databaseName)
-{
-    if (databaseName.isEmpty()) return {};
-    // showTables() 依赖 currentDatabase，临时切换
-    QString savedDb = currentDatabase;
-    currentDatabase = databaseName;
-    auto result = table_service::showTables();
-    currentDatabase = savedDb;
-    if (!result.success) return {};
-    QStringList names;
-    for (const auto &row : result.resultTable.rows) {
-        if (!row.isEmpty()) names.append(row[0]);
-    }
-    return names;
-}
-
 } // namespace service::database_service

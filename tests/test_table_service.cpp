@@ -433,7 +433,7 @@ private slots:
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         QCOMPARE(result.commandType, QStringLiteral("CREATE_TABLE"));
 
-        const auto columns = result.payload.value<QVector<sqlparser::ColumnDef>>(QStringLiteral("columns"));
+        const auto columns = result.payload.value(QStringLiteral("columns")).value<QVector<sqlparser::ColumnDef>>();
         QCOMPARE(columns.size(), 3);
         QCOMPARE(columns.at(0).name, QStringLiteral("id"));
         QCOMPARE(columns.at(1).name, QStringLiteral("student_id"));

@@ -74,28 +74,10 @@ struct TableCommand {
     ConstraintDef constraintDef;
 };
 
-// ============================================================
-//  元组级解析结果
-// ============================================================
-struct WhereCondition {
-    QString     leftColumn;
-    QString     leftTable;    // 可选，多表查询
-    QString     op;          // =, !=, <, >, <=, >=, LIKE, IN, IS NULL, IS NOT NULL
-    QVariant    rightValue;
-    QString     rightColumn;  // 列对列比较
-    bool        negated    = false;
-
-    // 组合
-    QString     logicOp;      // AND / OR
-    WhereCondition* leftChild  = nullptr;
-    WhereCondition* rightChild = nullptr;
-};
-
 struct SelectCommand {
     QStringList projection;      // 列名列表，"*" 表示所有列
     QString     table;
     QStringList tables;         // 多表查询
-    WhereCondition* whereClause = nullptr;
 };
 
 struct InsertCommand {
@@ -107,12 +89,10 @@ struct InsertCommand {
 struct UpdateCommand {
     QString            table;
     QMap<QString, QVariant> assignments;  // SET col = val
-    WhereCondition*    whereClause   = nullptr;
 };
 
 struct DeleteCommand {
     QString            table;
-    WhereCondition*    whereClause   = nullptr;
 };
 
 struct TupleCommand {
@@ -135,9 +115,6 @@ QString extractDatabaseName(const QVector<SqlToken>& tokens);
 
 /** 从 token 流中提取表名 */
 QString extractTableName(const QVector<SqlToken>& tokens);
-
-/** 简化 WHERE 条件：仅处理单条件 col op val，不处理嵌套 AND/OR */
-WhereCondition extractSimpleWhere(const QVector<SqlToken>& tokens);
 
 // ============================================================
 //  各级解析器

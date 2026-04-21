@@ -16,6 +16,58 @@
 #include <QTextStream>
 #include <QFile>
 
+namespace {
+
+QStringList firstColumnValues(const service::SelectRowsResult &result)
+{
+    QStringList values;
+    if (!result.success) return values;
+    for (const auto &row : result.resultTable.rows) {
+        if (!row.isEmpty()) values.append(row.first());
+    }
+    return values;
+}
+
+QStringList listDatabaseNamesForTree()
+{
+    return firstColumnValues(service::database_service::showDatabases());
+}
+
+QStringList listTableNamesForTree(const QString &databaseName)
+{
+    if (databaseName.isEmpty()) return {};
+
+    const QString savedDatabase = service::currentDatabase;
+    service::currentDatabase = databaseName;
+    const QStringList tableNames = firstColumnValues(service::table_service::showTables());
+    service::currentDatabase = savedDatabase;
+    return tableNames;
+}
+
+QStringList listColumnNamesForTree(const QString &databaseName, const QString &tableName)
+{
+    if (tableName.isEmpty()) return {};
+
+    const QString savedDatabase = service::currentDatabase;
+    if (!databaseName.isEmpty()) service::currentDatabase = databaseName;
+    const service::TextResult result = service::table_service::describeTable(tableName);
+    service::currentDatabase = savedDatabase;
+
+    QStringList columnNames;
+    if (!result.success) return columnNames;
+
+    const QStringList lines = result.text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty()) continue;
+        if (line.startsWith(QStringLiteral("CONSTRAINT"), Qt::CaseInsensitive)) continue;
+        columnNames.append(line.section(QLatin1Char(' '), 0, 0));
+    }
+    return columnNames;
+}
+
+} // namespace
+
 StructurePanel::StructurePanel(QWidget *parent)
     : QWidget(parent)
     , m_currentDatabase("")
@@ -123,7 +175,7 @@ void StructurePanel::loadStructure()
     m_treeWidget->clear();
 
     // 调用 service 层获取所有数据库名称
-    QStringList dbNames = service::database_service::listAllDatabases();
+    QStringList dbNames = listDatabaseNamesForTree();
     dbNames.sort();
 
     for (const QString &dbName : dbNames) {
@@ -141,7 +193,7 @@ void StructurePanel::loadStructure()
         }
 
         // 调用 service 层获取该库下的所有表名
-        QStringList tblNames = service::database_service::listTablesInDatabase(dbName);
+        QStringList tblNames = listTableNamesForTree(dbName);
         tblNames.sort();
 
         for (const QString &tblName : tblNames) {
@@ -170,7 +222,7 @@ void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
     if (tItem->childCount() > 0) return;
 
     // 调用 service 层读取列信息
-    QStringList columns = service::table_service::listTableColumns(tableName);
+    QStringList columns = listColumnNamesForTree(dbName, tableName);
 
     for (const QString &colName : columns) {
         // 主键识别：id / pk / _id 后缀 / tableNameId

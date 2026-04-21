@@ -24,6 +24,25 @@
 #include <QKeyEvent>
 #include <QVBoxLayout>
 
+namespace {
+
+QStringList firstColumnValues(const service::SelectRowsResult &result)
+{
+    QStringList values;
+    if (!result.success) return values;
+    for (const auto &row : result.resultTable.rows) {
+        if (!row.isEmpty()) values.append(row.first());
+    }
+    return values;
+}
+
+QStringList listDatabaseNamesForDialog()
+{
+    return firstColumnValues(service::database_service::showDatabases());
+}
+
+} // namespace
+
 QString MainWindow::dataRoot() const
 {
     return QApplication::applicationDirPath() + "/data";
@@ -357,7 +376,7 @@ void MainWindow::onNewDatabase()
 void MainWindow::onOpenDatabase()
 {
     service::setDataRoot(dataRoot());
-    QStringList dbs = service::database_service::listAllDatabases();
+    QStringList dbs = listDatabaseNamesForDialog();
     if (dbs.isEmpty()) {
         m_resultPanel->showError("暂无可用数据库，请先新建！");
         return;
@@ -376,7 +395,7 @@ void MainWindow::onOpenDatabase()
 void MainWindow::onDeleteDatabase()
 {
     service::setDataRoot(dataRoot());
-    QStringList dbs = service::database_service::listAllDatabases();
+    QStringList dbs = listDatabaseNamesForDialog();
     if (dbs.isEmpty()) {
         m_resultPanel->showError("没有可删除的数据库！");
         return;
