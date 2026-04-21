@@ -22,15 +22,15 @@ set(PROJECT_SOURCES
         utils/table_manu/type_utils.cpp
         utils/table_manu/schema_maint.cpp
         utils/table_manu/schema_builder.cpp
+        utils/service_common/service_common.h
+        utils/service_common/name_normalize.cpp
+        utils/service_common/constraint_worker.cpp
+        utils/service_common/sql_stringifier.cpp
         service/service.h
         service/database_service.cpp
         service/table_service.cpp
         service/tuple_service.cpp
         service/table_dml_service.cpp
-        utils/service_common/service_common.h
-        utils/service_common/name_normalize.cpp
-        utils/service_common/constraint_worker.cpp
-        utils/service_common/sql_stringifier.cpp
         repo/repo.h
         repo/database_repo.cpp
         repo/constraint_repo.cpp
@@ -43,6 +43,23 @@ set(PROJECT_SOURCES
         tests/test_database_service.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp
+        # ── SQL Parser 层（纯解析，不碰文件系统）──
+        utils/sql_parser/sql_tokenizer.h
+        utils/sql_parser/sql_tokenizer.cpp
+        utils/sql_parser/sql_parser.h
+        utils/sql_parser/database_parser.cpp
+        utils/sql_parser/table_parser.cpp
+        utils/sql_parser/tuple_parser.cpp
+        # ── SQL Dispatcher（桥接 parser → service）──
+        service/sql_dispatcher.h
+        service/sql_dispatcher.cpp
+        # ── Display 层（Qt 界面，不碰 repo）──
+        display/editor_panel.h
+        display/editor_panel.cpp
+        display/result_panel.h
+        display/result_panel.cpp
+        display/structure_panel.h
+        display/structure_panel.cpp
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -68,6 +85,12 @@ else()
     endif()
 endif()
 
+target_include_directories(DBMS PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/sql_parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/display
+)
+
 target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Test)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -81,7 +104,7 @@ set_target_properties(DBMS PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
+    # WIN32_EXECUTABLE TRUE  # temporarily disabled to see console output
 )
 
 include(GNUInstallDirs)
