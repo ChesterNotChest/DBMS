@@ -4,7 +4,8 @@ namespace service::tuple_service {
 
 SelectRowsResult selectRows(const QString &tableName,
                             const QStringList &projectionColumns,
-                            const QList<SimpleCondition> &conditions)
+                            const QList<SimpleCondition> &conditions,
+                            int limit)
 {
     TableDmlService dmlService;
     const QString databaseName = normalizeDatabaseName(QString());
@@ -13,7 +14,8 @@ SelectRowsResult selectRows(const QString &tableName,
                                  TargetTableKind::TableDat,
                                  loadUserTableSchema(tableName, nullptr),
                                  projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
-                                 conditions);
+                                 conditions,
+                                 limit);
 }
 
 TaskResult insertRows(const QString &tableName,
