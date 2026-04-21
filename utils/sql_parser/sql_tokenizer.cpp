@@ -24,6 +24,7 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "SELECT")         return TokenType::SELECT;
     if (w == "FROM")           return TokenType::FROM;
     if (w == "WHERE")          return TokenType::WHERE;
+    if (w == "LIMIT")          return TokenType::LIMIT;
     if (w == "INSERT")         return TokenType::INSERT;
     if (w == "INTO")           return TokenType::INTO;
     if (w == "VALUES")         return TokenType::VALUES;

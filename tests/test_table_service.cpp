@@ -1,4 +1,6 @@
 #include "../service/service.h"
+#include "../service/sql_dispatcher.h"
+#include "../utils/sql_parser/sql_parser.h"
 
 #include <QDir>
 #include <QJsonArray>
@@ -1315,6 +1317,104 @@ private slots:
         QVERIFY(createText.text.startsWith(QStringLiteral("CREATE TABLE")));
         QVERIFY(createText.text.contains(QStringLiteral("age")));
         QVERIFY(createText.text.contains(QStringLiteral("CONSTRAINT")));
+    }
+
+    void test_parseCreateTableWithCompositeConstraints()
+    {
+        const QString sql = QStringLiteral(
+            "CREATE TABLE student_score ("
+            "id INT, "
+            "student_id INT, "
+            "course_id INT, "
+            "CONSTRAINT uq_student_course UNIQUE (student_id, course_id), "
+            "FOREIGN KEY (student_id, course_id) REFERENCES course(id, id)"
+            ")");
+
+        const sqlparser::ParseResult result = sqlparser::parseSql(sql);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.commandType, QStringLiteral("CREATE_TABLE"));
+
+        const QVariantList columns = result.payload.value(QStringLiteral("columns")).toList();
+        QCOMPARE(columns.size(), 3);
+        QCOMPARE(columns.at(0).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("id"));
+        QCOMPARE(columns.at(1).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("student_id"));
+        QCOMPARE(columns.at(2).toMap().value(QStringLiteral("name")).toString(), QStringLiteral("course_id"));
+
+        const QVariantList constraints = result.payload.value(QStringLiteral("constraints")).toList();
+        QCOMPARE(constraints.size(), 2);
+        QCOMPARE(constraints.at(0).toMap().value(QStringLiteral("type")).toString(), QStringLiteral("UNIQUE"));
+        QCOMPARE(constraints.at(0).toMap().value(QStringLiteral("columns")).toStringList(),
+                 QStringList({QStringLiteral("student_id"), QStringLiteral("course_id")}));
+        QCOMPARE(constraints.at(1).toMap().value(QStringLiteral("type")).toString(), QStringLiteral("FOREIGN_KEY"));
+        QCOMPARE(constraints.at(1).toMap().value(QStringLiteral("referencedColumns")).toStringList(),
+                 QStringList({QStringLiteral("id"), QStringLiteral("id")}));
+    }
+
+    void test_dispatcherCreateTablePreservesSchemaConstraints()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_dispatcher_create_db");
+        const QString tableName = QStringLiteral("test_table_service_dispatcher_create_table");
+        ensureDatabase(databaseName, m_dataRoot);
+
+        SqlDispatcher dispatcher;
+        const QString sql = QStringLiteral(
+            "CREATE TABLE %1 ("
+            "id INT AUTO_INCREMENT, "
+            "code VARCHAR(32) NOT NULL DEFAULT 7 UNIQUE, "
+            "name VARCHAR(64), "
+            "PRIMARY KEY (id)"
+            ")").arg(tableName);
+
+        const SqlExecResult execResult = dispatcher.execute(sql);
+        QVERIFY2(execResult.success, qPrintable(execResult.errorMessage));
+
+        QString error;
+        const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(schema.columns.size(), 3);
+        QCOMPARE(schema.columns.at(0).autoIncrement, true);
+        QCOMPARE(schema.columns.at(1).notNull, true);
+        QCOMPARE(schema.columns.at(1).defaultValue, QStringLiteral("7"));
+
+        int primaryKeyCount = 0;
+        int uniqueCount = 0;
+        for (const tabledef::Constraint &constraint : schema.constraints) {
+            if (constraint.type == tabledef::ConstraintType::PrimaryKey) {
+                ++primaryKeyCount;
+            } else if (constraint.type == tabledef::ConstraintType::Unique) {
+                ++uniqueCount;
+            }
+        }
+        QCOMPARE(primaryKeyCount, 1);
+        QCOMPARE(uniqueCount, 1);
+
+        TextResult createText = table_service::showCreateTable(tableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("AUTO_INCREMENT")));
+        QVERIFY(createText.text.contains(QStringLiteral("DEFAULT 7")));
+        QVERIFY(createText.text.contains(QStringLiteral("UNIQUE")));
+        QVERIFY(createText.text.contains(QStringLiteral("PRIMARY KEY")));
+    }
+
+    void test_dispatcherSelectLimitAndRejectsWhere()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_dispatcher_select_limit_db");
+        const QString tableName = QStringLiteral("test_table_service_dispatcher_select_limit_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult limitedResult = dispatcher.execute(
+            QStringLiteral("SELECT * FROM %1 LIMIT 1").arg(tableName));
+        QVERIFY2(limitedResult.success, qPrintable(limitedResult.errorMessage));
+        QCOMPARE(limitedResult.selectResult.resultTable.rows.size(), 1);
+
+        const SqlExecResult whereResult = dispatcher.execute(
+            QStringLiteral("SELECT * FROM %1 WHERE id = 1").arg(tableName));
+        QVERIFY(!whereResult.success);
+        QVERIFY(whereResult.errorMessage.contains(QStringLiteral("WHERE is not supported")));
     }
 
     void test_createIndexAndDropIndex()

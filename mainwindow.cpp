@@ -449,8 +449,7 @@ void MainWindow::onAbout()
         "支持：<br>"
         "CREATE DATABASE / USE / DROP / SHOW DATABASES<br>"
         "CREATE TABLE / DROP TABLE / ALTER TABLE / DESC<br>"
-        "INSERT / SELECT / UPDATE / DELETE<br>"
-        "WHERE 简单条件<br><br>"
+        "INSERT / SELECT / UPDATE / DELETE<br><br>"
         "快捷键：F5执行 · Ctrl+N新建 · Ctrl+W关闭");
 }
 

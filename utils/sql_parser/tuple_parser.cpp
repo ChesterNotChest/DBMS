@@ -42,27 +42,57 @@ static int findMatchingParen(const QVector<SqlToken>& tokens, int lparen) {
     return -1;
 }
 
-// ============================================================
-//  extractSimpleWhere
-// ============================================================
-WhereCondition extractSimpleWhere(const QVector<SqlToken>& tokens) {
-    WhereCondition cond;
-    // 查找 WHERE 关键字
+static bool hasWhereClause(const QVector<SqlToken>& tokens)
+{
     for (int i = 0; i < tokens.size(); ++i) {
         if (tokens[i].type == TokenType::WHERE) {
-            // 简单解析：col op val
-            if (i + 1 < tokens.size() && tokens[i + 1].type == TokenType::IDENTIFIER)
-                cond.leftColumn = tokens[i + 1].lexeme;
-            if (i + 2 < tokens.size()) {
-                cond.op = tokens[i + 2].lexeme;
-            }
-            if (i + 3 < tokens.size()) {
-                cond.rightValue = tokens[i + 3].lexeme;
-            }
-            break;
+            return true;
         }
     }
-    return cond;
+    return false;
+}
+
+static bool parseSelectLimit(const QVector<SqlToken>& tokens,
+                             int from,
+                             int *limit,
+                             QString *error)
+{
+    if (limit != nullptr) *limit = -1;
+    if (error != nullptr) error->clear();
+
+    for (int i = from; i < tokens.size(); ++i) {
+        if (tokens[i].type == TokenType::END_OF_INPUT || tokens[i].type == TokenType::SEMICOLON) {
+            break;
+        }
+
+        if (tokens[i].type == TokenType::LIMIT) {
+            if (limit != nullptr && *limit != -1) {
+                if (error != nullptr) *error = QStringLiteral("SELECT: duplicate LIMIT clause");
+                return false;
+            }
+            if (i + 1 >= tokens.size() || tokens[i + 1].type != TokenType::INTEGER_LIT) {
+                if (error != nullptr) *error = QStringLiteral("SELECT: LIMIT requires a non-negative integer");
+                return false;
+            }
+
+            bool ok = false;
+            const int parsedLimit = tokens[i + 1].lexeme.toInt(&ok);
+            if (!ok || parsedLimit < 0) {
+                if (error != nullptr) *error = QStringLiteral("SELECT: LIMIT requires a non-negative integer");
+                return false;
+            }
+            if (limit != nullptr) *limit = parsedLimit;
+            ++i;
+            continue;
+        }
+
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: unsupported clause '%1'").arg(tokens[i].lexeme);
+        }
+        return false;
+    }
+
+    return true;
 }
 
 // ============================================================
@@ -75,9 +105,14 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
 
     // ── SELECT ──
     if (cmdType == "SELECT") {
-        // SELECT cols FROM table [WHERE cond]
+        if (hasWhereClause(tokens)) {
+            return {false, "WHERE is not supported yet", cmdType, {}};
+        }
+
+        // SELECT cols FROM table
         QStringList projection;
         QString table;
+        int tableIndex = -1;
 
         int fromIdx = -1;
         for (int i = 1; i < tokens.size(); ++i) {
@@ -91,23 +126,22 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
         if (fromIdx >= 0) {
             for (int i = fromIdx + 1; i < tokens.size(); ++i) {
                 if (tokens[i].type == TokenType::IDENTIFIER)
-                    { table = tokens[i].lexeme; break; }
+                    { table = tokens[i].lexeme; tableIndex = i; break; }
             }
         }
 
         if (table.isEmpty())
             return {false, "SELECT: expected FROM table", cmdType, {}};
 
+        int limit = -1;
+        QString limitError;
+        if (!parseSelectLimit(tokens, tableIndex + 1, &limit, &limitError)) {
+            return {false, limitError, cmdType, {}};
+        }
+
         payload["projection"] = projection;
         payload["tableName"] = table;
-
-        // WHERE
-        WhereCondition where = extractSimpleWhere(tokens);
-        if (!where.leftColumn.isEmpty()) {
-            payload["whereColumn"] = where.leftColumn;
-            payload["whereOp"] = where.op;
-            payload["whereValue"] = where.rightValue;
-        }
+        payload["limit"] = limit;
 
         return {true, "", cmdType, payload};
     }
@@ -117,7 +151,7 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
         // INSERT INTO table (col1, col2) VALUES (v1, v2)
         QString table;
         QStringList columnNames;
-        QVector<QVector<QVariant>> rows;
+        QVariantList rows;
 
         // 找 INTO 和表名
         int intoIdx = -1;
@@ -164,7 +198,7 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
                 if (rp < 0) break;
 
                 QStringList vals = splitCommaList(tokens, i + 1, rp - 1);
-                QVector<QVariant> row;
+                QVariantList row;
                 for (const QString& v : vals) {
                     bool isInt;
                     int intVal = v.toInt(&isInt);
@@ -186,15 +220,19 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
         payload["tableName"] = table;
         payload["columnNames"] = columnNames;
         payload["rowCount"] = rows.size();
-        payload["rows"] = QVariant::fromValue(rows);
+        payload["rows"] = rows;
         return {true, "", cmdType, payload};
     }
 
     // ── UPDATE ──
     if (cmdType == "UPDATE") {
-        // UPDATE table SET col=val [WHERE cond]
+        if (hasWhereClause(tokens)) {
+            return {false, "WHERE is not supported yet", cmdType, {}};
+        }
+
+        // UPDATE table SET col=val
         QString table;
-        QMap<QString, QVariant> assignments;
+        QVariantMap assignments;
 
         int setIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -218,31 +256,28 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
                 if (i + 1 < tokens.size() && tokens[i + 1].type == TokenType::EQ && i + 2 < tokens.size()) {
                     QString val = tokens[i + 2].lexeme;
                     bool isInt; int intVal = val.toInt(&isInt);
-                    if (isInt) assignments[col] = intVal;
+                    if (isInt) assignments.insert(col, intVal);
                     else { bool isFloat; double fv = val.toDouble(&isFloat);
-                           if (isFloat) assignments[col] = fv;
-                           else assignments[col] = val; }
+                           if (isFloat) assignments.insert(col, fv);
+                           else assignments.insert(col, val); }
                     i += 2;
                 }
             }
         }
 
         payload["tableName"] = table;
-        payload["assignments"] = QVariant::fromValue(assignments);
-
-        WhereCondition where = extractSimpleWhere(tokens);
-        if (!where.leftColumn.isEmpty()) {
-            payload["whereColumn"] = where.leftColumn;
-            payload["whereOp"] = where.op;
-            payload["whereValue"] = where.rightValue;
-        }
+        payload["assignments"] = assignments;
 
         return {true, "", cmdType, payload};
     }
 
     // ── DELETE ──
     if (cmdType == "DELETE") {
-        // DELETE FROM table [WHERE cond]
+        if (hasWhereClause(tokens)) {
+            return {false, "WHERE is not supported yet", cmdType, {}};
+        }
+
+        // DELETE FROM table
         QString table;
 
         int fromIdx = -1;
@@ -258,13 +293,6 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
             return {false, "DELETE: expected table name", cmdType, {}};
 
         payload["tableName"] = table;
-
-        WhereCondition where = extractSimpleWhere(tokens);
-        if (!where.leftColumn.isEmpty()) {
-            payload["whereColumn"] = where.leftColumn;
-            payload["whereOp"] = where.op;
-            payload["whereValue"] = where.rightValue;
-        }
 
         return {true, "", cmdType, payload};
     }

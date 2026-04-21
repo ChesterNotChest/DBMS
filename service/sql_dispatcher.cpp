@@ -9,6 +9,123 @@
 
 namespace service {
 
+namespace {
+
+tabledef::ColumnType columnTypeFromSql(const QString &type)
+{
+    const QString normalized = type.toUpper();
+    if (normalized == QStringLiteral("INT") || normalized == QStringLiteral("INTEGER")) {
+        return tabledef::ColumnType::Int;
+    }
+    if (normalized == QStringLiteral("FLOAT")
+        || normalized == QStringLiteral("DOUBLE")
+        || normalized == QStringLiteral("REAL")) {
+        return tabledef::ColumnType::Float;
+    }
+    return tabledef::ColumnType::Varchar;
+}
+
+tabledef::ConstraintType constraintTypeFromPayload(const QString &type)
+{
+    const QString normalized = type.toUpper();
+    if (normalized == QStringLiteral("PRIMARY_KEY")) return tabledef::ConstraintType::PrimaryKey;
+    if (normalized == QStringLiteral("UNIQUE")) return tabledef::ConstraintType::Unique;
+    if (normalized == QStringLiteral("FOREIGN_KEY")) return tabledef::ConstraintType::ForeignKey;
+    return tabledef::ConstraintType::Check;
+}
+
+tabledef::ForeignKeyAction foreignKeyActionFromPayload(const QString &value)
+{
+    const QString normalized = value.trimmed().toUpper();
+    if (normalized == QStringLiteral("CASCADE")) return tabledef::ForeignKeyAction::Cascade;
+    if (normalized == QStringLiteral("RESTRICT")) return tabledef::ForeignKeyAction::Restrict;
+    if (normalized == QStringLiteral("SET NULL")) return tabledef::ForeignKeyAction::SetNull;
+    if (normalized == QStringLiteral("SET DEFAULT")) return tabledef::ForeignKeyAction::SetDefault;
+    return tabledef::ForeignKeyAction::NoAction;
+}
+
+QString generatedTableConstraintName(const QString &tableName,
+                                     const QString &prefix,
+                                     const QStringList &columns,
+                                     int ordinal)
+{
+    const QString columnPart = columns.isEmpty()
+                                   ? QString::number(ordinal)
+                                   : columns.join(QStringLiteral("_"));
+    return QStringLiteral("%1_%2_%3").arg(prefix, tableName, columnPart);
+}
+
+tabledef::Column columnFromPayload(const QVariantMap &columnMap)
+{
+    tabledef::Column column;
+    column.name = columnMap.value(QStringLiteral("name")).toString();
+    column.type = columnTypeFromSql(columnMap.value(QStringLiteral("type")).toString());
+    column.length = columnMap.value(QStringLiteral("length"), 255).toInt();
+    if (column.length < 0 && column.type == tabledef::ColumnType::Varchar) {
+        column.length = 255;
+    }
+    column.notNull = columnMap.value(QStringLiteral("notNull")).toBool();
+    column.defaultValue = columnMap.value(QStringLiteral("defaultValue")).toString();
+    column.autoIncrement = columnMap.value(QStringLiteral("autoIncrement")).toBool();
+    column.check = columnMap.value(QStringLiteral("checkClause")).toString();
+    return column;
+}
+
+ColumnDefinition columnDefinitionFromPayload(const QVariantMap &columnMap)
+{
+    ColumnDefinition definition;
+    definition.column = columnFromPayload(columnMap);
+    definition.primaryKey = columnMap.value(QStringLiteral("primaryKey")).toBool();
+    definition.unique = columnMap.value(QStringLiteral("unique")).toBool();
+    definition.referencedTable = columnMap.value(QStringLiteral("referencesTable")).toString();
+    definition.referencedColumns = columnMap.value(QStringLiteral("referencedColumns")).toStringList();
+    definition.onDeleteAction = foreignKeyActionFromPayload(columnMap.value(QStringLiteral("onDeleteAction")).toString());
+    definition.onUpdateAction = foreignKeyActionFromPayload(columnMap.value(QStringLiteral("onUpdateAction")).toString());
+    definition.checkClause = columnMap.value(QStringLiteral("checkClause")).toString();
+    return definition;
+}
+
+tabledef::Constraint constraintFromPayload(const QVariantMap &constraintMap,
+                                           const QString &tableName,
+                                           int ordinal)
+{
+    tabledef::Constraint constraint;
+    constraint.type = constraintTypeFromPayload(constraintMap.value(QStringLiteral("type")).toString());
+    constraint.columns = constraintMap.value(QStringLiteral("columns")).toStringList();
+    constraint.referencedTable = constraintMap.value(QStringLiteral("referencedTable")).toString();
+    constraint.referencedColumns = constraintMap.value(QStringLiteral("referencedColumns")).toStringList();
+    constraint.checkClause = constraintMap.value(QStringLiteral("checkClause")).toString();
+    constraint.onDeleteAction = foreignKeyActionFromPayload(constraintMap.value(QStringLiteral("onDeleteAction")).toString());
+    constraint.onUpdateAction = foreignKeyActionFromPayload(constraintMap.value(QStringLiteral("onUpdateAction")).toString());
+
+    constraint.name = constraintMap.value(QStringLiteral("name")).toString().trimmed();
+    if (constraint.name.isEmpty()) {
+        switch (constraint.type) {
+        case tabledef::ConstraintType::PrimaryKey:
+            constraint.name = generatedTableConstraintName(tableName, QStringLiteral("pk"), constraint.columns, ordinal);
+            break;
+        case tabledef::ConstraintType::Unique:
+            constraint.name = generatedTableConstraintName(tableName, QStringLiteral("uq"), constraint.columns, ordinal);
+            break;
+        case tabledef::ConstraintType::ForeignKey:
+            constraint.name = generatedTableConstraintName(tableName, QStringLiteral("fk"), constraint.columns, ordinal);
+            break;
+        case tabledef::ConstraintType::Check:
+            constraint.name = generatedTableConstraintName(tableName, QStringLiteral("ck"), constraint.columns, ordinal);
+            break;
+        }
+    }
+
+    return constraint;
+}
+
+bool payloadHasMap(const sqlparser::ParseResult &p, const QString &key)
+{
+    return p.payload.contains(key) && p.payload.value(key).typeId() == QMetaType::QVariantMap;
+}
+
+} // namespace
+
 // ============================================================
 //  统一入口
 // ============================================================
@@ -93,36 +210,32 @@ SqlExecResult SqlDispatcher::execCreateTable(const sqlparser::ParseResult& p) {
     tabledef::TableSchema schema;
     schema.tableName = tableName;
 
-    auto cols = p.payload["columns"].value<QVector<sqlparser::ColumnDef>>();
-    for (const auto& c : cols) {
-        ColumnDefinition definition;
-        tabledef::Column col;
-        col.name = c.name;
-        col.notNull = c.notNull;
-        col.length = c.length > 0 ? c.length : 255;
-        col.defaultValue = c.defaultValue;
-        col.autoIncrement = c.autoIncrement;
-        col.check = c.checkClause;
+    const QVariantList columns = p.payload.value(QStringLiteral("columns")).toList();
+    if (columns.isEmpty()) {
+        return {false, QStringLiteral("CREATE TABLE: columns payload is empty or incomplete")};
+    }
 
-        QString t = c.type.toUpper();
-        if (t == "INT" || t == "INTEGER")       col.type = tabledef::ColumnType::Int;
-        else if (t == "FLOAT" || t == "DOUBLE")  col.type = tabledef::ColumnType::Float;
-        else col.type = tabledef::ColumnType::Varchar;
-
-        definition.column = col;
-        definition.primaryKey = c.primaryKey;
-        definition.unique = c.unique;
-        definition.referencedTable = c.referencesTable;
-        if (!c.referencesColumn.isEmpty()) {
-            definition.referencedColumns = {c.referencesColumn};
+    for (const QVariant &columnValue : columns) {
+        const QVariantMap columnMap = columnValue.toMap();
+        if (columnMap.value(QStringLiteral("name")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("CREATE TABLE: column payload is incomplete")};
         }
-        definition.checkClause = c.checkClause;
 
-        schema.columns.append(col);
+        const ColumnDefinition definition = columnDefinitionFromPayload(columnMap);
+        schema.columns.append(definition.column);
         const QList<tabledef::Constraint> generatedConstraints = buildGeneratedConstraints(definition);
         for (const tabledef::Constraint &constraint : generatedConstraints) {
             schema.constraints.append(constraint);
         }
+    }
+
+    const QVariantList constraints = p.payload.value(QStringLiteral("constraints")).toList();
+    for (int i = 0; i < constraints.size(); ++i) {
+        const QVariantMap constraintMap = constraints.at(i).toMap();
+        if (constraintMap.value(QStringLiteral("type")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("CREATE TABLE: constraint payload is incomplete")};
+        }
+        schema.constraints.append(constraintFromPayload(constraintMap, tableName, i + 1));
     }
 
     auto r = table_service::createTable(tableName, schema);
@@ -144,33 +257,57 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
     QString action = p.payload["alterAction"].toString();
 
     if (action == "ADD_COLUMN") {
-        ColumnDefinition colDef;
-        colDef.column.name = p.payload["columnName"].toString();
+        if (!payloadHasMap(p, QStringLiteral("column"))) {
+            return {false, QStringLiteral("ALTER TABLE ADD COLUMN requires a complete column payload")};
+        }
+        ColumnDefinition colDef = columnDefinitionFromPayload(p.payload.value(QStringLiteral("column")).toMap());
         auto r = table_service::addColumn(tableName, colDef);
         if (r.success) return {true, {}, "Column added"};
         return {false, r.errorMessage};
     }
     if (action == "DROP_COLUMN") {
         QString colName = p.payload["columnName"].toString();
+        if (colName.trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE DROP COLUMN requires columnName")};
+        }
         auto r = table_service::deleteColumn(tableName, colName);
         if (r.success) return {true, {}, "Column dropped"};
         return {false, r.errorMessage};
     }
     if (action == "MODIFY_COLUMN") {
-        ColumnDefinition colDef;
-        colDef.column.name = p.payload["columnName"].toString();
+        if (!payloadHasMap(p, QStringLiteral("column"))) {
+            return {false, QStringLiteral("ALTER TABLE MODIFY COLUMN requires a complete column payload")};
+        }
+        ColumnDefinition colDef = columnDefinitionFromPayload(p.payload.value(QStringLiteral("column")).toMap());
         auto r = table_service::modifyColumn(tableName, colDef.column.name, colDef);
         if (r.success) return {true, {}, "Column modified"};
         return {false, r.errorMessage};
     }
     if (action == "ADD_CONSTRAINT") {
-        tabledef::Constraint con;
+        if (!payloadHasMap(p, QStringLiteral("constraint"))) {
+            return {false, QStringLiteral("ALTER TABLE ADD CONSTRAINT requires a complete constraint payload")};
+        }
+        tabledef::Constraint con = constraintFromPayload(p.payload.value(QStringLiteral("constraint")).toMap(), tableName, 1);
         auto r = table_service::addConstraint(tableName, con);
         if (r.success) return {true, {}, "Constraint added"};
         return {false, r.errorMessage};
     }
+    if (action == "MODIFY_CONSTRAINT") {
+        if (!payloadHasMap(p, QStringLiteral("constraint"))
+            || p.payload.value(QStringLiteral("constraintName")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE MODIFY CONSTRAINT requires complete constraint payload")};
+        }
+        const QString constraintName = p.payload.value(QStringLiteral("constraintName")).toString();
+        tabledef::Constraint con = constraintFromPayload(p.payload.value(QStringLiteral("constraint")).toMap(), tableName, 1);
+        auto r = table_service::modifyConstraint(tableName, constraintName, con);
+        if (r.success) return {true, {}, "Constraint modified"};
+        return {false, r.errorMessage};
+    }
     if (action == "DROP_CONSTRAINT") {
         QString conName = p.payload["constraintName"].toString();
+        if (conName.trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE DROP CONSTRAINT requires constraintName")};
+        }
         auto r = table_service::deleteConstraint(tableName, conName);
         if (r.success) return {true, {}, "Constraint dropped"};
         return {false, r.errorMessage};
@@ -211,10 +348,11 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     QStringList projection = p.payload["projection"].toStringList();
+    const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
 
-    auto r = tuple_service::selectRows(table, projection, conditions);
+    auto r = tuple_service::selectRows(table, projection, conditions, limit);
     if (r.success)
         return {true, {}, formatSelectResult(r), r.affectedRowCount, r};
     return {false, r.errorMessage};
@@ -226,7 +364,7 @@ SqlExecResult SqlDispatcher::execInsert(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     int rowCount = p.payload["rowCount"].toInt();
-    auto rows = p.payload["rows"].value<QVector<QVector<QVariant>>>();
+    const QVariantList rows = p.payload.value(QStringLiteral("rows")).toList();
     auto colNamesFromParser = p.payload["columnNames"].value<QStringList>();
 
     // 加载表 schema 以获取真实列名（用于无列名列表的 INSERT）
@@ -240,12 +378,13 @@ SqlExecResult SqlDispatcher::execInsert(const sqlparser::ParseResult& p) {
     }
 
     QList<QMap<QString, QString>> rowData;
-    for (const auto& r : rows) {
+    for (const QVariant& rowValue : rows) {
+        const QVariantList values = rowValue.toList();
         QMap<QString, QString> row;
-        for (int i = 0; i < r.size(); ++i) {
+        for (int i = 0; i < values.size(); ++i) {
             // 有显式列名时用列名；无列名时用 schema 的真实列名
             QString key = (i < colNames.size()) ? colNames[i] : QString::number(i);
-            row[key] = r[i].toString();
+            row[key] = values[i].toString();
         }
         rowData.append(row);
     }
@@ -262,7 +401,7 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
         return {false, "No database selected"};
 
     QString table = p.payload["tableName"].toString();
-    auto assignments = p.payload["assignments"].value<QMap<QString, QVariant>>();
+    const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
 
