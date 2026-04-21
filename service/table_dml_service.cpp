@@ -104,6 +104,48 @@ QStringList loadRowIdsForTargetTable(const QString &databaseName,
     return service::loadUserTableRowIds(targetTableName, currentTable, rowIdsInitialized, error);
 }
 
+QStringList generateTransientRowIds(int count)
+{
+    QStringList rowIds;
+    rowIds.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        rowIds.append(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    }
+    return rowIds;
+}
+
+QStringList loadRowIdsWithoutSideEffects(const QString &databaseName,
+                                         const QString &tableName,
+                                         const repo::TableData &tableData,
+                                         QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    repo::FlatFileTableStore store(currentDataRoot);
+    const QString rowIdPath = store.getRowIdFilePath(databaseName, tableName);
+    if (!store.exists(rowIdPath)) {
+        return generateTransientRowIds(tableData.rows.size());
+    }
+
+    QString rowIdError;
+    const repo::TableData rowIdTable = store.readTable(rowIdPath, &rowIdError);
+    const bool isUsable = rowIdError.isEmpty()
+                          && rowIdTable.columns == QStringList{QStringLiteral("row_id")}
+                          && rowIdTable.rows.size() == tableData.rows.size();
+    if (!isUsable) {
+        return generateTransientRowIds(tableData.rows.size());
+    }
+
+    QStringList rowIds;
+    rowIds.reserve(rowIdTable.rows.size());
+    for (const repo::TableRow &row : rowIdTable.rows) {
+        rowIds.append(row.value(0));
+    }
+    return rowIds;
+}
+
 const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &schema,
                                                const tabledef::Constraint &constraint)
 {
@@ -432,24 +474,14 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
     }
     state.candidateTable = state.originalTable;
 
-    CurrentDatabaseGuard databaseGuard(databaseName);
-    bool rowIdsInitialized = false;
-    state.originalRowIds = service::loadUserTableRowIds(tableName,
+    state.originalRowIds = loadRowIdsWithoutSideEffects(databaseName,
+                                                        tableName,
                                                         state.originalTable,
-                                                        &rowIdsInitialized,
                                                         error);
     if (error != nullptr && !error->isEmpty()) {
         return nullptr;
     }
     state.candidateRowIds = state.originalRowIds;
-    if (rowIdsInitialized
-        && !service::rebuildTableIndexes(tableName,
-                                         state.schema,
-                                         state.originalTable,
-                                         state.originalRowIds,
-                                         error)) {
-        return nullptr;
-    }
 
     states->insert(key, state);
     return &(*states)[key];
@@ -1012,13 +1044,18 @@ bool validateIncomingForeignKeys(const QString &databaseName,
             return false;
         }
 
-        repo::TableData childTable = repo::TableRepo(databaseName, tableEntry.name, dataRoot)
-                                         .readTable(&constraintError);
-        if (!constraintError.isEmpty()) {
-            if (error != nullptr) {
-                *error = constraintError;
+        repo::TableData childTable;
+        if (tableEntry.name == targetTableName) {
+            childTable = candidateTable;
+        } else {
+            childTable = repo::TableRepo(databaseName, tableEntry.name, dataRoot)
+                             .readTable(&constraintError);
+            if (!constraintError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = constraintError;
+                }
+                return false;
             }
-            return false;
         }
 
         for (const tabledef::Constraint &constraint : constraints) {
@@ -1169,7 +1206,6 @@ void visitForeignKeyGraph(const QString &tableName,
 
 ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
                                             const QString &rootTableName,
-                                            QMap<QString, TableMutationState> *states,
                                             QString *error)
 {
     if (error != nullptr) {
@@ -1188,13 +1224,13 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
     }
 
     for (const repo::TableEntry &tableEntry : tableEntries) {
-        TableMutationState *childState =
-            ensureTableMutationState(databaseName, tableEntry.name, states, error);
-        if (childState == nullptr) {
+        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
+        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(error);
+        if (error != nullptr && !error->isEmpty()) {
             return {};
         }
 
-        for (const tabledef::Constraint &constraint : childState->schema.constraints) {
+        for (const tabledef::Constraint &constraint : constraints) {
             if (!tabledef::isForeignKeyConstraint(constraint)) {
                 continue;
             }
@@ -2002,7 +2038,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         }
 
         const ForeignKeyCascadePlan cascadePlan =
-            planForeignKeyCascade(databaseName, targetTableName, &mutationStates, &error);
+            planForeignKeyCascade(databaseName, targetTableName, &error);
         if (!error.isEmpty()) {
             result.errorMessage = error;
             return result;
@@ -2207,7 +2243,7 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
         }
 
         const ForeignKeyCascadePlan cascadePlan =
-            planForeignKeyCascade(databaseName, targetTableName, &mutationStates, &error);
+            planForeignKeyCascade(databaseName, targetTableName, &error);
         if (!error.isEmpty()) {
             result.errorMessage = error;
             return result;

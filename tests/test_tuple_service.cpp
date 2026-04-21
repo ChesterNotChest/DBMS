@@ -144,7 +144,9 @@ tabledef::TableSchema parentIdReferenceSchema(const QString &tableName,
     return schema;
 }
 
-tabledef::TableSchema selfReferenceSchema(const QString &tableName)
+tabledef::TableSchema selfReferenceSchema(const QString &tableName,
+                                          tabledef::ForeignKeyAction onDeleteAction,
+                                          tabledef::ForeignKeyAction onUpdateAction)
 {
     tabledef::TableSchema schema;
     schema.tableName = tableName;
@@ -159,10 +161,17 @@ tabledef::TableSchema selfReferenceSchema(const QString &tableName)
                        {QStringLiteral("parent_id")},
                        tableName,
                        {QStringLiteral("id")},
-                       tabledef::ForeignKeyAction::Cascade,
-                       tabledef::ForeignKeyAction::Cascade),
+                       onDeleteAction,
+                       onUpdateAction),
     };
     return schema;
+}
+
+tabledef::TableSchema selfReferenceSchema(const QString &tableName)
+{
+    return selfReferenceSchema(tableName,
+                               tabledef::ForeignKeyAction::Cascade,
+                               tabledef::ForeignKeyAction::Cascade);
 }
 
 tabledef::TableSchema diamondLeafSchema(const QString &tableName,
@@ -632,6 +641,59 @@ private slots:
         QCOMPARE(loadTable(databaseName, grandChildTableName, m_dataRoot).rows.size(), 0);
     }
 
+    void test_deleteRowsCascadeDoesNotTouchUnrelatedRowIdSidecar()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_cascade_unrelated_sidecar_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_cascade_unrelated_sidecar_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_cascade_unrelated_sidecar_child");
+        const QString unrelatedTableName = QStringLiteral("test_tuple_service_cascade_unrelated_sidecar_unrelated");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                true,
+                                QString(),
+                                tabledef::ForeignKeyAction::Cascade,
+                                tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+        ensureTable(databaseName, unrelatedTableName, parentSchema(unrelatedTableName), m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(unrelatedTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("99")},
+                                                       {QStringLiteral("name"), QStringLiteral("sidecar")}}),
+                                          })).success);
+
+        repo::FlatFileTableStore store(m_dataRoot);
+        const QString unrelatedRowIdPath = store.getRowIdFilePath(databaseName, unrelatedTableName);
+        QVERIFY(QFile::exists(unrelatedRowIdPath));
+        QVERIFY(QFile::remove(unrelatedRowIdPath));
+        QVERIFY(!QFile::exists(unrelatedRowIdPath));
+
+        TaskResult deleteResult = tuple_service::deleteRows(parentTableName,
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+        QVERIFY(!QFile::exists(unrelatedRowIdPath));
+
+        const repo::TableData unrelatedTable = loadTable(databaseName, unrelatedTableName, m_dataRoot);
+        QCOMPARE(unrelatedTable.rows.size(), 1);
+        QCOMPARE(rowValues(unrelatedTable, 0),
+                 QStringList({QStringLiteral("99"), QStringLiteral("sidecar")}));
+    }
+
     void test_updateRowsCascade()
     {
         const QString databaseName = QStringLiteral("test_tuple_service_cascade_update_db");
@@ -861,6 +923,35 @@ private slots:
 
         TaskResult deleteResult = tuple_service::deleteRows(tableName,
                                                             {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        const repo::TableData table = loadTable(databaseName, tableName, m_dataRoot);
+        QCOMPARE(table.rows.size(), 0);
+    }
+
+    void test_deleteRowsSelfReferenceNoActionAllowsDeletingAllRows()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_self_reference_delete_all_db");
+        const QString tableName = QStringLiteral("test_tuple_service_self_reference_delete_all_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName,
+                    tableName,
+                    selfReferenceSchema(tableName,
+                                        tabledef::ForeignKeyAction::NoAction,
+                                        tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+
+        QVERIFY2(tuple_service::insertRows(tableName,
+                                           makeRows({
+                                               makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                        {QStringLiteral("note"), QStringLiteral("root")}}),
+                                               makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                        {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                        {QStringLiteral("note"), QStringLiteral("child")}}),
+                                           })).success,
+                 "self-reference seed insert should succeed");
+
+        TaskResult deleteResult = tuple_service::deleteRows(tableName, {});
         QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
 
         const repo::TableData table = loadTable(databaseName, tableName, m_dataRoot);
