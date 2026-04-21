@@ -110,6 +110,11 @@
 
 用例 4：修改不存在的 `missing` 列，期望失败。
 
+### `test_modifyColumnRejectsEmptyDefinitionName`
+用例 1：在 `test_table_service_modify_column_empty_name_db/test_table_service_modify_column_empty_name_table` 中创建基础表。
+
+用例 2：把 `name` 列修改成一个空列名定义，期望失败，错误信息提示列名不能为空。
+
 ### `test_modifyColumnRejectsTypeConversionFailure`
 用例 1：在目标表中先插入一条字符串类型数据。
 
@@ -123,6 +128,11 @@
 用例 3：查看 `showCreateTable()`，期望文本中包含 `UNIQUE` 和约束名。
 
 用例 4：再次添加同名约束，期望失败。
+
+### `test_addConstraintRejectsDuplicateConstraintName`
+用例 1：在 `test_table_service_add_constraint_name_dup_db/test_table_service_add_constraint_name_dup_table` 中创建基础表。
+
+用例 2：添加与现有主键同名的 `UNIQUE(name)` 约束，期望失败，错误信息提示约束名已存在。
 
 ### `test_addConstraintRejectsExistingDataViolations`
 用例 1：在目标表中先插入两行 `name` 相同的数据。
@@ -231,6 +241,13 @@
 用例 1：创建一张基础表，并插入两行 `name` 相同的数据。
 
 用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name)`，期望失败，因为存量数据存在重复键。
+
+### `test_createUniqueIndexHandlesSeparatorLikeValues`
+用例 1：创建一张带 `name`、`age` 列的基础表，并插入两行包含旧分隔符特征值的数据。
+
+用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name, age)`，期望成功。
+
+用例 3：分别按两组复合键值调用 `SortIndexRepo::search()`，期望都能命中各自对应的行定位。
 
 ### `test_boundIndexLifecycle`
 用例 1：先给表添加 `UNIQUE(name)` 约束，期望自动生成绑定索引。

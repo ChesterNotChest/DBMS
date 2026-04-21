@@ -8,7 +8,14 @@ namespace {
 
 QString compositeKey(const QStringList &values)
 {
-    return values.join(QStringLiteral("\x1f"));
+    QString signature;
+    for (const QString &value : values) {
+        signature.append(QString::number(value.size()));
+        signature.append(QLatin1Char(':'));
+        signature.append(value);
+        signature.append(QLatin1Char(';'));
+    }
+    return signature;
 }
 
 bool rowExistsInTable(const repo::TableData &table,
@@ -49,47 +56,6 @@ bool rowExistsInTable(const repo::TableData &table,
     }
 
     return false;
-}
-
-const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &schema,
-                                               const tabledef::Constraint &constraint)
-{
-    for (const tabledef::IndexMeta &index : schema.indexes) {
-        if (!index.isUnique) {
-            continue;
-        }
-        if (index.columnNames == constraint.columns) {
-            return &index;
-        }
-    }
-    return nullptr;
-}
-
-bool validateUniqueConstraintByIndex(const QString &databaseName,
-                                     const QString &dataRoot,
-                                     const tabledef::TableSchema &schema,
-                                     const tabledef::Constraint &constraint,
-                                     QString *error)
-{
-    if (schema.tableName.trimmed().isEmpty()) {
-        return false;
-    }
-
-    const tabledef::IndexMeta *index = matchingUniqueIndex(schema, constraint);
-    if (index == nullptr) {
-        return false;
-    }
-
-    repo::SortIndexRepo sortIndexRepo(databaseName, index->indexName, schema.tableName, dataRoot);
-    QString indexError;
-    if (!sortIndexRepo.validateUniqueKeys(&indexError)) {
-        if (error != nullptr) {
-            *error = indexError;
-        }
-        return false;
-    }
-
-    return true;
 }
 
 } // namespace
@@ -344,6 +310,13 @@ bool validateConstraintDefinitions(const TableSchema &schema,
                 continue;
             }
 
+            if (candidate.name == existing.name) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("constraint '%1' already exists").arg(candidate.name);
+                }
+                return false;
+            }
+
             if (isPrimaryKeyConstraint(candidate) && isPrimaryKeyConstraint(existing)) {
                 if (error != nullptr) {
                     *error = QStringLiteral("primary key already exists");
@@ -358,46 +331,6 @@ bool validateConstraintDefinitions(const TableSchema &schema,
                 }
                 return false;
             }
-        }
-    }
-
-    return true;
-}
-
-bool validateConstraintAgainstSchema(const TableSchema &schema,
-                                     const Constraint &candidate,
-                                     const QString &skipConstraintName,
-                                     QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-
-    if (!isConstraintDefinitionComplete(candidate)) {
-        if (error != nullptr) {
-            *error = QStringLiteral("constraint '%1' is incomplete").arg(candidate.name);
-        }
-        return false;
-    }
-
-    for (const Constraint &existing : schema.constraints) {
-        if (!skipConstraintName.trimmed().isEmpty() && existing.name == skipConstraintName) {
-            continue;
-        }
-
-        if (isPrimaryKeyConstraint(candidate) && isPrimaryKeyConstraint(existing)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("primary key already exists");
-            }
-            return false;
-        }
-
-        if (sameConstraintSemantics(candidate, existing)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("constraint '%1' duplicates existing constraint '%2'")
-                             .arg(candidate.name, existing.name);
-            }
-            return false;
         }
     }
 

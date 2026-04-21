@@ -45,9 +45,35 @@ bool rowMatchesConditions(const repo::TableRow &row,
     return true;
 }
 
+QStringList loadRowIdsForTargetTable(service::TargetTableKind targetTableKind,
+                                     const QString &targetTableName,
+                                     const repo::TableData &currentTable,
+                                     bool *rowIdsInitialized,
+                                     QString *error)
+{
+    if (rowIdsInitialized != nullptr) {
+        *rowIdsInitialized = false;
+    }
+    if (targetTableKind != service::TargetTableKind::TableDat) {
+        if (error != nullptr) {
+            error->clear();
+        }
+        return {};
+    }
+
+    return service::loadUserTableRowIds(targetTableName, currentTable, rowIdsInitialized, error);
+}
+
 QString compositeKey(const QStringList &values)
 {
-    return values.join(QStringLiteral("\x1f"));
+    QString signature;
+    for (const QString &value : values) {
+        signature.append(QString::number(value.size()));
+        signature.append(QLatin1Char(':'));
+        signature.append(value);
+        signature.append(QLatin1Char(';'));
+    }
+    return signature;
 }
 
 const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &schema,
@@ -825,7 +851,11 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadUserTableRowIds(targetTableName, currentTable, &rowIdsInitialized, &error);
+    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+                                                         targetTableName,
+                                                         currentTable,
+                                                         &rowIdsInitialized,
+                                                         &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
@@ -859,17 +889,19 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
     }();
 
     if (validationMode == ValidationMode::UserData) {
-        QString indexError;
-        validateChangedRowsAgainstUniqueIndexes(databaseName,
-                                                targetTableName,
-                                                targetSchema,
-                                                candidateTable,
-                                                candidateRowIds,
-                                                insertedRowIndexes,
-                                                &indexError);
-        if (!indexError.isEmpty()) {
-            result.errorMessage = indexError;
-            return result;
+        if (targetTableKind == TargetTableKind::TableDat) {
+            QString indexError;
+            validateChangedRowsAgainstUniqueIndexes(databaseName,
+                                                    targetTableName,
+                                                    targetSchema,
+                                                    candidateTable,
+                                                    candidateRowIds,
+                                                    insertedRowIndexes,
+                                                    &indexError);
+            if (!indexError.isEmpty()) {
+                result.errorMessage = indexError;
+                return result;
+            }
         }
 
         if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
@@ -945,7 +977,11 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadUserTableRowIds(targetTableName, currentTable, &rowIdsInitialized, &error);
+    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+                                                         targetTableName,
+                                                         currentTable,
+                                                         &rowIdsInitialized,
+                                                         &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
@@ -1010,17 +1046,19 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     }
 
     if (validationMode == ValidationMode::UserData) {
-        QString indexError;
-        validateChangedRowsAgainstUniqueIndexes(databaseName,
-                                                targetTableName,
-                                                targetSchema,
-                                                candidateTable,
-                                                candidateRowIds,
-                                                matchedRowIndexes,
-                                                &indexError);
-        if (!indexError.isEmpty()) {
-            result.errorMessage = indexError;
-            return result;
+        if (targetTableKind == TargetTableKind::TableDat) {
+            QString indexError;
+            validateChangedRowsAgainstUniqueIndexes(databaseName,
+                                                    targetTableName,
+                                                    targetSchema,
+                                                    candidateTable,
+                                                    candidateRowIds,
+                                                    matchedRowIndexes,
+                                                    &indexError);
+            if (!indexError.isEmpty()) {
+                result.errorMessage = indexError;
+                return result;
+            }
         }
 
         if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
@@ -1105,7 +1143,11 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadUserTableRowIds(targetTableName, currentTable, &rowIdsInitialized, &error);
+    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+                                                         targetTableName,
+                                                         currentTable,
+                                                         &rowIdsInitialized,
+                                                         &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
@@ -1145,6 +1187,21 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     }
 
     if (validationMode == ValidationMode::UserData) {
+        if (targetTableKind == TargetTableKind::TableDat) {
+            QString indexError;
+            validateChangedRowsAgainstUniqueIndexes(databaseName,
+                                                    targetTableName,
+                                                    targetSchema,
+                                                    candidateTable,
+                                                    candidateRowIds,
+                                                    matchedRowIndexes,
+                                                    &indexError);
+            if (!indexError.isEmpty()) {
+                result.errorMessage = indexError;
+                return result;
+            }
+        }
+
         if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
             result.errorMessage = error;
             return result;

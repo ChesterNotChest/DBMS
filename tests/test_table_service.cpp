@@ -619,6 +619,23 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_modifyColumnRejectsEmptyDefinitionName()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_column_empty_name_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_column_empty_name_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        ColumnDefinition modifyDefinition;
+        modifyDefinition.column = makeColumn(QString(), tabledef::ColumnType::Varchar, 64, true, QStringLiteral("guest"));
+
+        TaskResult modifyResult = table_service::modifyColumn(tableName,
+                                                             QStringLiteral("name"),
+                                                             modifyDefinition);
+        QVERIFY(!modifyResult.success);
+        QVERIFY(modifyResult.errorMessage.contains(QStringLiteral("column name cannot be empty")));
+    }
+
     void test_modifyColumnRenamesIndexedColumn()
     {
         const QString databaseName = QStringLiteral("test_table_service_modify_column_rename_index_db");
@@ -726,9 +743,25 @@ private slots:
         QVERIFY(createText.text.contains(QStringLiteral("UNIQUE")));
         QVERIFY(createText.text.contains(QStringLiteral("uq_test_table_service_name")));
 
-        TaskResult duplicateResult = table_service::addConstraint(tableName, uniqueConstraint);
+        const tabledef::Constraint duplicateSemanticConstraint = makeUnique(QStringLiteral("uq_test_table_service_name_dup"),
+                                           {QStringLiteral("name")});
+        TaskResult duplicateResult = table_service::addConstraint(tableName, duplicateSemanticConstraint);
         QVERIFY(!duplicateResult.success);
         QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_addConstraintRejectsDuplicateConstraintName()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_constraint_name_dup_db");
+        const QString tableName = QStringLiteral("test_table_service_add_constraint_name_dup_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const tabledef::Constraint conflictingConstraint = makeUnique(QStringLiteral("pk_%1_id").arg(tableName),
+                                                                      {QStringLiteral("name")});
+        TaskResult addResult = table_service::addConstraint(tableName, conflictingConstraint);
+        QVERIFY(!addResult.success);
+        QVERIFY(addResult.errorMessage.contains(QStringLiteral("already exists")));
     }
 
     void test_addConstraintRejectsExistingDataViolations()
@@ -1189,6 +1222,56 @@ private slots:
                                                              true);
         QVERIFY(!createResult.success);
         QVERIFY(createResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_createUniqueIndexHandlesSeparatorLikeValues()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_unique_index_separator_db");
+        const QString tableName = QStringLiteral("test_table_service_create_unique_index_separator_table");
+        const QString separator(1, QChar(0x1f));
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, agedSchema(tableName), m_dataRoot);
+        seedRow(databaseName,
+                tableName,
+            {QStringLiteral("1"), QStringLiteral("a") + separator + QStringLiteral("b"), QStringLiteral("c")},
+                m_dataRoot);
+        seedRow(databaseName,
+                tableName,
+            {QStringLiteral("2"), QStringLiteral("a"), QStringLiteral("b") + separator + QStringLiteral("c")},
+                m_dataRoot);
+
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("uq_test_table_service_separator_idx"),
+                                                             {QStringLiteral("name"), QStringLiteral("age")},
+                                                             true);
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name"), QStringLiteral("age")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(indexName, QStringLiteral("uq_test_table_service_separator_idx"));
+
+        const QStringList firstMatches = searchIndex(databaseName,
+                                                     tableName,
+                                                     indexName,
+                                                     {QStringLiteral("a") + separator + QStringLiteral("b"), QStringLiteral("c")},
+                                                     m_dataRoot,
+                                                     &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(firstMatches.size(), 1);
+
+        const QStringList secondMatches = searchIndex(databaseName,
+                                                      tableName,
+                                                      indexName,
+                                                      {QStringLiteral("a"), QStringLiteral("b") + separator + QStringLiteral("c")},
+                                                      m_dataRoot,
+                                                      &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(secondMatches.size(), 1);
     }
 
     void test_createUniqueIndexIgnoresEmptyValues()

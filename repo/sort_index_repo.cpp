@@ -30,7 +30,52 @@ struct BPlusNode
 
 QString keySignature(const QStringList &values)
 {
-    return values.join(QStringLiteral("\x1f"));
+    QString signature;
+    for (const QString &value : values) {
+        signature.append(QString::number(value.size()));
+        signature.append(QLatin1Char(':'));
+        signature.append(value);
+        signature.append(QLatin1Char(';'));
+    }
+    return signature;
+}
+
+bool decodeKeySignature(const QString &signature, QStringList *values)
+{
+    if (values != nullptr) {
+        values->clear();
+    }
+
+    int position = 0;
+    while (position < signature.size()) {
+        const int separatorIndex = signature.indexOf(QLatin1Char(':'), position);
+        if (separatorIndex < 0) {
+            return false;
+        }
+
+        bool ok = false;
+        const int valueLength = signature.mid(position, separatorIndex - position).toInt(&ok);
+        if (!ok || valueLength < 0) {
+            return false;
+        }
+
+        position = separatorIndex + 1;
+        if (position + valueLength > signature.size()) {
+            return false;
+        }
+
+        if (values != nullptr) {
+            values->append(signature.mid(position, valueLength));
+        }
+        position += valueLength;
+
+        if (position >= signature.size() || signature.at(position) != QLatin1Char(';')) {
+            return false;
+        }
+        ++position;
+    }
+
+    return true;
 }
 
 bool lessKeyValues(const QStringList &lhs, const QStringList &rhs)
@@ -382,7 +427,10 @@ QVector<IndexEntry> loadEntriesFromDocument(const QJsonObject &document)
 
     while (true) {
         for (int index = 0; index < node.keys.size(); ++index) {
-            const QStringList keyValues = node.keys.at(index).split(QStringLiteral("\x1f"));
+            QStringList keyValues;
+            if (!decodeKeySignature(node.keys.at(index), &keyValues)) {
+                return entries;
+            }
             const QList<QStringList> &bucket = node.values.at(index);
             for (const QStringList &locators : bucket) {
                 entries.append(IndexEntry{keyValues, locators});
@@ -533,7 +581,13 @@ QStringList searchEntries(const QJsonObject &document, const QStringList &keyVal
     while (!node.leaf) {
         int childIndex = 0;
         while (childIndex < node.keys.size()) {
-            const QStringList separator = node.keys.at(childIndex).split(QStringLiteral("\x1f"));
+            QStringList separator;
+            if (!decodeKeySignature(node.keys.at(childIndex), &separator)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("index tree is malformed");
+                }
+                return {};
+            }
             if (lessKeyValues(keyValues, separator)) {
                 break;
             }
@@ -560,10 +614,16 @@ QStringList searchEntries(const QJsonObject &document, const QStringList &keyVal
 
     QStringList matches;
     for (int index = 0; index < node.keys.size(); ++index) {
-        const QStringList storedKey = node.keys.at(index).split(QStringLiteral("\x1f"));
+        QStringList storedKey;
+        if (!decodeKeySignature(node.keys.at(index), &storedKey)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("index tree is malformed");
+            }
+            return {};
+        }
         if (storedKey == keyValues) {
             for (const QStringList &locators : node.values.at(index)) {
-                matches.append(locators.join(QStringLiteral("\x1f")));
+                matches.append(locators);
             }
             break;
         }

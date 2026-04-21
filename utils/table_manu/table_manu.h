@@ -67,10 +67,6 @@ bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs);
 bool validateConstraintDefinitions(const TableSchema &schema,
 								   const QString &skipConstraintName = QString(),
 								   QString *error = nullptr);
-bool validateConstraintAgainstSchema(const TableSchema &schema,
-									 const Constraint &candidate,
-									 const QString &skipConstraintName = QString(),
-									 QString *error = nullptr);
 bool validateConstraintRows(const QString &databaseName,
 							const QString &dataRoot,
 							const TableSchema &schema,
