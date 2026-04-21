@@ -50,6 +50,7 @@ private:
     SqlExecResult execAlterTable(const sqlparser::ParseResult& p);
     SqlExecResult execShowTables(const sqlparser::ParseResult& p);
     SqlExecResult execDescTable(const sqlparser::ParseResult& p);
+    SqlExecResult execShowCreateTable(const sqlparser::ParseResult& p);
 
     // 元组级
     SqlExecResult execSelect(const sqlparser::ParseResult& p);

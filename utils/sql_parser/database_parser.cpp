@@ -42,6 +42,8 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
         QString next = tokens[1].lexeme.toUpper();
         if (next == "DATABASES") return {"SHOW_DATABASES", {}};
         if (next == "TABLES")   return {"SHOW_TABLES", {}};
+        if (next == "CREATE" && tokens.size() >= 3 && tokens[2].lexeme.toUpper() == "TABLE")
+            return {"SHOW_CREATE_TABLE", {}};
     }
     if (kw == "DESC" || kw == "DESCRIBE") return {"DESC_TABLE", {}};
     if (kw == "SELECT") return {"SELECT", {}};

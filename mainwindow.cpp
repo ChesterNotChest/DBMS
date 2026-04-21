@@ -227,8 +227,17 @@ void MainWindow::onExecuteRequested(const QString &sql)
         else
             m_resultPanel->showLog("执行成功");
 
+        // SHOW CREATE TABLE 结果：展示为表格
+        if (r.commandType == "SHOW_CREATE_TABLE" && !r.text.isEmpty()) {
+            QString tableName = r.payload["tableName"].toString();
+            QStringList headers = {"Table", "Create Table"};
+            QList<QStringList> rows;
+            rows.append({tableName, r.text});
+            m_resultPanel->showTable(headers, rows);
+            m_statusRowsLabel->setText(" 1 行 × 2 列");
+        }
         // SELECT 结果：展示为表格
-        if (r.selectResult.success && !r.selectResult.resultTable.columns.isEmpty()) {
+        else if (r.selectResult.success && !r.selectResult.resultTable.columns.isEmpty()) {
             const auto &tbl = r.selectResult.resultTable;
             QStringList headers;
             for (const QString &c : tbl.columns) headers.append(c);

@@ -4,6 +4,7 @@
  * 所有业务操作都走 service 层，不直接操作 repo 或文件。
  */
 #include "sql_dispatcher.h"
+#include "../utils/service_common/service_common.h"
 #include <QDebug>
 
 namespace service {
@@ -36,8 +37,9 @@ SqlExecResult SqlDispatcher::dispatch(const sqlparser::ParseResult& p) {
     if (cmd == "CREATE_TABLE")    return fillMeta(execCreateTable(p));
     if (cmd == "DROP_TABLE")      return fillMeta(execDropTable(p));
     if (cmd == "ALTER_TABLE")     return fillMeta(execAlterTable(p));
-    if (cmd == "SHOW_TABLES")     return fillMeta(execShowTables(p));
-    if (cmd == "DESC_TABLE")      return fillMeta(execDescTable(p));
+    if (cmd == "SHOW_TABLES")        return fillMeta(execShowTables(p));
+    if (cmd == "DESC_TABLE")        return fillMeta(execDescTable(p));
+    if (cmd == "SHOW_CREATE_TABLE") return fillMeta(execShowCreateTable(p));
 
     if (cmd == "SELECT") return fillMeta(execSelect(p));
     if (cmd == "INSERT") return fillMeta(execInsert(p));
@@ -93,17 +95,34 @@ SqlExecResult SqlDispatcher::execCreateTable(const sqlparser::ParseResult& p) {
 
     auto cols = p.payload["columns"].value<QVector<sqlparser::ColumnDef>>();
     for (const auto& c : cols) {
+        ColumnDefinition definition;
         tabledef::Column col;
         col.name = c.name;
         col.notNull = c.notNull;
         col.length = c.length > 0 ? c.length : 255;
+        col.defaultValue = c.defaultValue;
+        col.autoIncrement = c.autoIncrement;
+        col.check = c.checkClause;
 
         QString t = c.type.toUpper();
         if (t == "INT" || t == "INTEGER")       col.type = tabledef::ColumnType::Int;
         else if (t == "FLOAT" || t == "DOUBLE")  col.type = tabledef::ColumnType::Float;
         else col.type = tabledef::ColumnType::Varchar;
 
+        definition.column = col;
+        definition.primaryKey = c.primaryKey;
+        definition.unique = c.unique;
+        definition.referencedTable = c.referencesTable;
+        if (!c.referencesColumn.isEmpty()) {
+            definition.referencedColumns = {c.referencesColumn};
+        }
+        definition.checkClause = c.checkClause;
+
         schema.columns.append(col);
+        const QList<tabledef::Constraint> generatedConstraints = buildGeneratedConstraints(definition);
+        for (const tabledef::Constraint &constraint : generatedConstraints) {
+            schema.constraints.append(constraint);
+        }
     }
 
     auto r = table_service::createTable(tableName, schema);
@@ -170,6 +189,14 @@ SqlExecResult SqlDispatcher::execShowTables(const sqlparser::ParseResult&) {
 SqlExecResult SqlDispatcher::execDescTable(const sqlparser::ParseResult& p) {
     QString tableName = p.payload["tableName"].toString();
     auto r = table_service::describeTable(tableName);
+    if (r.success)
+        return {true, {}, r.text};
+    return {false, r.errorMessage};
+}
+
+SqlExecResult SqlDispatcher::execShowCreateTable(const sqlparser::ParseResult& p) {
+    QString tableName = p.payload["tableName"].toString();
+    auto r = table_service::showCreateTable(tableName);
     if (r.success)
         return {true, {}, r.text};
     return {false, r.errorMessage};

@@ -287,7 +287,7 @@ ParseResult parseSql(const QString& sql) {
     // 表级
     if (cmdType == "CREATE_TABLE" || cmdType == "DROP_TABLE" ||
         cmdType == "ALTER_TABLE"  || cmdType == "SHOW_TABLES" ||
-        cmdType == "DESC_TABLE")
+        cmdType == "DESC_TABLE" || cmdType == "SHOW_CREATE_TABLE")
         return parseTableSql(sql, tokens);
 
     // 元组级

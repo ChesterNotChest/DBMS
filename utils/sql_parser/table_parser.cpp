@@ -87,13 +87,19 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens) {
             }
 
             if (upper == "CONSTRAINT" || upper == "UNIQUE" || upper == "CHECK" || upper == "FOREIGN") {
-                // 跳过约束定义，尊重括号深度
+                // 跳过完整约束片段：支持约束内部出现逗号的情况。
                 int depth = 0;
                 while (i < rparen) {
-                    if (tokens[i].type == TokenType::LPAREN) depth++;
-                    else if (tokens[i].type == TokenType::RPAREN) {
-                        if (depth == 0) break;
-                        depth--;
+                    if (tokens[i].type == TokenType::LPAREN) {
+                        ++depth;
+                    } else if (tokens[i].type == TokenType::RPAREN) {
+                        if (depth > 0) {
+                            --depth;
+                        } else {
+                            break;
+                        }
+                    } else if (tokens[i].type == TokenType::COMMA && depth == 0) {
+                        break;
                     }
                     ++i;
                 }
@@ -247,6 +253,20 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens) {
         }
         if (tableName.isEmpty())
             return {false, "DESC: expected table name", cmdType, {}};
+        payload["tableName"] = tableName;
+        return {true, "", cmdType, payload};
+    }
+
+    // ── SHOW CREATE TABLE ──
+    if (cmdType == "SHOW_CREATE_TABLE") {
+        // SHOW CREATE TABLE table_name
+        QString tableName;
+        for (int i = 3; i < tokens.size(); ++i) {
+            if (tokens[i].type == TokenType::IDENTIFIER)
+                { tableName = tokens[i].lexeme; break; }
+        }
+        if (tableName.isEmpty())
+            return {false, "SHOW CREATE TABLE: expected table name", cmdType, {}};
         payload["tableName"] = tableName;
         return {true, "", cmdType, payload};
     }
