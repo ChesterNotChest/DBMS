@@ -136,6 +136,10 @@ TaskResult useDatabase(const QString &databaseName);
 
 SelectRowsResult showDatabases();
 
+// ── 结构树专用查询（返回纯名称列表，不走 SelectRowsResult）──
+QStringList listAllDatabases();
+QStringList listTablesInDatabase(const QString &databaseName);
+
 } // namespace database_service
 
 namespace table_service {
@@ -170,6 +174,9 @@ SelectRowsResult showTables();
 TextResult describeTable(const QString &tableName);
 
 TextResult showCreateTable(const QString &tableName);
+
+// ── 结构树专用：列出列名列表 ──
+QStringList listTableColumns(const QString &tableName);
 
 } // namespace table_service
 

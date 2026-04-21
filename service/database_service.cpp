@@ -167,4 +167,29 @@ SelectRowsResult showDatabases()
                                  {});
 }
 
+// ── 结构树专用：返回所有数据库名称列表 ──
+QStringList listAllDatabases()
+{
+    repo::DatabaseRepo repo(currentDataRoot);
+    QString error;
+    auto entries = repo.listDatabases(&error);
+    if (!error.isEmpty()) return {};
+    QStringList names;
+    for (const auto &e : entries) names.append(e.name);
+    return names;
+}
+
+// ── 结构树专用：返回指定数据库下的所有表名称 ──
+QStringList listTablesInDatabase(const QString &databaseName)
+{
+    if (databaseName.isEmpty()) return {};
+    repo::TabRepo repo(databaseName, currentDataRoot);
+    QString error;
+    auto entries = repo.listTables(&error);
+    if (!error.isEmpty()) return {};
+    QStringList names;
+    for (const auto &e : entries) names.append(e.name);
+    return names;
+}
+
 } // namespace service::database_service
