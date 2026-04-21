@@ -68,6 +68,8 @@ TableSchema buildTableConstraintSchema(const QString &tableName)
         Column{QStringLiteral("referenced_columns"), ColumnType::Varchar, 1024, false},
         Column{QStringLiteral("check_clause"), ColumnType::Varchar, 2048, false},
         Column{QStringLiteral("index_name"), ColumnType::Varchar, 255, false},
+        Column{QStringLiteral("on_delete_action"), ColumnType::Varchar, 64, false},
+        Column{QStringLiteral("on_update_action"), ColumnType::Varchar, 64, false},
     };
     schema.constraints = {
         Constraint{QStringLiteral("pk_constraint_name"), ConstraintType::PrimaryKey,

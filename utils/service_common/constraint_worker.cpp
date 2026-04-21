@@ -115,6 +115,15 @@ bool validateColumnDefinition(const ColumnDefinition &definition, QString *error
         return false;
     }
 
+    if (definition.referencedTable.trimmed().isEmpty()
+        && (definition.onDeleteAction != tabledef::ForeignKeyAction::NoAction
+            || definition.onUpdateAction != tabledef::ForeignKeyAction::NoAction)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("foreign key actions can only be set when a referenced table is provided");
+        }
+        return false;
+    }
+
     return true;
 }
 
@@ -226,7 +235,9 @@ tabledef::Constraint makeConstraint(const QString &constraintName,
                                     const QString &referencedTable,
                                     const QStringList &referencedColumns,
                                     const QString &checkClause,
-                                    const QString &indexName)
+                                    const QString &indexName,
+                                    tabledef::ForeignKeyAction onDeleteAction,
+                                    tabledef::ForeignKeyAction onUpdateAction)
 {
     return tabledef::Constraint{constraintName,
                                 type,
@@ -234,7 +245,9 @@ tabledef::Constraint makeConstraint(const QString &constraintName,
                                 referencedTable,
                                 referencedColumns,
                                 checkClause,
-                                indexName};
+                                indexName,
+                                onDeleteAction,
+                                onUpdateAction};
 }
 
 QList<tabledef::Constraint> buildGeneratedConstraints(const ColumnDefinition &definition)
@@ -267,7 +280,9 @@ QList<tabledef::Constraint> buildGeneratedConstraints(const ColumnDefinition &de
                                           definition.referencedTable,
                                           definition.referencedColumns,
                                           QString(),
-                                          QString()));
+                                          QString(),
+                                          definition.onDeleteAction,
+                                          definition.onUpdateAction));
     }
     if (!definition.checkClause.trimmed().isEmpty()) {
         constraints.append(makeConstraint(generatedConstraintName(columnName, QStringLiteral("ck")),

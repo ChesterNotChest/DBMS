@@ -37,11 +37,22 @@ QString formatConstraintDefinition(const tabledef::Constraint &constraint)
     case tabledef::ConstraintType::Check:
         return QStringLiteral("CONSTRAINT %1 CHECK (%2)").arg(constraint.name, constraint.checkClause);
     case tabledef::ConstraintType::ForeignKey:
-        return QStringLiteral("CONSTRAINT %1 FOREIGN KEY (%2) REFERENCES %3(%4)")
-            .arg(constraint.name,
-                 columnList,
-                 constraint.referencedTable,
-                 constraint.referencedColumns.join(QStringLiteral(", ")));
+    {
+        QString definition = QStringLiteral("CONSTRAINT %1 FOREIGN KEY (%2) REFERENCES %3(%4)")
+                                 .arg(constraint.name,
+                                      columnList,
+                                      constraint.referencedTable,
+                                      constraint.referencedColumns.join(QStringLiteral(", ")));
+        if (constraint.onDeleteAction != tabledef::ForeignKeyAction::NoAction) {
+            definition.append(QStringLiteral(" ON DELETE %1")
+                                  .arg(tabledef::foreignKeyActionToString(constraint.onDeleteAction)));
+        }
+        if (constraint.onUpdateAction != tabledef::ForeignKeyAction::NoAction) {
+            definition.append(QStringLiteral(" ON UPDATE %1")
+                                  .arg(tabledef::foreignKeyActionToString(constraint.onUpdateAction)));
+        }
+        return definition;
+    }
     }
 
     return constraint.name;

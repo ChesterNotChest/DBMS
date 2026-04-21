@@ -66,6 +66,9 @@ struct ColumnDefinition
     bool unique = false;
     QString referencedTable;
     QStringList referencedColumns;
+    // 这两个字段只给 FK 生成路径使用，默认保持 NO ACTION。
+    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction;
+    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction;
     QString checkClause;
 };
 

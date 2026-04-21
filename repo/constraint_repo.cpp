@@ -53,6 +53,8 @@ repo::TableRow toConstraintRow(const tabledef::Constraint &constraint)
         serializeColumns(constraint.referencedColumns),
         constraint.checkClause,
         constraint.indexName,
+        tabledef::foreignKeyActionToString(constraint.onDeleteAction),
+        tabledef::foreignKeyActionToString(constraint.onUpdateAction),
     };
 }
 
@@ -79,6 +81,8 @@ repo::TableData migrateConstraintTableIfNeeded(const repo::TableData &table)
         migratedRow.append(looksLegacyRow ? QString() : row.value(4));
         migratedRow.append(looksLegacyRow ? row.value(3) : row.value(5));
         migratedRow.append(row.size() >= 7 ? row.value(6) : QString());
+        migratedRow.append(row.size() >= 8 ? row.value(7) : tabledef::foreignKeyActionToString(tabledef::ForeignKeyAction::NoAction));
+        migratedRow.append(row.size() >= 9 ? row.value(8) : tabledef::foreignKeyActionToString(tabledef::ForeignKeyAction::NoAction));
 
         migrated.rows.append(migratedRow);
     }
@@ -127,6 +131,8 @@ bool constraintFromRow(const repo::TableRow &row,
     const QString referencedColumnsText = looksLegacyRow ? QString() : row.value(4);
     const QString checkClause = looksLegacyRow ? row.value(3) : row.value(5);
     const QString indexName = row.size() >= 7 ? row.value(6) : QString();
+    const QString onDeleteActionText = row.size() >= 8 ? row.value(7) : QString();
+    const QString onUpdateActionText = row.size() >= 9 ? row.value(8) : QString();
 
     QString referencedColumnsError;
     const QStringList referencedColumns =
@@ -134,6 +140,27 @@ bool constraintFromRow(const repo::TableRow &row,
     if (!referencedColumnsError.isEmpty()) {
         if (error != nullptr) {
             *error = referencedColumnsError;
+        }
+        return false;
+    }
+
+    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction;
+    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction;
+    if (!tabledef::tryParseForeignKeyAction(onDeleteActionText.isEmpty()
+                                                ? QStringLiteral("NO ACTION")
+                                                : onDeleteActionText,
+                                            &onDeleteAction)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("unknown foreign key action '%1'").arg(onDeleteActionText);
+        }
+        return false;
+    }
+    if (!tabledef::tryParseForeignKeyAction(onUpdateActionText.isEmpty()
+                                                ? QStringLiteral("NO ACTION")
+                                                : onUpdateActionText,
+                                            &onUpdateAction)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("unknown foreign key action '%1'").arg(onUpdateActionText);
         }
         return false;
     }
@@ -146,6 +173,8 @@ bool constraintFromRow(const repo::TableRow &row,
         referencedColumns,
         checkClause,
         indexName,
+        onDeleteAction,
+        onUpdateAction,
     };
     return true;
 }

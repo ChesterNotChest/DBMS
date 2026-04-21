@@ -26,7 +26,9 @@ tabledef::Constraint makeConstraint(const QString &constraintName,
                                     const QString &referencedTable = QString(),
                                     const QStringList &referencedColumns = QStringList(),
                                     const QString &checkClause = QString(),
-                                    const QString &indexName = QString());
+                                    const QString &indexName = QString(),
+                                    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction,
+                                    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction);
 
 // schema 文本化输出。
 // 主要给 describe/show create 之类的输出型接口使用。

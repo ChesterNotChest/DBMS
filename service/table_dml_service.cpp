@@ -1,5 +1,6 @@
 #include "service.h"
 
+#include <algorithm>
 #include <QSet>
 #include <QUuid>
 
@@ -9,6 +10,21 @@ using service::currentDataRoot;
 using service::compositeKeySignature;
 using service::validateScalarValue;
 
+bool validateOutgoingForeignKeys(const QString &databaseName,
+                                 const QString &dataRoot,
+                                 const tabledef::TableSchema &schema,
+                                 const repo::TableData &candidateTable,
+                                 QString *error);
+bool checkKeyUniqueness(const QString &databaseName,
+                        const tabledef::TableSchema &schema,
+                        const repo::TableData &table,
+                        QString *error);
+repo::RepositoryResult writeTargetTable(repo::FlatFileTableStore &store,
+                                        service::TargetTableKind kind,
+                                        const QString &databaseName,
+                                        const QString &tableName,
+                                        const repo::TableData &table);
+
 QString effectiveDatabaseName(const QString &targetDatabaseName)
 {
     const QString trimmedTarget = targetDatabaseName.trimmed();
@@ -17,6 +33,26 @@ QString effectiveDatabaseName(const QString &targetDatabaseName)
     }
     return service::currentDatabase.trimmed();
 }
+
+class CurrentDatabaseGuard
+{
+public:
+    explicit CurrentDatabaseGuard(const QString &databaseName)
+        : m_previous(service::currentDatabase)
+    {
+        if (!databaseName.trimmed().isEmpty()) {
+            service::currentDatabase = databaseName.trimmed();
+        }
+    }
+
+    ~CurrentDatabaseGuard()
+    {
+        service::currentDatabase = m_previous;
+    }
+
+private:
+    QString m_previous;
+};
 
 QStringList expectedColumnNames(const tabledef::TableSchema &schema)
 {
@@ -47,7 +83,8 @@ bool rowMatchesConditions(const repo::TableRow &row,
     return true;
 }
 
-QStringList loadRowIdsForTargetTable(service::TargetTableKind targetTableKind,
+QStringList loadRowIdsForTargetTable(const QString &databaseName,
+                                     service::TargetTableKind targetTableKind,
                                      const QString &targetTableName,
                                      const repo::TableData &currentTable,
                                      bool *rowIdsInitialized,
@@ -63,6 +100,7 @@ QStringList loadRowIdsForTargetTable(service::TargetTableKind targetTableKind,
         return {};
     }
 
+    CurrentDatabaseGuard databaseGuard(databaseName);
     return service::loadUserTableRowIds(targetTableName, currentTable, rowIdsInitialized, error);
 }
 
@@ -306,6 +344,407 @@ bool buildCandidateRow(const tabledef::TableSchema &schema,
     return true;
 }
 
+struct TableMutationState
+{
+    QString databaseName;
+    QString tableName;
+    tabledef::TableSchema schema;
+    repo::TableData originalTable;
+    repo::TableData candidateTable;
+    QStringList originalRowIds;
+    QStringList candidateRowIds;
+    bool dirty = false;
+};
+
+enum class ReferencedMutationKind {
+    Update,
+    Delete
+};
+
+QString tableMutationKey(const QString &databaseName, const QString &tableName)
+{
+    return databaseName + QStringLiteral("::") + tableName;
+}
+
+tabledef::TableSchema loadTableSchemaForMutation(const QString &databaseName,
+                                                 const QString &tableName,
+                                                 QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    tabledef::TableSchema schema;
+    schema.tableName = tableName;
+
+    repo::MetaRepo metaRepo(databaseName, tableName, currentDataRoot);
+    schema.columns = metaRepo.listColumns(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+
+    repo::ConstraintRepo constraintRepo(databaseName, tableName, currentDataRoot);
+    schema.constraints = constraintRepo.listConstraints(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+
+    repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
+    schema.indexes = indexRepo.listIndexes(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+
+    return schema;
+}
+
+TableMutationState *ensureTableMutationState(const QString &databaseName,
+                                            const QString &tableName,
+                                            QMap<QString, TableMutationState> *states,
+                                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (states == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("table mutation state map cannot be null");
+        }
+        return nullptr;
+    }
+
+    const QString key = tableMutationKey(databaseName, tableName);
+    if (states->contains(key)) {
+        return &(*states)[key];
+    }
+
+    TableMutationState state;
+    state.databaseName = databaseName;
+    state.tableName = tableName;
+    state.schema = loadTableSchemaForMutation(databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return nullptr;
+    }
+
+    state.originalTable = repo::TableRepo(databaseName, tableName, currentDataRoot).readTable(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return nullptr;
+    }
+    state.candidateTable = state.originalTable;
+
+    CurrentDatabaseGuard databaseGuard(databaseName);
+    bool rowIdsInitialized = false;
+    state.originalRowIds = service::loadUserTableRowIds(tableName,
+                                                        state.originalTable,
+                                                        &rowIdsInitialized,
+                                                        error);
+    if (error != nullptr && !error->isEmpty()) {
+        return nullptr;
+    }
+    state.candidateRowIds = state.originalRowIds;
+    if (rowIdsInitialized
+        && !service::rebuildTableIndexes(tableName,
+                                         state.schema,
+                                         state.originalTable,
+                                         state.originalRowIds,
+                                         error)) {
+        return nullptr;
+    }
+
+    states->insert(key, state);
+    return &(*states)[key];
+}
+
+bool validateRowAgainstSchema(const repo::TableRow &row,
+                              const tabledef::TableSchema &schema,
+                              QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (row.size() != schema.columns.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("row width does not match schema column count");
+        }
+        return false;
+    }
+
+    for (int index = 0; index < schema.columns.size(); ++index) {
+        const tabledef::Column &column = schema.columns.at(index);
+        const QString value = row.at(index);
+        if (column.notNull && value.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' cannot be null").arg(column.name);
+            }
+            return false;
+        }
+        if (!validateScalarValue(column, value, error)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+QStringList rowValuesForColumns(const repo::TableData &table,
+                               const repo::TableRow &row,
+                               const QStringList &columnNames,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QStringList values;
+    values.reserve(columnNames.size());
+    for (const QString &columnName : columnNames) {
+        const int columnIndex = table.columns.indexOf(columnName);
+        if (columnIndex < 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+            }
+            return {};
+        }
+        values.append(row.value(columnIndex));
+    }
+    return values;
+}
+
+QList<int> findReferencingRows(const repo::TableData &childTable,
+                               const tabledef::Constraint &constraint,
+                               const QStringList &referencedValues,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QList<int> indexes;
+    for (int rowIndex = 0; rowIndex < childTable.rows.size(); ++rowIndex) {
+        const repo::TableRow &row = childTable.rows.at(rowIndex);
+        QString rowError;
+        const QStringList rowValues =
+            rowValuesForColumns(childTable, row, constraint.columns, &rowError);
+        if (!rowError.isEmpty()) {
+            if (error != nullptr) {
+                *error = rowError;
+            }
+            return {};
+        }
+
+        bool hasEmptyValue = false;
+        for (const QString &value : rowValues) {
+            if (value.isEmpty()) {
+                hasEmptyValue = true;
+                break;
+            }
+        }
+        if (hasEmptyValue) {
+            continue;
+        }
+
+        if (rowValues == referencedValues) {
+            indexes.append(rowIndex);
+        }
+    }
+
+    return indexes;
+}
+
+QStringList defaultValuesForForeignKeyColumns(const tabledef::TableSchema &schema,
+                                              const QStringList &columnNames,
+                                              QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QStringList values;
+    values.reserve(columnNames.size());
+    for (const QString &columnName : columnNames) {
+        const int columnIndex = tabledef::findColumnIndex(schema, columnName);
+        if (columnIndex < 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+            }
+            return {};
+        }
+        const tabledef::Column &column = schema.columns.at(columnIndex);
+        if (column.defaultValue.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' has no default value for SET DEFAULT").arg(column.name);
+            }
+            return {};
+        }
+        values.append(column.defaultValue);
+    }
+    return values;
+}
+
+bool writeForeignKeyValues(repo::TableRow *row,
+                           const repo::TableData &table,
+                           const tabledef::TableSchema &schema,
+                           const tabledef::Constraint &constraint,
+                           const QStringList &values,
+                           QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (row == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("row pointer cannot be null");
+        }
+        return false;
+    }
+    if (constraint.columns.size() != values.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("foreign key value count does not match column count");
+        }
+        return false;
+    }
+
+    for (int index = 0; index < constraint.columns.size(); ++index) {
+        const QString &columnName = constraint.columns.at(index);
+        const int tableColumnIndex = table.columns.indexOf(columnName);
+        const int schemaColumnIndex = tabledef::findColumnIndex(schema, columnName);
+        if (tableColumnIndex < 0 || schemaColumnIndex < 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+            }
+            return false;
+        }
+
+        const tabledef::Column &column = schema.columns.at(schemaColumnIndex);
+        const QString &value = values.at(index);
+        if (column.notNull && value.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("column '%1' cannot be null").arg(column.name);
+            }
+            return false;
+        }
+        if (!validateScalarValue(column, value, error)) {
+            return false;
+        }
+        (*row)[tableColumnIndex] = value;
+    }
+
+    return true;
+}
+
+bool validateMutationStateLocally(const TableMutationState &state,
+                                  const QList<int> &changedRowIndexes,
+                                  QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    for (const repo::TableRow &row : state.candidateTable.rows) {
+        if (!validateRowAgainstSchema(row, state.schema, error)) {
+            return false;
+        }
+    }
+
+    QString indexError;
+    validateChangedRowsAgainstUniqueIndexes(state.databaseName,
+                                            state.tableName,
+                                            state.schema,
+                                            state.candidateTable,
+                                            state.candidateRowIds,
+                                            changedRowIndexes,
+                                            &indexError);
+    if (!indexError.isEmpty()) {
+        if (error != nullptr) {
+            *error = indexError;
+        }
+        return false;
+    }
+
+    if (!checkKeyUniqueness(state.databaseName, state.schema, state.candidateTable, error)) {
+        return false;
+    }
+    if (!validateOutgoingForeignKeys(state.databaseName,
+                                     currentDataRoot,
+                                     state.schema,
+                                     state.candidateTable,
+                                     error)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool commitMutationStates(const QMap<QString, TableMutationState> &states, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QStringList keys = states.keys();
+    std::sort(keys.begin(), keys.end());
+
+    QList<QString> appliedKeys;
+    repo::FlatFileTableStore store(currentDataRoot);
+    for (const QString &key : keys) {
+        const TableMutationState &state = states.value(key);
+        if (!state.dirty) {
+            continue;
+        }
+
+        const repo::RepositoryResult writeResult =
+            writeTargetTable(store,
+                             service::TargetTableKind::TableDat,
+                             state.databaseName,
+                             state.tableName,
+                             state.candidateTable);
+        if (!writeResult.ok) {
+            if (error != nullptr) {
+                *error = writeResult.error;
+            }
+            break;
+        }
+
+        CurrentDatabaseGuard databaseGuard(state.databaseName);
+        QString commitError;
+        if (!service::saveUserTableRowIds(state.tableName, state.candidateRowIds, &commitError)
+            || !service::rebuildTableIndexes(state.tableName,
+                                             state.schema,
+                                             state.candidateTable,
+                                             state.candidateRowIds,
+                                             &commitError)) {
+            if (error != nullptr) {
+                *error = commitError;
+            }
+            break;
+        }
+
+        appliedKeys.append(key);
+    }
+
+    if (error == nullptr || error->isEmpty()) {
+        return true;
+    }
+
+    for (int index = appliedKeys.size() - 1; index >= 0; --index) {
+        const TableMutationState &state = states.value(appliedKeys.at(index));
+        writeTargetTable(store,
+                         service::TargetTableKind::TableDat,
+                         state.databaseName,
+                         state.tableName,
+                         state.originalTable);
+        CurrentDatabaseGuard databaseGuard(state.databaseName);
+        service::saveUserTableRowIds(state.tableName, state.originalRowIds, nullptr);
+        service::rebuildTableIndexes(state.tableName,
+                                     state.schema,
+                                     state.originalTable,
+                                     state.originalRowIds,
+                                     nullptr);
+    }
+
+    return false;
+}
+
 bool checkKeyUniqueness(const QString &databaseName,
                         const tabledef::TableSchema &schema,
                         const repo::TableData &table,
@@ -538,6 +977,343 @@ bool validateIncomingForeignKeys(const QString &databaseName,
     return true;
 }
 
+struct ForeignKeyDependent
+{
+    QString childTableName;
+    tabledef::Constraint constraint;
+    QList<int> childRowIndexes;
+    QStringList oldParentValues;
+    QStringList newParentValues;
+    tabledef::ForeignKeyAction action = tabledef::ForeignKeyAction::NoAction;
+    ReferencedMutationKind mutationKind = ReferencedMutationKind::Update;
+};
+
+QString foreignKeyVisitToken(const QString &tableName,
+                             const QString &constraintName,
+                             const QStringList &values,
+                             ReferencedMutationKind kind)
+{
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(tableName,
+             constraintName,
+             kind == ReferencedMutationKind::Delete ? QStringLiteral("delete")
+                                                    : QStringLiteral("update"),
+             compositeKeySignature(values));
+}
+
+QList<ForeignKeyDependent> collectForeignKeyDependents(const QString &databaseName,
+                                                       const QString &targetTableName,
+                                                       const repo::TableData &beforeTable,
+                                                       const repo::TableData &afterTable,
+                                                       const QList<int> &affectedParentRowIndexes,
+                                                       ReferencedMutationKind mutationKind,
+                                                       QMap<QString, TableMutationState> *states,
+                                                       QSet<QString> *visited,
+                                                       QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (states == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("table mutation state map cannot be null");
+        }
+        return {};
+    }
+
+    repo::TabRepo tabRepo(databaseName, currentDataRoot);
+    QString tabError;
+    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
+    if (!tabError.isEmpty()) {
+        if (error != nullptr) {
+            *error = tabError;
+        }
+        return {};
+    }
+
+    QList<ForeignKeyDependent> dependents;
+    for (const repo::TableEntry &tableEntry : tableEntries) {
+        TableMutationState *childState =
+            ensureTableMutationState(databaseName, tableEntry.name, states, error);
+        if (childState == nullptr) {
+            return {};
+        }
+
+        for (const tabledef::Constraint &constraint : childState->schema.constraints) {
+            if (!tabledef::isForeignKeyConstraint(constraint)
+                || constraint.referencedTable != targetTableName) {
+                continue;
+            }
+            if (!tabledef::isForeignKeyReferenceComplete(constraint)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("foreign key '%1' is incomplete").arg(constraint.name);
+                }
+                return {};
+            }
+
+            for (int parentRowIndex : affectedParentRowIndexes) {
+                if (parentRowIndex < 0 || parentRowIndex >= beforeTable.rows.size()) {
+                    continue;
+                }
+
+                QString keyError;
+                const QStringList oldValues =
+                    rowValuesForColumns(beforeTable,
+                                        beforeTable.rows.at(parentRowIndex),
+                                        constraint.referencedColumns,
+                                        &keyError);
+                if (!keyError.isEmpty()) {
+                    if (error != nullptr) {
+                        *error = keyError;
+                    }
+                    return {};
+                }
+
+                QStringList newValues;
+                if (mutationKind == ReferencedMutationKind::Update) {
+                    if (parentRowIndex >= afterTable.rows.size()) {
+                        if (error != nullptr) {
+                            *error = QStringLiteral("updated parent row index %1 is out of range").arg(parentRowIndex);
+                        }
+                        return {};
+                    }
+
+                    newValues = rowValuesForColumns(afterTable,
+                                                    afterTable.rows.at(parentRowIndex),
+                                                    constraint.referencedColumns,
+                                                    &keyError);
+                    if (!keyError.isEmpty()) {
+                        if (error != nullptr) {
+                            *error = keyError;
+                        }
+                        return {};
+                    }
+
+                    if (oldValues == newValues) {
+                        continue;
+                    }
+                }
+
+                const QString visitToken =
+                    foreignKeyVisitToken(tableEntry.name, constraint.name, oldValues, mutationKind);
+                if (visited != nullptr && visited->contains(visitToken)) {
+                    continue;
+                }
+
+                const QList<int> matchedChildRows =
+                    findReferencingRows(childState->candidateTable, constraint, oldValues, &keyError);
+                if (!keyError.isEmpty()) {
+                    if (error != nullptr) {
+                        *error = keyError;
+                    }
+                    return {};
+                }
+                if (matchedChildRows.isEmpty()) {
+                    continue;
+                }
+
+                if (visited != nullptr) {
+                    visited->insert(visitToken);
+                }
+
+                ForeignKeyDependent dependent;
+                dependent.childTableName = tableEntry.name;
+                dependent.constraint = constraint;
+                dependent.childRowIndexes = matchedChildRows;
+                dependent.oldParentValues = oldValues;
+                dependent.newParentValues = newValues;
+                dependent.action =
+                    mutationKind == ReferencedMutationKind::Delete
+                        ? constraint.onDeleteAction
+                        : constraint.onUpdateAction;
+                dependent.mutationKind = mutationKind;
+                dependents.append(dependent);
+            }
+        }
+    }
+
+    return dependents;
+}
+
+QList<ForeignKeyDependent> planForeignKeyCascade(const QList<ForeignKeyDependent> &dependents,
+                                                 QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QList<ForeignKeyDependent> plan = dependents;
+    std::sort(plan.begin(), plan.end(), [](const ForeignKeyDependent &lhs, const ForeignKeyDependent &rhs) {
+        if (lhs.childTableName != rhs.childTableName) {
+            return lhs.childTableName < rhs.childTableName;
+        }
+        if (lhs.constraint.name != rhs.constraint.name) {
+            return lhs.constraint.name < rhs.constraint.name;
+        }
+        return compositeKeySignature(lhs.oldParentValues) < compositeKeySignature(rhs.oldParentValues);
+    });
+
+    for (const ForeignKeyDependent &dependent : plan) {
+        if (dependent.action == tabledef::ForeignKeyAction::NoAction
+            || dependent.action == tabledef::ForeignKeyAction::Restrict) {
+            if (error != nullptr) {
+                *error = QStringLiteral("foreign key '%1' from table '%2' would be broken")
+                             .arg(dependent.constraint.name, dependent.childTableName);
+            }
+            return {};
+        }
+    }
+
+    return plan;
+}
+
+bool applyForeignKeyCascade(const QString &databaseName,
+                            const QString &targetTableName,
+                            const repo::TableData &beforeTable,
+                            const repo::TableData &afterTable,
+                            const QList<int> &affectedParentRowIndexes,
+                            ReferencedMutationKind mutationKind,
+                            QMap<QString, TableMutationState> *states,
+                            QSet<QString> *visited,
+                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QList<ForeignKeyDependent> dependents =
+        collectForeignKeyDependents(databaseName,
+                                    targetTableName,
+                                    beforeTable,
+                                    afterTable,
+                                    affectedParentRowIndexes,
+                                    mutationKind,
+                                    states,
+                                    visited,
+                                    error);
+    if (error != nullptr && !error->isEmpty()) {
+        return false;
+    }
+
+    const QList<ForeignKeyDependent> plan = planForeignKeyCascade(dependents, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return false;
+    }
+
+    for (const ForeignKeyDependent &dependent : plan) {
+        TableMutationState *childState =
+            ensureTableMutationState(databaseName, dependent.childTableName, states, error);
+        if (childState == nullptr) {
+            return false;
+        }
+
+        const repo::TableData beforeChildTable = childState->candidateTable;
+        QString mutationError;
+        QList<int> changedChildRowIndexes =
+            findReferencingRows(childState->candidateTable,
+                                dependent.constraint,
+                                dependent.oldParentValues,
+                                &mutationError);
+        if (!mutationError.isEmpty()) {
+            if (error != nullptr) {
+                *error = mutationError;
+            }
+            return false;
+        }
+        if (changedChildRowIndexes.isEmpty()) {
+            continue;
+        }
+
+        ReferencedMutationKind childMutationKind = ReferencedMutationKind::Update;
+
+        if (dependent.action == tabledef::ForeignKeyAction::Cascade
+            && dependent.mutationKind == ReferencedMutationKind::Delete) {
+            std::sort(changedChildRowIndexes.begin(), changedChildRowIndexes.end());
+            QList<int> uniqueChangedIndexes;
+            uniqueChangedIndexes.reserve(changedChildRowIndexes.size());
+            for (int childRowIndex : changedChildRowIndexes) {
+                if (uniqueChangedIndexes.isEmpty() || uniqueChangedIndexes.last() != childRowIndex) {
+                    uniqueChangedIndexes.append(childRowIndex);
+                }
+            }
+            changedChildRowIndexes = uniqueChangedIndexes;
+            for (int index = changedChildRowIndexes.size() - 1; index >= 0; --index) {
+                const int childRowIndex = changedChildRowIndexes.at(index);
+                if (childRowIndex >= 0 && childRowIndex < childState->candidateTable.rows.size()) {
+                    childState->candidateTable.rows.removeAt(childRowIndex);
+                }
+                if (childRowIndex >= 0 && childRowIndex < childState->candidateRowIds.size()) {
+                    childState->candidateRowIds.removeAt(childRowIndex);
+                }
+            }
+            childMutationKind = ReferencedMutationKind::Delete;
+        } else {
+            QStringList assignedValues;
+            if (dependent.action == tabledef::ForeignKeyAction::Cascade) {
+                assignedValues = dependent.newParentValues;
+            } else if (dependent.action == tabledef::ForeignKeyAction::SetNull) {
+                assignedValues = QStringList(dependent.constraint.columns.size(), QString());
+            } else if (dependent.action == tabledef::ForeignKeyAction::SetDefault) {
+                assignedValues = defaultValuesForForeignKeyColumns(childState->schema,
+                                                                  dependent.constraint.columns,
+                                                                  &mutationError);
+                if (!mutationError.isEmpty()) {
+                    if (error != nullptr) {
+                        *error = mutationError;
+                    }
+                    return false;
+                }
+            }
+
+            for (int childRowIndex : changedChildRowIndexes) {
+                if (childRowIndex < 0 || childRowIndex >= childState->candidateTable.rows.size()) {
+                    continue;
+                }
+
+                repo::TableRow updatedRow = childState->candidateTable.rows.at(childRowIndex);
+                if (!writeForeignKeyValues(&updatedRow,
+                                           childState->candidateTable,
+                                           childState->schema,
+                                           dependent.constraint,
+                                           assignedValues,
+                                           &mutationError)) {
+                    if (error != nullptr) {
+                        *error = mutationError;
+                    }
+                    return false;
+                }
+                if (!validateRowAgainstSchema(updatedRow, childState->schema, &mutationError)) {
+                    if (error != nullptr) {
+                        *error = mutationError;
+                    }
+                    return false;
+                }
+
+                childState->candidateTable.rows[childRowIndex] = updatedRow;
+            }
+        }
+
+        childState->dirty = true;
+        if (!validateMutationStateLocally(*childState, changedChildRowIndexes, error)) {
+            return false;
+        }
+
+        if (!applyForeignKeyCascade(databaseName,
+                                    dependent.childTableName,
+                                    beforeChildTable,
+                                    childState->candidateTable,
+                                    changedChildRowIndexes,
+                                    childMutationKind,
+                                    states,
+                                    visited,
+                                    error)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 repo::TableData projectRows(const repo::TableData &table,
                             const QStringList &projectionColumns,
                             const QList<service::SimpleCondition> &conditions,
@@ -755,7 +1531,8 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+    QStringList currentRowIds = loadRowIdsForTargetTable(databaseName,
+                                                         targetTableKind,
                                                          targetTableName,
                                                          currentTable,
                                                          &rowIdsInitialized,
@@ -765,6 +1542,7 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         return result;
     }
     if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
             result.errorMessage = error;
             return result;
@@ -827,6 +1605,7 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
     }
 
     if (targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
             writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
             result.errorMessage = error;
@@ -881,7 +1660,8 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+    QStringList currentRowIds = loadRowIdsForTargetTable(databaseName,
+                                                         targetTableKind,
                                                          targetTableName,
                                                          currentTable,
                                                          &rowIdsInitialized,
@@ -891,6 +1671,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         return result;
     }
     if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
             result.errorMessage = error;
             return result;
@@ -949,6 +1730,49 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         candidateTable.rows[rowIndex] = updatedRow;
     }
 
+    if (validationMode == ValidationMode::UserData
+        && targetTableKind == TargetTableKind::TableDat) {
+        QMap<QString, TableMutationState> mutationStates;
+        TableMutationState rootState;
+        rootState.databaseName = databaseName;
+        rootState.tableName = targetTableName;
+        rootState.schema = targetSchema;
+        rootState.originalTable = currentTable;
+        rootState.candidateTable = candidateTable;
+        rootState.originalRowIds = currentRowIds;
+        rootState.candidateRowIds = candidateRowIds;
+        rootState.dirty = true;
+        mutationStates.insert(tableMutationKey(databaseName, targetTableName), rootState);
+
+        if (!validateMutationStateLocally(rootState, matchedRowIndexes, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        QSet<QString> visited;
+        if (!applyForeignKeyCascade(databaseName,
+                                    targetTableName,
+                                    currentTable,
+                                    candidateTable,
+                                    matchedRowIndexes,
+                                    ReferencedMutationKind::Update,
+                                    &mutationStates,
+                                    &visited,
+                                    &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        if (!commitMutationStates(mutationStates, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        result.success = true;
+        result.affectedRowCount = matchedRowIndexes.size();
+        return result;
+    }
+
     if (validationMode == ValidationMode::UserData) {
         if (targetTableKind == TargetTableKind::TableDat) {
             QString indexError;
@@ -974,15 +1798,6 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
             result.errorMessage = error;
             return result;
         }
-        if (targetTableKind == TargetTableKind::TableDat
-            && !validateIncomingForeignKeys(databaseName,
-                                            currentDataRoot,
-                                            targetTableName,
-                                            candidateTable,
-                                            &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     const repo::RepositoryResult writeResult =
@@ -993,6 +1808,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     }
 
     if (targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
             writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
             result.errorMessage = error;
@@ -1047,7 +1863,8 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     }
 
     bool rowIdsInitialized = false;
-    QStringList currentRowIds = loadRowIdsForTargetTable(targetTableKind,
+    QStringList currentRowIds = loadRowIdsForTargetTable(databaseName,
+                                                         targetTableKind,
                                                          targetTableName,
                                                          currentTable,
                                                          &rowIdsInitialized,
@@ -1057,6 +1874,7 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
         return result;
     }
     if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
             result.errorMessage = error;
             return result;
@@ -1090,6 +1908,49 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
         }
     }
 
+    if (validationMode == ValidationMode::UserData
+        && targetTableKind == TargetTableKind::TableDat) {
+        QMap<QString, TableMutationState> mutationStates;
+        TableMutationState rootState;
+        rootState.databaseName = databaseName;
+        rootState.tableName = targetTableName;
+        rootState.schema = targetSchema;
+        rootState.originalTable = currentTable;
+        rootState.candidateTable = candidateTable;
+        rootState.originalRowIds = currentRowIds;
+        rootState.candidateRowIds = candidateRowIds;
+        rootState.dirty = true;
+        mutationStates.insert(tableMutationKey(databaseName, targetTableName), rootState);
+
+        if (!validateMutationStateLocally(rootState, matchedRowIndexes, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        QSet<QString> visited;
+        if (!applyForeignKeyCascade(databaseName,
+                                    targetTableName,
+                                    currentTable,
+                                    candidateTable,
+                                    matchedRowIndexes,
+                                    ReferencedMutationKind::Delete,
+                                    &mutationStates,
+                                    &visited,
+                                    &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        if (!commitMutationStates(mutationStates, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+
+        result.success = true;
+        result.affectedRowCount = matchedRowIndexes.size();
+        return result;
+    }
+
     if (validationMode == ValidationMode::UserData) {
         if (targetTableKind == TargetTableKind::TableDat) {
             QString indexError;
@@ -1115,15 +1976,6 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
             result.errorMessage = error;
             return result;
         }
-        if (targetTableKind == TargetTableKind::TableDat
-            && !validateIncomingForeignKeys(databaseName,
-                                            currentDataRoot,
-                                            targetTableName,
-                                            candidateTable,
-                                            &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     const repo::RepositoryResult writeResult =
@@ -1134,6 +1986,7 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     }
 
     if (targetTableKind == TargetTableKind::TableDat) {
+        CurrentDatabaseGuard databaseGuard(databaseName);
         if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
             writeTargetTable(store, targetTableKind, databaseName, targetTableName, currentTable);
             result.errorMessage = error;

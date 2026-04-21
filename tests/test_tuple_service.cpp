@@ -40,14 +40,19 @@ tabledef::Constraint makePrimaryKey(const QString &name, const QStringList &colu
 tabledef::Constraint makeForeignKey(const QString &name,
                                     const QStringList &columns,
                                     const QString &referencedTable,
-                                    const QStringList &referencedColumns)
+                                    const QStringList &referencedColumns,
+                                    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction,
+                                    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction)
 {
-    return tabledef::Constraint{name,
-                                tabledef::ConstraintType::ForeignKey,
-                                columns,
-                                referencedTable,
-                                referencedColumns,
-                                QString()};
+    tabledef::Constraint constraint;
+    constraint.name = name;
+    constraint.type = tabledef::ConstraintType::ForeignKey;
+    constraint.columns = columns;
+    constraint.referencedTable = referencedTable;
+    constraint.referencedColumns = referencedColumns;
+    constraint.onDeleteAction = onDeleteAction;
+    constraint.onUpdateAction = onUpdateAction;
+    return constraint;
 }
 
 tabledef::Constraint makeUnique(const QString &name, const QStringList &columns)
@@ -69,13 +74,22 @@ tabledef::TableSchema parentSchema(const QString &tableName)
     return schema;
 }
 
-tabledef::TableSchema childSchema(const QString &tableName, const QString &parentTableName)
+tabledef::TableSchema childSchema(const QString &tableName,
+                                  const QString &parentTableName,
+                                  bool parentIdNotNull,
+                                  const QString &parentIdDefaultValue,
+                                  tabledef::ForeignKeyAction onDeleteAction,
+                                  tabledef::ForeignKeyAction onUpdateAction)
 {
     tabledef::TableSchema schema;
     schema.tableName = tableName;
     schema.columns = {
         makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
-        makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int, 0, true),
+        makeColumn(QStringLiteral("parent_id"),
+                   tabledef::ColumnType::Int,
+                   0,
+                   parentIdNotNull,
+                   parentIdDefaultValue),
         makeColumn(QStringLiteral("note"), tabledef::ColumnType::Varchar, 64, false),
     };
     schema.constraints = {
@@ -83,9 +97,21 @@ tabledef::TableSchema childSchema(const QString &tableName, const QString &paren
         makeForeignKey(QStringLiteral("fk_%1_parent").arg(tableName),
                        {QStringLiteral("parent_id")},
                        parentTableName,
-                       {QStringLiteral("id")}),
+                       {QStringLiteral("id")},
+                       onDeleteAction,
+                       onUpdateAction),
     };
     return schema;
+}
+
+tabledef::TableSchema childSchema(const QString &tableName, const QString &parentTableName)
+{
+    return childSchema(tableName,
+                       parentTableName,
+                       true,
+                       QString(),
+                       tabledef::ForeignKeyAction::NoAction,
+                       tabledef::ForeignKeyAction::NoAction);
 }
 
 tabledef::TableSchema indexedSchema(const QString &tableName)
@@ -147,6 +173,15 @@ QList<QMap<QString, QString>> makeRows(std::initializer_list<QMap<QString, QStri
 QStringList rowValues(const repo::TableData &table, int rowIndex)
 {
     return table.rows.at(rowIndex);
+}
+
+repo::TableData loadTable(const QString &databaseName, const QString &tableName, const QString &dataRoot)
+{
+    repo::TableRepo tableRepo(databaseName, tableName, dataRoot);
+    QString error;
+    const repo::TableData table = tableRepo.readTable(&error);
+    Q_ASSERT_X(error.isEmpty(), "loadTable", qPrintable(error));
+    return table;
 }
 
 QStringList loadRowIds(const QString &databaseName,
@@ -355,6 +390,199 @@ private slots:
                                          {SimpleCondition{QStringLiteral("id"), QStringLiteral("2")}});
         QVERIFY(!restrictedParentKeyUpdate.success);
         QVERIFY(restrictedParentKeyUpdate.errorMessage.contains(QStringLiteral("would be broken")));
+    }
+
+    void test_deleteRowsCascadeRecursively()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_cascade_delete_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_cascade_delete_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_cascade_delete_child");
+        const QString grandChildTableName = QStringLiteral("test_tuple_service_cascade_delete_grandchild");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                true,
+                                QString(),
+                                tabledef::ForeignKeyAction::Cascade,
+                                tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+        ensureTable(databaseName,
+                    grandChildTableName,
+                    childSchema(grandChildTableName,
+                                childTableName,
+                                true,
+                                QString(),
+                                tabledef::ForeignKeyAction::Cascade,
+                                tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                       {QStringLiteral("name"), QStringLiteral("bob")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child_a")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("11")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("2")},
+                                                       {QStringLiteral("note"), QStringLiteral("child_b")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(grandChildTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("100")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("10")},
+                                                       {QStringLiteral("note"), QStringLiteral("grand_a")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("101")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("11")},
+                                                       {QStringLiteral("note"), QStringLiteral("grand_b")}}),
+                                          })).success);
+
+        TaskResult deleteResult = tuple_service::deleteRows(parentTableName,
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        const repo::TableData parentTable = loadTable(databaseName, parentTableName, m_dataRoot);
+        QCOMPARE(parentTable.rows.size(), 1);
+        QCOMPARE(rowValues(parentTable, 0), QStringList({QStringLiteral("2"), QStringLiteral("bob")}));
+
+        const repo::TableData childTable = loadTable(databaseName, childTableName, m_dataRoot);
+        QCOMPARE(childTable.rows.size(), 1);
+        QCOMPARE(rowValues(childTable, 0),
+                 QStringList({QStringLiteral("11"), QStringLiteral("2"), QStringLiteral("child_b")}));
+
+        const repo::TableData grandChildTable = loadTable(databaseName, grandChildTableName, m_dataRoot);
+        QCOMPARE(grandChildTable.rows.size(), 1);
+        QCOMPARE(rowValues(grandChildTable, 0),
+                 QStringList({QStringLiteral("101"), QStringLiteral("11"), QStringLiteral("grand_b")}));
+    }
+
+    void test_updateRowsCascade()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_cascade_update_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_cascade_update_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_cascade_update_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                true,
+                                QString(),
+                                tabledef::ForeignKeyAction::NoAction,
+                                tabledef::ForeignKeyAction::Cascade),
+                    m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child")}}),
+                                          })).success);
+
+        TaskResult updateResult = tuple_service::updateRows(parentTableName,
+                                                            makeAssignment(QStringLiteral("id"), QStringLiteral("3")),
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+
+        const repo::TableData childTable = loadTable(databaseName, childTableName, m_dataRoot);
+        QCOMPARE(childTable.rows.size(), 1);
+        QCOMPARE(rowValues(childTable, 0),
+                 QStringList({QStringLiteral("10"), QStringLiteral("3"), QStringLiteral("child")}));
+    }
+
+    void test_deleteRowsSetNull()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_set_null_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_set_null_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_set_null_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                false,
+                                QString(),
+                                tabledef::ForeignKeyAction::SetNull,
+                                tabledef::ForeignKeyAction::NoAction),
+                    m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child")}}),
+                                          })).success);
+
+        TaskResult deleteResult = tuple_service::deleteRows(parentTableName,
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+
+        const repo::TableData childTable = loadTable(databaseName, childTableName, m_dataRoot);
+        QCOMPARE(childTable.rows.size(), 1);
+        QCOMPARE(rowValues(childTable, 0),
+                 QStringList({QStringLiteral("10"), QString(), QStringLiteral("child")}));
+    }
+
+    void test_updateRowsSetDefault()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_set_default_db");
+        const QString parentTableName = QStringLiteral("test_tuple_service_set_default_parent");
+        const QString childTableName = QStringLiteral("test_tuple_service_set_default_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, parentSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName,
+                    childTableName,
+                    childSchema(childTableName,
+                                parentTableName,
+                                true,
+                                QStringLiteral("0"),
+                                tabledef::ForeignKeyAction::NoAction,
+                                tabledef::ForeignKeyAction::SetDefault),
+                    m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(parentTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("0")},
+                                                       {QStringLiteral("name"), QStringLiteral("root")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                          })).success);
+        QVERIFY(tuple_service::insertRows(childTableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                                                       {QStringLiteral("parent_id"), QStringLiteral("1")},
+                                                       {QStringLiteral("note"), QStringLiteral("child")}}),
+                                          })).success);
+
+        TaskResult updateResult = tuple_service::updateRows(parentTableName,
+                                                            makeAssignment(QStringLiteral("id"), QStringLiteral("2")),
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+
+        const repo::TableData childTable = loadTable(databaseName, childTableName, m_dataRoot);
+        QCOMPARE(childTable.rows.size(), 1);
+        QCOMPARE(rowValues(childTable, 0),
+                 QStringList({QStringLiteral("10"), QStringLiteral("0"), QStringLiteral("child")}));
     }
 
     void test_uniqueConstraintRejectsDuplicateDml()

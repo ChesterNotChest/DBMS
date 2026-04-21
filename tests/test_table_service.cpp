@@ -49,14 +49,19 @@ tabledef::Constraint makeUnique(const QString &name, const QStringList &columns)
 tabledef::Constraint makeForeignKey(const QString &name,
                                     const QStringList &columns,
                                     const QString &referencedTable,
-                                    const QStringList &referencedColumns)
+                                    const QStringList &referencedColumns,
+                                    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction,
+                                    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction)
 {
     return tabledef::Constraint{name,
                                 tabledef::ConstraintType::ForeignKey,
                                 columns,
                                 referencedTable,
                                 referencedColumns,
-                                QString()};
+                                QString(),
+                                QString(),
+                                onDeleteAction,
+                                onUpdateAction};
 }
 
 tabledef::TableSchema baseSchema(const QString &tableName)
@@ -748,6 +753,45 @@ private slots:
         TaskResult duplicateResult = table_service::addConstraint(tableName, duplicateSemanticConstraint);
         QVERIFY(!duplicateResult.success);
         QVERIFY(duplicateResult.errorMessage.contains(QStringLiteral("duplicate")));
+    }
+
+    void test_addForeignKeyConstraintWithActions()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_fk_action_db");
+        const QString parentTableName = QStringLiteral("test_table_service_fk_action_parent");
+        const QString childTableName = QStringLiteral("test_table_service_fk_action_child");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, parentTableName, baseSchema(parentTableName), m_dataRoot);
+        ensureTable(databaseName, childTableName, tableWithForeignKeyColumn(childTableName), m_dataRoot);
+
+        const tabledef::Constraint foreignKey = makeForeignKey(QStringLiteral("fk_test_table_service_parent"),
+                                                               {QStringLiteral("parent_id")},
+                                                               parentTableName,
+                                                               {QStringLiteral("id")},
+                                                               tabledef::ForeignKeyAction::Cascade,
+                                                               tabledef::ForeignKeyAction::SetNull);
+        TaskResult addResult = table_service::addConstraint(childTableName, foreignKey);
+        QVERIFY2(addResult.success, qPrintable(addResult.errorMessage));
+
+        QString error;
+        repo::ConstraintRepo constraintRepo(databaseName, childTableName, m_dataRoot);
+        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&error);
+        QVERIFY(error.isEmpty());
+
+        bool foundActionConstraint = false;
+        for (const tabledef::Constraint &constraint : constraints) {
+            if (constraint.name == QStringLiteral("fk_test_table_service_parent")) {
+                QCOMPARE(constraint.onDeleteAction, tabledef::ForeignKeyAction::Cascade);
+                QCOMPARE(constraint.onUpdateAction, tabledef::ForeignKeyAction::SetNull);
+                foundActionConstraint = true;
+            }
+        }
+        QVERIFY(foundActionConstraint);
+
+        TextResult createText = table_service::showCreateTable(childTableName);
+        QVERIFY2(createText.success, qPrintable(createText.errorMessage));
+        QVERIFY(createText.text.contains(QStringLiteral("ON DELETE CASCADE")));
+        QVERIFY(createText.text.contains(QStringLiteral("ON UPDATE SET NULL")));
     }
 
     void test_addConstraintRejectsDuplicateConstraintName()

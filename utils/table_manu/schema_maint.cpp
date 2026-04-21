@@ -111,6 +111,11 @@ bool isForeignKeyReferenceComplete(const Constraint &constraint)
            && constraint.columns.size() == constraint.referencedColumns.size();
 }
 
+bool isDefaultForeignKeyAction(ForeignKeyAction action)
+{
+    return action == ForeignKeyAction::NoAction;
+}
+
 bool isConstraintDefinitionComplete(const Constraint &constraint)
 {
     if (constraint.name.trimmed().isEmpty()) {
@@ -124,6 +129,11 @@ bool isConstraintDefinitionComplete(const Constraint &constraint)
 
     if (constraintTypeRequiresReferenceTarget(constraint.type)) {
         return isForeignKeyReferenceComplete(constraint);
+    }
+
+    if (!isDefaultForeignKeyAction(constraint.onDeleteAction)
+        || !isDefaultForeignKeyAction(constraint.onUpdateAction)) {
+        return false;
     }
 
     if (constraint.type == ConstraintType::Check) {
@@ -157,7 +167,9 @@ bool sameConstraintSemantics(const Constraint &lhs, const Constraint &rhs)
         return lhs.checkClause == rhs.checkClause;
     case ConstraintType::ForeignKey:
         return lhs.referencedTable == rhs.referencedTable
-               && lhs.referencedColumns == rhs.referencedColumns;
+               && lhs.referencedColumns == rhs.referencedColumns
+               && lhs.onDeleteAction == rhs.onDeleteAction
+               && lhs.onUpdateAction == rhs.onUpdateAction;
     }
 
     return false;
@@ -244,6 +256,49 @@ bool validateConstraintDefinitions(const TableSchema &schema,
                 *error = QStringLiteral("constraint '%1' is incomplete").arg(candidate.name);
             }
             return false;
+        }
+
+        if (!isForeignKeyConstraint(candidate)
+            && (candidate.onDeleteAction != ForeignKeyAction::NoAction
+                || candidate.onUpdateAction != ForeignKeyAction::NoAction)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("constraint '%1' cannot define foreign key actions")
+                             .arg(candidate.name);
+            }
+            return false;
+        }
+
+        if (isForeignKeyConstraint(candidate)) {
+            for (const QString &columnName : candidate.columns) {
+                const int columnIndex = findColumnIndex(schema, columnName);
+                if (columnIndex < 0) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+                    }
+                    return false;
+                }
+
+                const Column &column = schema.columns.at(columnIndex);
+                if ((candidate.onDeleteAction == ForeignKeyAction::SetNull
+                     || candidate.onUpdateAction == ForeignKeyAction::SetNull)
+                    && column.notNull) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("foreign key '%1' cannot use SET NULL on NOT NULL column '%2'")
+                                     .arg(candidate.name, column.name);
+                    }
+                    return false;
+                }
+
+                if ((candidate.onDeleteAction == ForeignKeyAction::SetDefault
+                     || candidate.onUpdateAction == ForeignKeyAction::SetDefault)
+                    && column.defaultValue.isEmpty()) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("foreign key '%1' cannot use SET DEFAULT on column '%2' without default value")
+                                     .arg(candidate.name, column.name);
+                    }
+                    return false;
+                }
+            }
         }
 
         for (int otherIndex = 0; otherIndex < schema.constraints.size(); ++otherIndex) {

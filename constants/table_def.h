@@ -24,6 +24,16 @@ enum class ConstraintType {
     ForeignKey
 };
 
+// FOREIGN KEY 在引用被更新或删除时可采用的动作。
+// 这些动作同时用于元数据持久化和后续执行阶段的策略分派。
+enum class ForeignKeyAction {
+    NoAction,
+    Restrict,
+    Cascade,
+    SetNull,
+    SetDefault
+};
+
 // 单个索引的结构化定义。
 // indexName 是逻辑索引名；columnNames 记录参与索引的列；isUnique 标识是否唯一索引。
 struct IndexMeta
@@ -50,6 +60,7 @@ struct Column
 // columns 表示约束关联到哪些列；
 // referencedTable / referencedColumns 用于描述 FOREIGN KEY 指向的目标；
 // checkClause 主要供 CHECK 约束使用。
+// onDeleteAction / onUpdateAction 仅对 FOREIGN KEY 生效，用于后续级联/阻断策略。
 struct Constraint
 {
     QString name;
@@ -59,6 +70,8 @@ struct Constraint
     QStringList referencedColumns;
     QString checkClause;
     QString indexName;
+    ForeignKeyAction onDeleteAction = ForeignKeyAction::NoAction;
+    ForeignKeyAction onUpdateAction = ForeignKeyAction::NoAction;
 };
 
 // 一张二维表的完整 schema 定义。
