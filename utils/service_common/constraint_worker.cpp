@@ -321,7 +321,7 @@ bool rebuildTableIndexes(const QString &tableName,
         if (indexRepo.hasIndex(index.indexName, error)) {
             logIndexMaintenance(QStringLiteral("rebuild existing index %1 on %2")
                                     .arg(index.indexName, tableName));
-            const repo::RepositoryResult rebuildResult = sortIndexRepo.rebuild(tableData, rowIds);
+            const repo::RepositoryResult rebuildResult = sortIndexRepo.rebuild(index, tableData, rowIds);
             if (!rebuildResult.ok) {
                 if (error != nullptr) {
                     *error = rebuildResult.error;
@@ -538,14 +538,42 @@ bool ensureConstraintBoundIndex(const QString &tableName,
                                         tabledef::isPrimaryKeyConstraint(constraint)
                                             || tabledef::isUniqueConstraint(constraint)};
 
-    if (indexRepo.hasIndex(boundIndexName, error)) {
+    const QList<tabledef::IndexMeta> existingIndexes = indexRepo.listIndexes(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return false;
+    }
+
+    tabledef::IndexMeta existingIndex;
+    bool indexExists = false;
+    for (const tabledef::IndexMeta &candidate : existingIndexes) {
+        if (candidate.indexName == boundIndexName) {
+            existingIndex = candidate;
+            indexExists = true;
+            break;
+        }
+    }
+
+    if (indexExists) {
         logIndexMaintenance(QStringLiteral("bound index exists, rebuild %1")
                                 .arg(boundIndexName));
-        const repo::RepositoryResult rebuildResult = repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot)
-                                                         .rebuild(tableData, rowIds);
-        if (!rebuildResult.ok) {
+        const repo::RepositoryResult updateResult = indexRepo.updateIndex(boundIndexName, indexMeta);
+        if (!updateResult.ok) {
             if (error != nullptr) {
-                *error = rebuildResult.error;
+                *error = updateResult.error;
+            }
+            return false;
+        }
+
+        const repo::RepositoryResult rebuildResult = repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot)
+                                                         .rebuild(indexMeta, tableData, rowIds);
+        if (!rebuildResult.ok) {
+            const repo::RepositoryResult rollbackResult = indexRepo.updateIndex(boundIndexName, existingIndex);
+            if (error != nullptr) {
+                if (!rollbackResult.ok) {
+                    *error = QStringLiteral("%1; rollback failed: %2").arg(rebuildResult.error, rollbackResult.error);
+                } else {
+                    *error = rebuildResult.error;
+                }
             }
             return false;
         }
@@ -565,6 +593,7 @@ bool ensureConstraintBoundIndex(const QString &tableName,
     const repo::RepositoryResult treeResult = repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot)
                                                  .createIndex(indexMeta, tableData, rowIds);
     if (!treeResult.ok) {
+        repo::SortIndexRepo(databaseName, boundIndexName, tableName, currentDataRoot).dropIndex();
         indexRepo.deleteIndex(boundIndexName);
         if (error != nullptr) {
             *error = treeResult.error;

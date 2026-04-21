@@ -294,6 +294,9 @@ public:
     RepositoryResult createIndex(const tabledef::IndexMeta &index,
                                 const TableData &table,
                                 const QStringList &rowLocators) const;
+        RepositoryResult rebuild(const tabledef::IndexMeta &index,
+                                 const TableData &table,
+                                 const QStringList &rowLocators) const;
     RepositoryResult dropIndex() const;
     TableData readIndex(QString *error = nullptr) const;
     RepositoryResult replaceIndex(const TableData &table) const;

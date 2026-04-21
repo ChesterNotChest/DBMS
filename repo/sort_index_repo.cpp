@@ -668,6 +668,10 @@ RepositoryResult SortIndexRepo::createIndex(const tabledef::IndexMeta &index,
         return RepositoryResult::failure(error);
     }
 
+    if (qEnvironmentVariableIsSet("DBMS_TEST_FAIL_SORT_INDEX_CREATE_AFTER_WRITE")) {
+        return RepositoryResult::failure(QStringLiteral("failed to create sort index '%1' (test injected)").arg(m_indexName));
+    }
+
     return RepositoryResult::success();
 }
 
@@ -701,20 +705,15 @@ RepositoryResult SortIndexRepo::deleteRow(int rowIndex) const
     return m_store.deleteRow(getIndexFilePath(), rowIndex);
 }
 
-RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringList &rowLocators) const
+RepositoryResult SortIndexRepo::rebuild(const tabledef::IndexMeta &index,
+                                        const TableData &table,
+                                        const QStringList &rowLocators) const
 {
-    QString error;
-    QJsonObject document;
-    if (!readIndexDocument(getIndexFilePath(), &document, &error)) {
-        return RepositoryResult::failure(error);
+    if (index.indexName.trimmed().isEmpty()) {
+        return RepositoryResult::failure(QStringLiteral("index name cannot be empty"));
     }
 
-    const QJsonObject metaObject = document.value(QStringLiteral("meta")).toObject();
-    tabledef::IndexMeta index;
-    index.indexName = metaObject.value(QStringLiteral("indexName")).toString();
-    index.columnNames = fromJsonArray(metaObject.value(QStringLiteral("columnNames")).toArray());
-    index.isUnique = metaObject.value(QStringLiteral("isUnique")).toBool(false);
-
+    QString error;
     const QVector<IndexEntry> entries = buildEntries(table, rowLocators, index.columnNames, &error);
     if (!error.isEmpty()) {
         return RepositoryResult::failure(error);
@@ -752,6 +751,23 @@ RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringLis
     }
 
     return RepositoryResult::success();
+}
+
+RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringList &rowLocators) const
+{
+    QString error;
+    QJsonObject document;
+    if (!readIndexDocument(getIndexFilePath(), &document, &error)) {
+        return RepositoryResult::failure(error);
+    }
+
+    const QJsonObject metaObject = document.value(QStringLiteral("meta")).toObject();
+    tabledef::IndexMeta index;
+    index.indexName = metaObject.value(QStringLiteral("indexName")).toString();
+    index.columnNames = fromJsonArray(metaObject.value(QStringLiteral("columnNames")).toArray());
+    index.isUnique = metaObject.value(QStringLiteral("isUnique")).toBool(false);
+
+    return rebuild(index, table, rowLocators);
 }
 
 RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const

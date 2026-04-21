@@ -477,6 +477,7 @@ TaskResult addColumn(const QString &tableName,
             }
             constraintRepo.deleteConstraint(createdConstraint.name);
         }
+        metaRepo.deleteColumn(definition.column.name);
         result.errorMessage = writeResult.error;
         return result;
     }
@@ -512,6 +513,8 @@ TaskResult deleteColumn(const QString &tableName,
     if (!result.errorMessage.isEmpty()) {
         return result;
     }
+
+    const tabledef::Column originalColumn = schema.columns.at(columnIndex);
 
     for (const tabledef::Constraint &constraint : constraints) {
         if (!tabledef::constraintTouchesColumn(constraint, columnName)) {
@@ -559,6 +562,7 @@ TaskResult deleteColumn(const QString &tableName,
     if (!result.errorMessage.isEmpty()) {
         return result;
     }
+    const repo::TableData originalTable = table;
 
     if (columnIndex >= table.columns.size()) {
         result.errorMessage = QStringLiteral("column '%1' does not exist").arg(columnName);
@@ -572,15 +576,16 @@ TaskResult deleteColumn(const QString &tableName,
         }
     }
 
-    const repo::RepositoryResult tableResult = tableRepo.replaceTable(table);
-    if (!tableResult.ok) {
-        result.errorMessage = tableResult.error;
-        return result;
-    }
-
     const repo::RepositoryResult metaResult = metaRepo.deleteColumn(columnName);
     if (!metaResult.ok) {
         result.errorMessage = metaResult.error;
+        return result;
+    }
+
+    const repo::RepositoryResult tableResult = tableRepo.replaceTable(table);
+    if (!tableResult.ok) {
+        metaRepo.createColumn(originalColumn);
+        result.errorMessage = tableResult.error;
         return result;
     }
 
@@ -589,6 +594,9 @@ TaskResult deleteColumn(const QString &tableName,
         return result;
     }
     if (!rebuildIndexesForTable(tableName, updatedSchema, table, &result.errorMessage)) {
+        tableRepo.replaceTable(originalTable);
+        metaRepo.createColumn(originalColumn);
+        rebuildIndexesForTable(tableName, schema, originalTable, nullptr);
         return result;
     }
 
@@ -625,21 +633,22 @@ TaskResult modifyColumn(const QString &tableName,
         return result;
     }
 
+    const tabledef::Column originalColumn = schema.columns.at(columnIndex);
     const bool isRename = definition.column.name.trimmed() != columnName.trimmed();
     if (isRename && tabledef::hasColumn(schema, definition.column.name)) {
         result.errorMessage = QStringLiteral("column '%1' already exists").arg(definition.column.name);
         return result;
     }
 
-    tabledef::TableSchema schemaWithoutTouchedConstraints = schema;
-    schemaWithoutTouchedConstraints.columns[columnIndex] = definition.column;
-    schemaWithoutTouchedConstraints.constraints.removeIf(
+    tabledef::TableSchema candidateSchema = schema;
+    candidateSchema.columns[columnIndex] = definition.column;
+    candidateSchema.constraints.removeIf(
         [&](const tabledef::Constraint &constraint) {
             return tabledef::constraintTouchesColumn(constraint, columnName);
         });
 
-    tabledef::TableSchema candidateSchema = schemaWithoutTouchedConstraints;
-    for (const tabledef::Constraint &constraint : buildGeneratedConstraints(definition)) {
+    const QList<tabledef::Constraint> generatedConstraints = buildGeneratedConstraints(definition);
+    for (const tabledef::Constraint &constraint : generatedConstraints) {
         candidateSchema.constraints.append(constraint);
     }
 
@@ -677,8 +686,6 @@ TaskResult modifyColumn(const QString &tableName,
 
     table.columns[columnIndex] = definition.column.name;
 
-    const QList<tabledef::IndexMeta> indexes = schema.indexes;
-
     if (!tabledef::validateConstraintRows(normalizedDatabaseName,
                                           currentDataRoot,
                                           candidateSchema,
@@ -689,38 +696,57 @@ TaskResult modifyColumn(const QString &tableName,
         return result;
     }
 
-    const repo::RepositoryResult tableResult = tableRepo.replaceTable(table);
-    if (!tableResult.ok) {
-        result.errorMessage = tableResult.error;
+    const repo::RepositoryResult updateMetaResult = metaRepo.updateColumn(columnName, definition.column);
+    if (!updateMetaResult.ok) {
+        result.errorMessage = updateMetaResult.error;
         return result;
     }
 
-    for (const tabledef::Constraint &constraint : schema.constraints) {
+    const QList<tabledef::Constraint> touchedConstraints = schema.constraints;
+    QList<tabledef::Constraint> removedConstraints;
+    for (const tabledef::Constraint &constraint : touchedConstraints) {
         if (!tabledef::constraintTouchesColumn(constraint, columnName)) {
             continue;
         }
-        const repo::RepositoryResult deleteConstraintResult =
-            constraintRepo.deleteConstraint(constraint.name);
+        const repo::RepositoryResult deleteConstraintResult = constraintRepo.deleteConstraint(constraint.name);
         if (!deleteConstraintResult.ok) {
+            tableRepo.replaceTable(originalTable);
+            metaRepo.updateColumn(definition.column.name, originalColumn);
+            for (const tabledef::Constraint &removedConstraint : removedConstraints) {
+                constraintRepo.createConstraint(removedConstraint);
+                if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                    || tabledef::isUniqueConstraint(removedConstraint)) {
+                    ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+                }
+            }
             result.errorMessage = deleteConstraintResult.error;
             return result;
         }
+        removedConstraints.append(constraint);
     }
 
+    const QList<tabledef::IndexMeta> indexes = indexesTouchingColumn(schema, columnName);
     repo::IndexRepo indexRepo(normalizedDatabaseName, tableName, currentDataRoot);
     for (const tabledef::IndexMeta &index : indexes) {
-        if (!index.columnNames.contains(columnName)) {
-            continue;
-        }
         tabledef::IndexMeta updatedIndex = index;
         for (QString &column : updatedIndex.columnNames) {
             if (column == columnName) {
                 column = definition.column.name;
             }
         }
+
         QString indexError;
         if (!indexRepo.hasIndex(index.indexName, &indexError)) {
             if (!indexError.isEmpty()) {
+                tableRepo.replaceTable(originalTable);
+                metaRepo.updateColumn(definition.column.name, originalColumn);
+                for (const tabledef::Constraint &removedConstraint : removedConstraints) {
+                    constraintRepo.createConstraint(removedConstraint);
+                    if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                        || tabledef::isUniqueConstraint(removedConstraint)) {
+                        ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+                    }
+                }
                 result.errorMessage = indexError;
                 return result;
             }
@@ -728,7 +754,6 @@ TaskResult modifyColumn(const QString &tableName,
         }
 
         repo::SortIndexRepo sortIndexRepo(normalizedDatabaseName, index.indexName, tableName, currentDataRoot);
-
         if (isRename) {
             if (updatedIndex.indexName == index.indexName) {
                 const repo::RepositoryResult dropResult = sortIndexRepo.dropIndex();
@@ -785,10 +810,26 @@ TaskResult modifyColumn(const QString &tableName,
         }
     }
 
-    for (const tabledef::Constraint &constraint : buildGeneratedConstraints(definition)) {
+    for (const tabledef::Constraint &constraint : generatedConstraints) {
         const repo::RepositoryResult createConstraintResult = constraintRepo.createConstraint(constraint);
         if (!createConstraintResult.ok) {
-            for (const tabledef::Constraint &createdConstraint : buildGeneratedConstraints(definition)) {
+            tableRepo.replaceTable(originalTable);
+            metaRepo.updateColumn(definition.column.name, originalColumn);
+            for (const tabledef::Constraint &removedConstraint : removedConstraints) {
+                constraintRepo.createConstraint(removedConstraint);
+                if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                    || tabledef::isUniqueConstraint(removedConstraint)) {
+                    ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+                }
+            }
+            result.errorMessage = createConstraintResult.error;
+            return result;
+        }
+        if ((tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint))
+            && !ensureConstraintBoundIndex(tableName, constraint, table, &error)) {
+            tableRepo.replaceTable(originalTable);
+            metaRepo.updateColumn(definition.column.name, originalColumn);
+            for (const tabledef::Constraint &createdConstraint : generatedConstraints) {
                 if (createdConstraint.name == constraint.name) {
                     break;
                 }
@@ -798,54 +839,57 @@ TaskResult modifyColumn(const QString &tableName,
                 }
                 constraintRepo.deleteConstraint(createdConstraint.name);
             }
-            for (const tabledef::Constraint &removedConstraint : schema.constraints) {
-                if (tabledef::constraintTouchesColumn(removedConstraint, columnName)) {
-                    constraintRepo.createConstraint(removedConstraint);
-                    if (tabledef::isPrimaryKeyConstraint(removedConstraint)
-                        || tabledef::isUniqueConstraint(removedConstraint)) {
-                        ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
-                    }
+            for (const tabledef::Constraint &removedConstraint : removedConstraints) {
+                constraintRepo.createConstraint(removedConstraint);
+                if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                    || tabledef::isUniqueConstraint(removedConstraint)) {
+                    ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
                 }
             }
-            tableRepo.replaceTable(originalTable);
-            result.errorMessage = createConstraintResult.error;
-            return result;
-        }
-        if ((tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint))
-            && !ensureConstraintBoundIndex(tableName, constraint, table, &error)) {
-            for (const tabledef::Constraint &createdConstraint : buildGeneratedConstraints(definition)) {
-                if (tabledef::isPrimaryKeyConstraint(createdConstraint)
-                    || tabledef::isUniqueConstraint(createdConstraint)) {
-                    removeConstraintBoundIndex(tableName, createdConstraint.name, nullptr);
-                }
-                constraintRepo.deleteConstraint(createdConstraint.name);
-            }
-            for (const tabledef::Constraint &removedConstraint : schema.constraints) {
-                if (tabledef::constraintTouchesColumn(removedConstraint, columnName)) {
-                    constraintRepo.createConstraint(removedConstraint);
-                    if (tabledef::isPrimaryKeyConstraint(removedConstraint)
-                        || tabledef::isUniqueConstraint(removedConstraint)) {
-                        ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
-                    }
-                }
-            }
-            tableRepo.replaceTable(originalTable);
             result.errorMessage = error;
             return result;
         }
     }
 
-    const repo::RepositoryResult updateResult = metaRepo.updateColumn(columnName, definition.column);
-    if (!updateResult.ok) {
-        result.errorMessage = updateResult.error;
-        return result;
-    }
+    const repo::RepositoryResult tableResult = tableRepo.replaceTable(table);
+    if (!tableResult.ok) {
+        metaRepo.updateColumn(definition.column.name, originalColumn);
 
-    tabledef::TableSchema updatedSchema = loadUserTableSchema(tableName, &result.errorMessage);
-    if (!result.errorMessage.isEmpty()) {
-        return result;
-    }
-    if (!rebuildIndexesForTable(tableName, updatedSchema, table, &result.errorMessage)) {
+        for (const tabledef::Constraint &constraint : generatedConstraints) {
+            if (tabledef::isPrimaryKeyConstraint(constraint)
+                || tabledef::isUniqueConstraint(constraint)) {
+                removeConstraintBoundIndex(tableName, constraint.name, nullptr);
+            }
+            constraintRepo.deleteConstraint(constraint.name);
+        }
+
+        for (const tabledef::Constraint &removedConstraint : removedConstraints) {
+            constraintRepo.createConstraint(removedConstraint);
+            if (tabledef::isPrimaryKeyConstraint(removedConstraint)
+                || tabledef::isUniqueConstraint(removedConstraint)) {
+                ensureConstraintBoundIndex(tableName, removedConstraint, originalTable, nullptr);
+            }
+        }
+
+        repo::IndexRepo rollbackIndexRepo(normalizedDatabaseName, tableName, currentDataRoot);
+        QString rollbackError;
+        const QList<tabledef::IndexMeta> currentIndexes = rollbackIndexRepo.listIndexes(&rollbackError);
+        if (rollbackError.isEmpty()) {
+            for (const tabledef::IndexMeta &currentIndex : currentIndexes) {
+                if (tabledef::hasIndex(schema, currentIndex.indexName)) {
+                    continue;
+                }
+                repo::SortIndexRepo rollbackSortIndexRepo(normalizedDatabaseName,
+                                                         currentIndex.indexName,
+                                                         tableName,
+                                                         currentDataRoot);
+                rollbackSortIndexRepo.dropIndex();
+                rollbackIndexRepo.deleteIndex(currentIndex.indexName);
+            }
+        }
+        rebuildIndexesForTable(tableName, schema, originalTable, nullptr);
+
+        result.errorMessage = tableResult.error;
         return result;
     }
 
@@ -901,7 +945,11 @@ TaskResult addConstraint(const QString &tableName,
     }
 
     if (!ensureConstraintBoundIndex(tableName, storedConstraint, table, &error)) {
-        constraintRepo.deleteConstraint(storedConstraint.name);
+        const repo::RepositoryResult rollbackResult = constraintRepo.deleteConstraint(storedConstraint.name);
+        if (!rollbackResult.ok) {
+            result.errorMessage = QStringLiteral("%1; rollback failed: %2").arg(error, rollbackResult.error);
+            return result;
+        }
         result.errorMessage = error;
         return result;
     }
@@ -1116,6 +1164,7 @@ TaskResult createIndex(const QString &tableName,
     const repo::RepositoryResult treeResult = repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot)
                                                   .createIndex(indexMeta, table, rowIds);
     if (!treeResult.ok) {
+        repo::SortIndexRepo(normalizedDatabaseName, indexName, tableName, currentDataRoot).dropIndex();
         indexRepo.deleteIndex(indexName);
         result.errorMessage = treeResult.error;
         return result;

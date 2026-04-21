@@ -315,6 +315,39 @@ QString readSortIndexSourceTable(const QString &databaseName,
     return meta.value(QStringLiteral("sourceTable")).toString();
 }
 
+QStringList readSortIndexColumns(const QString &databaseName,
+                                const QString &tableName,
+                                const QString &indexName,
+                                const QString &dataRoot,
+                                QString *error = nullptr)
+{
+    repo::FlatFileTableStore store(dataRoot);
+    QFile file(store.getSortIndexFilePath(databaseName, tableName, indexName));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to open sort index file");
+        }
+        return {};
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("sort index file is not a json object");
+        }
+        return {};
+    }
+
+    const QJsonObject meta = document.object().value(QStringLiteral("meta")).toObject();
+    QStringList columns;
+    const QJsonArray jsonColumns = meta.value(QStringLiteral("columnNames")).toArray();
+    columns.reserve(jsonColumns.size());
+    for (const QJsonValue &value : jsonColumns) {
+        columns.append(value.toString());
+    }
+    return columns;
+}
+
 } // namespace
 
 class TableServiceTest : public QObject
@@ -769,6 +802,56 @@ private slots:
         QVERIFY(missingResult.errorMessage.contains(QStringLiteral("does not exist")));
     }
 
+    void test_modifyConstraintUpdatesExistingBoundIndexMetadata()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_constraint_meta_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_constraint_meta_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, agedSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice"), QStringLiteral("22")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob"), QStringLiteral("33")}, m_dataRoot);
+
+        const tabledef::Constraint originalConstraint = makeUnique(QStringLiteral("uq_test_table_service_meta"),
+                                                                  {QStringLiteral("name")});
+        tabledef::Constraint originalConstraintWithIndex = originalConstraint;
+        originalConstraintWithIndex.indexName = QStringLiteral("uq_test_table_service_meta_idx");
+        QVERIFY(table_service::addConstraint(tableName, originalConstraintWithIndex).success);
+
+        const tabledef::Constraint modifiedConstraint = [&]() {
+            tabledef::Constraint constraint = makeUnique(QStringLiteral("uq_test_table_service_meta"),
+                                                        {QStringLiteral("age")});
+            constraint.indexName = QStringLiteral("uq_test_table_service_meta_idx");
+            return constraint;
+        }();
+
+        TaskResult modifyResult = table_service::modifyConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_meta"),
+                                                                  modifiedConstraint);
+        QVERIFY2(modifyResult.success, qPrintable(modifyResult.errorMessage));
+
+        QString error;
+        repo::IndexRepo indexRepo(databaseName, tableName, m_dataRoot);
+        const QList<tabledef::IndexMeta> indexes = indexRepo.listIndexes(&error);
+        QVERIFY(error.isEmpty());
+
+        bool foundIndex = false;
+        for (const tabledef::IndexMeta &index : indexes) {
+            if (index.indexName == QStringLiteral("uq_test_table_service_meta_idx")) {
+                QCOMPARE(index.columnNames, QStringList{QStringLiteral("age")});
+                foundIndex = true;
+            }
+        }
+        QVERIFY(foundIndex);
+
+        const QStringList sortIndexColumns = readSortIndexColumns(databaseName,
+                                                                  tableName,
+                                                                  QStringLiteral("uq_test_table_service_meta_idx"),
+                                                                  m_dataRoot,
+                                                                  &error);
+        QVERIFY(error.isEmpty());
+        QCOMPARE(sortIndexColumns, QStringList{QStringLiteral("age")});
+    }
+
     void test_modifyConstraintSurfacesBoundIndexDeletionFailure()
     {
         const QString databaseName = QStringLiteral("test_table_service_modify_constraint_delete_fail_db");
@@ -987,6 +1070,36 @@ private slots:
 
         repo::FlatFileTableStore store(m_dataRoot);
         QVERIFY(!QFile(store.getSortIndexFilePath(databaseName, tableName, indexName)).exists());
+    }
+
+    void test_createIndexCleansUpOnTreeFailure()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_index_cleanup_db");
+        const QString tableName = QStringLiteral("test_table_service_create_index_cleanup_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        qputenv("DBMS_TEST_FAIL_SORT_INDEX_CREATE_AFTER_WRITE", QByteArrayLiteral("1"));
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("idx_test_table_service_cleanup"),
+                                                             {QStringLiteral("name")},
+                                                             false);
+        qunsetenv("DBMS_TEST_FAIL_SORT_INDEX_CREATE_AFTER_WRITE");
+        QVERIFY(!createResult.success);
+
+        QString error;
+        const QString indexName = findIndexNameByColumns(databaseName,
+                                                        tableName,
+                                                        m_dataRoot,
+                                                        {QStringLiteral("name")},
+                                                        &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(indexName.isEmpty());
+
+        repo::FlatFileTableStore store(m_dataRoot);
+        QVERIFY(!QFile(store.getSortIndexFilePath(databaseName, tableName, QStringLiteral("idx_test_table_service_cleanup"))).exists());
     }
 
     void test_sortIndexLeafNextChain()

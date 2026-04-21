@@ -100,7 +100,6 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
         error->clear();
     }
 
-    bool allCoveredByIndex = true;
     for (const tabledef::Constraint &constraint : schema.constraints) {
         if (!tabledef::isPrimaryKeyConstraint(constraint)
             && !tabledef::isUniqueConstraint(constraint)) {
@@ -109,7 +108,6 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
 
         const tabledef::IndexMeta *index = matchingUniqueIndex(schema, constraint);
         if (index == nullptr) {
-            allCoveredByIndex = false;
             continue;
         }
 
@@ -133,7 +131,7 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
                 if (error != nullptr) {
                     *error = keyError;
                 }
-                return true;
+                return false;
             }
 
             bool hasEmptyValue = false;
@@ -147,7 +145,7 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
                 if (error != nullptr) {
                     *error = QStringLiteral("primary key '%1' cannot contain empty values").arg(constraint.name);
                 }
-                return true;
+                return false;
             }
             if (tabledef::isUniqueConstraint(constraint) && hasEmptyValue) {
                 continue;
@@ -158,15 +156,17 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
                 if (error != nullptr) {
                     *error = QStringLiteral("constraint '%1' is violated by duplicate values").arg(constraint.name);
                 }
-                return true;
+                return false;
             }
             seenCandidateKeys.insert(key);
 
             QString searchError;
             const QStringList matches = sortIndexRepo.search(values, &searchError);
             if (!searchError.isEmpty()) {
-                allCoveredByIndex = false;
-                continue;
+                if (error != nullptr) {
+                    *error = searchError;
+                }
+                return false;
             }
 
             bool onlyChangedRows = true;
@@ -181,12 +181,12 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
                 if (error != nullptr) {
                     *error = QStringLiteral("constraint '%1' is violated by duplicate values").arg(constraint.name);
                 }
-                return true;
+                return false;
             }
         }
     }
 
-    return allCoveredByIndex;
+    return true;
 }
 
 bool validateConstraintRowsByIndex(const QString &databaseName,
