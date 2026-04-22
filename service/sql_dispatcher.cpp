@@ -364,8 +364,16 @@ SqlExecResult SqlDispatcher::execInsert(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     int rowCount = p.payload["rowCount"].toInt();
-    const QVariantList rows = p.payload.value(QStringLiteral("rows")).toList();
+    const QVariantList parsedRows = p.payload.value(QStringLiteral("rows")).toList();
     auto colNamesFromParser = p.payload["columnNames"].value<QStringList>();
+
+    QVariantList rows;
+    if (!parsedRows.isEmpty() && parsedRows.first().typeId() != QMetaType::QVariantList) {
+        // Be tolerant if a single row payload is flattened into a plain QVariantList.
+        rows.append(parsedRows);
+    } else {
+        rows = parsedRows;
+    }
 
     // 加载表 schema 以获取真实列名（用于无列名列表的 INSERT）
     QStringList colNames = colNamesFromParser;

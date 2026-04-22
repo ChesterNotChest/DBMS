@@ -39,7 +39,8 @@ set(PROJECT_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
-        tests/service_test_entry.h
+        tests/test_entry.h
+        tests/test_parser_dispatcher.cpp
         tests/test_database_service.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp

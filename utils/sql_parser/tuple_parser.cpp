@@ -210,7 +210,7 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
                         else { row.append(v); }
                     }
                 }
-                rows.append(row);
+                rows.append(QVariant(row));
                 i = rp + 1;
             } else {
                 ++i;
