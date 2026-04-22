@@ -2,118 +2,30 @@
 
 ## 目标
 
-本计划用于为 `WTY_FRONTEND_PARSER_ALIGNMENT_PLAN.md` 提供可执行回归点，重点验证：
+本文件按当前实际存在的 `tests/test_parser_dispatcher.cpp` 整理，记录已经落地的回归点，不再保留未实现的扩展计划。
 
-- parser 是否按当前协议输出 `commandType + payload`
-- dispatcher 是否按当前协议把 payload 落到现有 service
-- 当前明确拒绝的边界是否被稳定拒绝
+当前覆盖重点是：
 
-本计划分为两层：
+- parser 是否只输出当前协议允许的 `commandType + payload`
+- dispatcher 是否能把 payload 正确落到现有 service
+- 当前明确拒绝的 SQL 语义是否稳定失败
 
-1. 当前已实现协议的回归测试
-2. 面向 `SERVICE FULL COVERAGE GAP` 的后续扩展测试
-
-## 当前已实现协议测试
+## 当前覆盖
 
 ### parser
 
-1. `CREATE TABLE` 输出基础 Qt payload
-- 输入：包含列级定义、表级 UNIQUE / FOREIGN KEY 的 SQL
-- 断言：
-  - `commandType == "CREATE_TABLE"`
-  - `payload["columns"]` 为 `QVariantList`
-  - `payload["constraints"]` 为 `QVariantList`
-  - 列项与约束项均为 `QVariantMap`
-  - 外键动作值正确保留
-
-2. `SELECT ... LIMIT n` 输出 limit
-- 输入：`SELECT id FROM t LIMIT 3`
-- 断言：
-  - `commandType == "SELECT"`
-  - `payload["limit"] == 3`
-  - `payload["projection"]`、`payload["tableName"]` 正确
-
-3. 当前不支持的 `WHERE`
-- 输入：
-  - `UPDATE t SET name = 'x' WHERE id = 1`
-  - `DELETE FROM t WHERE id = 1`
-- 断言：
-  - parser 直接失败
-  - 错误信息包含 `WHERE is not supported`
-
-4. 当前不支持的额外 `SELECT` 子句
-- 输入：`SELECT * FROM t ORDER BY id`
-- 断言：
-  - parser 直接失败
-  - 错误信息包含 `unsupported clause`
+- `test_parseCreateTableUsesQtBasePayload`：验证 `CREATE TABLE` 会输出 Qt 基础类型 payload，`columns` 和 `constraints` 都是 `QVariantList`，列级外键动作和表级约束信息都能保留。
+- `test_parseSelectLimitAndRejectUnsupportedClauses`：验证 `SELECT ... LIMIT n` 可以正确解析 `tableName`、`projection` 和 `limit`，同时 `ORDER BY` 会被拒绝。
+- `test_parseUpdateAndDeleteRejectWhere`：验证 `UPDATE` 和 `DELETE` 只要带 `WHERE` 就会直接失败，并返回明确的拒绝信息。
+- `test_parseInsertWithoutColumnListProducesSingleRowPayload`：验证无列名列表的 `INSERT` 会解析成单行 `rows` payload，并正确保留字面值。
 
 ### dispatcher
 
-1. `INSERT INTO table VALUES (...)` 自动按 schema 列序写入
-- 前置：建库、建表
-- 输入：`INSERT INTO table VALUES (1, 'alice')`
-- 断言：
-  - dispatcher 返回成功
-  - service 中真实写入的行值与 schema 列序一致
+- `test_dispatcherInsertWithoutColumnListUsesSchemaOrder`：验证 dispatcher 在 `INSERT INTO ... VALUES (...)` 没有显式列名时，会按表 schema 的真实列序写入。
+- `test_dispatcherShowCreateTableReturnsText`：验证 `SHOW CREATE TABLE` 会贯通到 service，并返回以 `CREATE TABLE` 开头的文本结果。
+- `test_dispatcherAlterRejectsIncompletePayload`：验证 `ALTER TABLE ADD / MODIFY COLUMN / CONSTRAINT` 在 payload 不完整时会被拒绝，错误信息会指向缺失的 column 或 constraint payload。
+- `test_dispatcherIndexSqlCurrentlyUnsupported`：验证 `CREATE INDEX` 和 `DROP INDEX` 目前仍然属于 parser 层的未支持语句，解析结果会直接失败。
 
-2. `SHOW CREATE TABLE` 贯通 parser -> dispatcher -> service
-- 前置：建库、建表
-- 输入：`SHOW CREATE TABLE table_name`
-- 断言：
-  - dispatcher 返回成功
-  - 返回 `text` 以 `CREATE TABLE` 开头
-  - 文本包含目标表名
+## 当前结论
 
-3. `ALTER TABLE ADD/MODIFY COLUMN/CONSTRAINT` 当前拒绝不完整 payload
-- 前置：建库、建表
-- 输入：
-  - `ALTER TABLE t ADD COLUMN age INT`
-  - `ALTER TABLE t MODIFY COLUMN age INT`
-  - `ALTER TABLE t ADD CONSTRAINT uq_t UNIQUE (name)`
-  - `ALTER TABLE t MODIFY CONSTRAINT uq_t CONSTRAINT uq_t UNIQUE (name)`
-- 断言：
-  - dispatcher 返回失败
-  - 错误信息包含 `complete column payload` 或 `complete constraint payload`
-
-4. 当前未接入的索引 SQL
-- 输入：
-  - `CREATE INDEX idx_t_name ON t(name)`
-  - `DROP INDEX idx_t_name ON t`
-- 断言：
-  - 当前 parser/dispatcher 返回 unsupported
-
-## 面向 full coverage 的后续测试
-
-这些测试在 SQL 通路真正补齐后再启用。
-
-1. `ALTER TABLE ADD COLUMN` 完整协议测试
-- parser 输出完整 `payload["column"]`
-- dispatcher 成功调用 `table_service::addColumn(...)`
-
-2. `ALTER TABLE MODIFY COLUMN` 完整协议测试
-- parser 输出完整 `payload["column"]`
-- dispatcher 成功调用 `table_service::modifyColumn(...)`
-
-3. `ALTER TABLE ADD CONSTRAINT` 完整协议测试
-- parser 输出完整 `payload["constraint"]`
-- dispatcher 成功调用 `table_service::addConstraint(...)`
-
-4. `ALTER TABLE MODIFY CONSTRAINT` 完整协议测试
-- parser 输出 `constraintName + constraint`
-- dispatcher 成功调用 `table_service::modifyConstraint(...)`
-
-5. `CREATE INDEX / DROP INDEX` 完整协议测试
-- parser 输出 `indexName / tableName / columnNames / isUnique`
-- dispatcher 成功调用 `table_service::createIndex(...) / dropIndex(...)`
-
-6. `WHERE` 简单等值协议测试
-- 支持：`col = literal [AND ...]`
-- 不支持：`OR`、比较运算、括号、`LIKE/IN/BETWEEN/IS NULL`
-- dispatcher 将条件正确映射到 `QList<SimpleCondition>`
-
-## 注册方式
-
-- 新增独立测试文件：`tests/test_parser_dispatcher.cpp`
-- 在 `tests/test_entry.h` 中登记：
-  - `int runParserDispatcherTests();`
-- 在 `main.cpp` 中和其他测试组一起直接执行，不加开关
+现有测试已经覆盖了 CREATE TABLE、SELECT LIMIT、INSERT、SHOW CREATE TABLE 以及 ALTER TABLE 的拒绝路径；索引 SQL 仍然停留在未支持状态。后续如果补齐新的 SQL 通路，再把对应测试加到这里，而不是保留在计划草稿里。
