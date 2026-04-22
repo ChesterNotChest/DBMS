@@ -271,6 +271,21 @@ private slots:
         QCOMPARE(values.at(1).toString(), QStringLiteral("alice"));
     }
 
+    void test_splitStatementsSupportsStringLiteralsAndEmptySegments()
+    {
+        const QString script = QStringLiteral(
+            "  ;  \n"
+            "INSERT INTO demo VALUES (1, 'a;b');\n"
+            "SELECT * FROM demo WHERE note = 'x;y';\n"
+            "USE demo_db");
+
+        const QStringList statements = SqlDispatcher::splitStatements(script);
+        QCOMPARE(statements.size(), 3);
+        QCOMPARE(statements.at(0), QStringLiteral("INSERT INTO demo VALUES (1, 'a;b')"));
+        QCOMPARE(statements.at(1), QStringLiteral("SELECT * FROM demo WHERE note = 'x;y'"));
+        QCOMPARE(statements.at(2), QStringLiteral("USE demo_db"));
+    }
+
     void test_parseAlterAndIndexProduceCompletePayload()
     {
         const sqlparser::ParseResult addColumn = sqlparser::parseSql(
@@ -509,6 +524,36 @@ private slots:
         QCOMPARE(remaining.resultTable.rows.size(), 1);
         QCOMPARE(remaining.resultTable.rows.at(0),
                  QStringList({QStringLiteral("2"), QStringLiteral("carol")}));
+    }
+
+    void test_splitStatementsCanDriveSequentialExecution()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_batch_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_batch_table");
+        SqlDispatcher dispatcher;
+
+        const QString script = QStringLiteral(
+            "CREATE DATABASE %1;\n"
+            "USE %1;\n"
+            "CREATE TABLE %2 (id INT PRIMARY KEY, name VARCHAR(32) NOT NULL);\n"
+            "INSERT INTO %2 VALUES (1, 'alice');\n"
+            "UPDATE %2 SET name = 'carol' WHERE id = 1;\n"
+            "DELETE FROM %2 WHERE name = 'nobody';")
+                                   .arg(databaseName, tableName);
+
+        const QStringList statements = SqlDispatcher::splitStatements(script);
+        QCOMPARE(statements.size(), 6);
+
+        for (const QString &statement : statements) {
+            const SqlExecResult result = dispatcher.execute(statement);
+            QVERIFY2(result.success, qPrintable(result.errorMessage));
+        }
+
+        const SelectRowsResult rows = tuple_service::selectRows(tableName, {}, {}, -1);
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.size(), 1);
+        QCOMPARE(rows.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("carol")}));
     }
 
     void test_dispatcherIndexSqlUsesService()

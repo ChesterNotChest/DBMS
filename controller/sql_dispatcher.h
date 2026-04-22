@@ -34,6 +34,9 @@ public:
     /** 执行一条 SQL，自动识别类型并分发 */
     SqlExecResult execute(const QString& sql);
 
+    /** 将 SQL 脚本按顶层分号切分为多条语句 */
+    static QStringList splitStatements(const QString &sqlScript);
+
     /** 执行已解析的 ParseResult */
     SqlExecResult dispatch(const sqlparser::ParseResult& parsed);
 

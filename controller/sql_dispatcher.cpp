@@ -160,6 +160,58 @@ bool simpleConditionsFromPayload(const QVariantList &conditionsPayload,
 // ============================================================
 //  统一入口
 // ============================================================
+QStringList SqlDispatcher::splitStatements(const QString &sqlScript)
+{
+    QStringList statements;
+    QString current;
+    bool inSingleQuote = false;
+    bool inDoubleQuote = false;
+
+    for (int i = 0; i < sqlScript.size(); ++i) {
+        const QChar ch = sqlScript.at(i);
+
+        if (ch == QLatin1Char('\'') && !inDoubleQuote) {
+            current.append(ch);
+            if (inSingleQuote && i + 1 < sqlScript.size() && sqlScript.at(i + 1) == QLatin1Char('\'')) {
+                current.append(sqlScript.at(i + 1));
+                ++i;
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+            continue;
+        }
+
+        if (ch == QLatin1Char('"') && !inSingleQuote) {
+            current.append(ch);
+            if (inDoubleQuote && i + 1 < sqlScript.size() && sqlScript.at(i + 1) == QLatin1Char('"')) {
+                current.append(sqlScript.at(i + 1));
+                ++i;
+                continue;
+            }
+            inDoubleQuote = !inDoubleQuote;
+            continue;
+        }
+
+        if (ch == QLatin1Char(';') && !inSingleQuote && !inDoubleQuote) {
+            const QString statement = current.trimmed();
+            if (!statement.isEmpty()) {
+                statements.append(statement);
+            }
+            current.clear();
+            continue;
+        }
+
+        current.append(ch);
+    }
+
+    const QString tail = current.trimmed();
+    if (!tail.isEmpty()) {
+        statements.append(tail);
+    }
+
+    return statements;
+}
+
 SqlExecResult SqlDispatcher::execute(const QString& sql) {
     auto parsed = sqlparser::parseSql(sql);
     return dispatch(parsed);

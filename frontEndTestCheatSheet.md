@@ -1,7 +1,7 @@
 # 前端演示速查
 
-用于答辩现场直接在前端输入 SQL。  
-只收录当前已经完成收口、适合稳定演示的语句。
+用于答辩现场直接在前端输入 SQL。
+只收录当前已经实现、适合稳定演示的语句。
 
 ## 1. 数据库
 
@@ -129,14 +129,21 @@ INSERT INTO parent VALUES (3, 'carol', 22);
 INSERT INTO child (id, parent_id, note) VALUES (1, 1, 'child of alice'), (2, 2, 'child of bob');
 ```
 
-插入 FK 演示数据：
+插入 FK 演示数据。
+这里刻意给不同动作分配不同父键，避免相互干扰：
 
 ```sql
-INSERT INTO parent (id, name, age) VALUES (0, 'root', 0);
-INSERT INTO child_cascade (id, parent_id, note) VALUES (10, 1, 'cascade child');
-INSERT INTO child_null (id, parent_id, note) VALUES (20, 1, 'set null child');
-INSERT INTO child_default (id, parent_id, note) VALUES (30, 2, 'set default child');
-INSERT INTO child_no_action (id, parent_id, note) VALUES (40, 2, 'no action child');
+INSERT INTO parent (id, name, age) VALUES
+  (0, 'root', 0),
+  (11, 'cascade_parent', 0),
+  (21, 'null_parent', 0),
+  (31, 'default_parent', 0),
+  (41, 'no_action_parent', 0);
+
+INSERT INTO child_cascade (id, parent_id, note) VALUES (10, 11, 'cascade child');
+INSERT INTO child_null (id, parent_id, note) VALUES (20, 21, 'set null child');
+INSERT INTO child_default (id, parent_id, note) VALUES (30, 31, 'set default child');
+INSERT INTO child_no_action (id, parent_id, note) VALUES (40, 41, 'no action child');
 ```
 
 ## 4. 查询
@@ -153,19 +160,19 @@ SELECT * FROM parent;
 SELECT id, name FROM parent;
 ```
 
-带 LIMIT：
+带 `LIMIT`：
 
 ```sql
 SELECT * FROM parent LIMIT 2;
 ```
 
-带简单 WHERE：
+带简单 `WHERE`：
 
 ```sql
 SELECT * FROM parent WHERE id = 1;
 ```
 
-带多条件 AND：
+带多条件 `AND`：
 
 ```sql
 SELECT * FROM parent WHERE id = 1 AND name = 'alice';
@@ -173,19 +180,19 @@ SELECT * FROM parent WHERE id = 1 AND name = 'alice';
 
 ## 5. 更新与删除
 
-带 WHERE 更新：
+带 `WHERE` 更新：
 
 ```sql
 UPDATE parent SET age = 30 WHERE id = 1;
 ```
 
-带多条件 AND 更新：
+带多条件 `AND` 更新：
 
 ```sql
 UPDATE parent SET name = 'alice_new' WHERE id = 1 AND age = 30;
 ```
 
-带 WHERE 删除：
+带 `WHERE` 删除：
 
 ```sql
 DELETE FROM child WHERE id = 2;
@@ -204,10 +211,10 @@ SELECT * FROM child_cascade;
 更新父表主键：
 
 ```sql
-UPDATE parent SET id = 11 WHERE id = 1;
+UPDATE parent SET id = 12 WHERE id = 11;
 ```
 
-再看子表，`parent_id` 应同步变成 `11`：
+再看子表，`parent_id` 应同步变成 `12`：
 
 ```sql
 SELECT * FROM child_cascade;
@@ -218,7 +225,7 @@ SELECT * FROM child_cascade;
 删除父行：
 
 ```sql
-DELETE FROM parent WHERE id = 11;
+DELETE FROM parent WHERE id = 12;
 ```
 
 再看子表，对应子行应被级联删除：
@@ -238,7 +245,7 @@ SELECT * FROM child_null;
 删除父行：
 
 ```sql
-DELETE FROM parent WHERE id = 1;
+DELETE FROM parent WHERE id = 21;
 ```
 
 再看子表，`parent_id` 应变为空：
@@ -258,7 +265,7 @@ SELECT * FROM child_default;
 删除父行：
 
 ```sql
-DELETE FROM parent WHERE id = 2;
+DELETE FROM parent WHERE id = 31;
 ```
 
 再看子表，`parent_id` 应变成默认值 `0`：
@@ -278,7 +285,7 @@ SELECT * FROM child_no_action;
 尝试删除仍被引用的父行：
 
 ```sql
-DELETE FROM parent WHERE id = 2;
+DELETE FROM parent WHERE id = 41;
 ```
 
 这里应当失败，用于演示外键阻止非法删除。
@@ -373,7 +380,7 @@ DROP DATABASE demo_db;
 
 ## 10. 现场注意
 
-当前适合演示的 WHERE 只有：
+当前适合演示的 `WHERE` 只有：
 
 ```sql
 WHERE 列名 = 值
