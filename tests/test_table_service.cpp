@@ -1,5 +1,5 @@
 #include "../service/service.h"
-#include "../service/sql_dispatcher.h"
+#include "../controller/sql_dispatcher.h"
 #include "../utils/sql_parser/sql_parser.h"
 
 #include <QDir>
@@ -1396,7 +1396,7 @@ private slots:
         QVERIFY(createText.text.contains(QStringLiteral("PRIMARY KEY")));
     }
 
-    void test_dispatcherSelectLimitAndRejectsWhere()
+    void test_dispatcherSelectLimitAndWhere()
     {
         const QString databaseName = QStringLiteral("test_table_service_dispatcher_select_limit_db");
         const QString tableName = QStringLiteral("test_table_service_dispatcher_select_limit_table");
@@ -1413,8 +1413,10 @@ private slots:
 
         const SqlExecResult whereResult = dispatcher.execute(
             QStringLiteral("SELECT * FROM %1 WHERE id = 1").arg(tableName));
-        QVERIFY(!whereResult.success);
-        QVERIFY(whereResult.errorMessage.contains(QStringLiteral("WHERE is not supported")));
+        QVERIFY2(whereResult.success, qPrintable(whereResult.errorMessage));
+        QCOMPARE(whereResult.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(whereResult.selectResult.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("alice")}));
     }
 
     void test_createIndexAndDropIndex()

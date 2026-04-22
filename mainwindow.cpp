@@ -13,7 +13,7 @@
  *  - 在此文件直接访问文件
  */
 #include "mainwindow.h"
-#include "service/sql_dispatcher.h"
+#include "controller/sql_dispatcher.h"
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QHeaderView>

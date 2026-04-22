@@ -8,7 +8,7 @@
 #define SERVICE_SQL_DISPATCHER_H
 
 #include "../utils/sql_parser/sql_parser.h"
-#include "service.h"
+#include "../service/service.h"
 
 namespace service {
 
@@ -48,6 +48,8 @@ private:
     SqlExecResult execCreateTable(const sqlparser::ParseResult& p);
     SqlExecResult execDropTable(const sqlparser::ParseResult& p);
     SqlExecResult execAlterTable(const sqlparser::ParseResult& p);
+    SqlExecResult execCreateIndex(const sqlparser::ParseResult& p);
+    SqlExecResult execDropIndex(const sqlparser::ParseResult& p);
     SqlExecResult execShowTables(const sqlparser::ParseResult& p);
     SqlExecResult execDescTable(const sqlparser::ParseResult& p);
     SqlExecResult execShowCreateTable(const sqlparser::ParseResult& p);

@@ -41,6 +41,16 @@ int findMatchingParen(const QVector<SqlToken> &tokens, int left, int limit)
     return -1;
 }
 
+int lastMeaningfulTokenIndex(const QVector<SqlToken> &tokens)
+{
+    for (int i = tokens.size() - 1; i >= 0; --i) {
+        if (tokens[i].type != TokenType::END_OF_INPUT && tokens[i].type != TokenType::SEMICOLON) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 QList<QPair<int, int>> splitTopLevelSegments(const QVector<SqlToken> &tokens, int from, int to)
 {
     QList<QPair<int, int>> segments;
@@ -435,49 +445,154 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
         QString tableName = extractTableName(tokens);
         if (tableName.isEmpty()) return {false, "ALTER TABLE: expected table name", cmdType, {}};
 
-        for (int i = 2; i < tokens.size() - 1; ++i) {
-            if (lexemeIs(tokens, i, QStringLiteral("ADD")) && i + 1 < tokens.size()) {
-                if (lexemeIs(tokens, i + 1, QStringLiteral("COLUMN"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_COLUMN"));
-                    if (i + 2 < tokens.size()) payload.insert(QStringLiteral("columnName"), tokens[i + 2].lexeme);
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
-                }
-                if (lexemeIs(tokens, i + 1, QStringLiteral("CONSTRAINT"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_CONSTRAINT"));
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
-                }
+        const int end = lastMeaningfulTokenIndex(tokens);
+        if (end < 0) return {false, "ALTER TABLE: unsupported syntax", cmdType, {}};
+
+        int actionIndex = -1;
+        for (int i = 0; i <= end; ++i) {
+            if (lexemeIs(tokens, i, QStringLiteral("ADD"))
+                || lexemeIs(tokens, i, QStringLiteral("MODIFY"))
+                || lexemeIs(tokens, i, QStringLiteral("DROP"))) {
+                actionIndex = i;
+                break;
             }
-            if (lexemeIs(tokens, i, QStringLiteral("MODIFY")) && i + 1 < tokens.size()) {
-                if (lexemeIs(tokens, i + 1, QStringLiteral("COLUMN"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_COLUMN"));
-                    if (i + 2 < tokens.size()) payload.insert(QStringLiteral("columnName"), tokens[i + 2].lexeme);
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
+        }
+        if (actionIndex < 0 || actionIndex + 1 > end) {
+            return {false, "ALTER TABLE: unsupported syntax", cmdType, {}};
+        }
+
+        payload.insert(QStringLiteral("tableName"), tableName);
+
+        if (lexemeIs(tokens, actionIndex, QStringLiteral("ADD"))) {
+            if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                || tokens[actionIndex + 1].type == TokenType::IDENTIFIER) {
+                const int columnStart = lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                                            ? actionIndex + 2
+                                            : actionIndex + 1;
+                QVariantMap column;
+                QString error;
+                if (!parseColumnSegment(tokens, columnStart, end, &column, &error)) {
+                    return {false, error, cmdType, {}};
                 }
-                if (lexemeIs(tokens, i + 1, QStringLiteral("CONSTRAINT"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_CONSTRAINT"));
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
-                }
+                payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_COLUMN"));
+                payload.insert(QStringLiteral("column"), column);
+                return {true, "", cmdType, payload};
             }
-            if (lexemeIs(tokens, i, QStringLiteral("DROP")) && i + 1 < tokens.size()) {
-                if (lexemeIs(tokens, i + 1, QStringLiteral("COLUMN"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_COLUMN"));
-                    if (i + 2 < tokens.size()) payload.insert(QStringLiteral("columnName"), tokens[i + 2].lexeme);
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
+
+            QVariantMap constraint;
+            QString error;
+            if (!parseTableConstraintSegment(tokens, actionIndex + 1, end, &constraint, &error)) {
+                return {false, error, cmdType, {}};
+            }
+            payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_CONSTRAINT"));
+            payload.insert(QStringLiteral("constraint"), constraint);
+            return {true, "", cmdType, payload};
+        }
+
+        if (lexemeIs(tokens, actionIndex, QStringLiteral("MODIFY"))) {
+            if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                || tokens[actionIndex + 1].type == TokenType::IDENTIFIER) {
+                const int columnStart = lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                                            ? actionIndex + 2
+                                            : actionIndex + 1;
+                QVariantMap column;
+                QString error;
+                if (!parseColumnSegment(tokens, columnStart, end, &column, &error)) {
+                    return {false, error, cmdType, {}};
                 }
-                if (lexemeIs(tokens, i + 1, QStringLiteral("CONSTRAINT"))) {
-                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_CONSTRAINT"));
-                    if (i + 2 < tokens.size()) payload.insert(QStringLiteral("constraintName"), tokens[i + 2].lexeme);
-                    payload.insert(QStringLiteral("tableName"), tableName);
-                    return {true, "", cmdType, payload};
-                }
+                payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_COLUMN"));
+                payload.insert(QStringLiteral("column"), column);
+                return {true, "", cmdType, payload};
+            }
+
+            if (!lexemeIs(tokens, actionIndex + 1, QStringLiteral("CONSTRAINT"))
+                || actionIndex + 2 > end
+                || tokens[actionIndex + 2].type != TokenType::IDENTIFIER) {
+                return {false, "ALTER TABLE MODIFY CONSTRAINT: expected constraint name", cmdType, {}};
+            }
+
+            const QString constraintName = tokens[actionIndex + 2].lexeme;
+            QVariantMap constraint;
+            QString error;
+            if (!parseTableConstraintSegment(tokens, actionIndex + 3, end, &constraint, &error)) {
+                return {false, error, cmdType, {}};
+            }
+            payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_CONSTRAINT"));
+            payload.insert(QStringLiteral("constraintName"), constraintName);
+            payload.insert(QStringLiteral("constraint"), constraint);
+            return {true, "", cmdType, payload};
+        }
+
+        if (lexemeIs(tokens, actionIndex, QStringLiteral("DROP"))) {
+            if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))) {
+                payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_COLUMN"));
+                if (actionIndex + 2 < tokens.size()) payload.insert(QStringLiteral("columnName"), tokens[actionIndex + 2].lexeme);
+                return {true, "", cmdType, payload};
+            }
+            if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("CONSTRAINT"))) {
+                payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_CONSTRAINT"));
+                if (actionIndex + 2 < tokens.size()) payload.insert(QStringLiteral("constraintName"), tokens[actionIndex + 2].lexeme);
+                return {true, "", cmdType, payload};
             }
         }
         return {false, "ALTER TABLE: unsupported syntax", cmdType, {}};
+    }
+
+    if (cmdType == "CREATE_INDEX") {
+        int indexToken = -1;
+        for (int i = 0; i < tokens.size(); ++i) {
+            if (lexemeIs(tokens, i, QStringLiteral("INDEX"))) {
+                indexToken = i;
+                break;
+            }
+        }
+        if (indexToken < 0 || indexToken + 1 >= tokens.size() || tokens[indexToken + 1].type != TokenType::IDENTIFIER) {
+            return {false, "CREATE INDEX: expected index name", cmdType, {}};
+        }
+
+        int onIndex = -1;
+        for (int i = indexToken + 2; i < tokens.size(); ++i) {
+            if (lexemeIs(tokens, i, QStringLiteral("ON"))) {
+                onIndex = i;
+                break;
+            }
+        }
+        if (onIndex < 0 || onIndex + 1 >= tokens.size() || tokens[onIndex + 1].type != TokenType::IDENTIFIER) {
+            return {false, "CREATE INDEX: expected table name", cmdType, {}};
+        }
+
+        const int left = findToken(tokens, TokenType::LPAREN, onIndex + 1);
+        const int right = left >= 0 ? findMatchingParen(tokens, left, tokens.size() - 1) : -1;
+        if (left < 0 || right < 0) {
+            return {false, "CREATE INDEX: expected column list", cmdType, {}};
+        }
+
+        payload.insert(QStringLiteral("indexName"), tokens[indexToken + 1].lexeme);
+        payload.insert(QStringLiteral("tableName"), tokens[onIndex + 1].lexeme);
+        payload.insert(QStringLiteral("columnNames"), identifierListInParens(tokens, left, right));
+        payload.insert(QStringLiteral("isUnique"), lexemeIs(tokens, 1, QStringLiteral("UNIQUE")));
+        return {true, "", cmdType, payload};
+    }
+
+    if (cmdType == "DROP_INDEX") {
+        if (tokens.size() < 3 || tokens[2].type != TokenType::IDENTIFIER) {
+            return {false, "DROP INDEX: expected index name", cmdType, {}};
+        }
+
+        int onIndex = -1;
+        for (int i = 3; i < tokens.size(); ++i) {
+            if (lexemeIs(tokens, i, QStringLiteral("ON"))) {
+                onIndex = i;
+                break;
+            }
+        }
+        if (onIndex < 0 || onIndex + 1 >= tokens.size() || tokens[onIndex + 1].type != TokenType::IDENTIFIER) {
+            return {false, "DROP INDEX: expected table name", cmdType, {}};
+        }
+
+        payload.insert(QStringLiteral("indexName"), tokens[2].lexeme);
+        payload.insert(QStringLiteral("tableName"), tokens[onIndex + 1].lexeme);
+        return {true, "", cmdType, payload};
     }
 
     if (cmdType == "SHOW_TABLES") {

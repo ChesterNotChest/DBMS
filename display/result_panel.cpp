@@ -223,7 +223,6 @@ void ResultPanel::showLog(const QString &message)
     QString ts = "[" + QTime::currentTime().toString("hh:mm:ss") + "] ";
     m_log->append("<span style='color:#555555'>" + ts + "</span>"
                   "<span>" + message.toHtmlEscaped() + "</span>");
-    m_tabWidget->setCurrentIndex(1);  // 自动切换到日志 Tab
 }
 
 void ResultPanel::showError(const QString &message)
@@ -231,7 +230,6 @@ void ResultPanel::showError(const QString &message)
     QString ts = "[" + QTime::currentTime().toString("hh:mm:ss") + "] ";
     m_log->append("<span style='color:#CC0000'>" + ts + message.toHtmlEscaped() + "</span>");
     m_statsLabel->setText(QString("<span style='color:#CC0000'>Error</span>"));
-    m_tabWidget->setCurrentIndex(1);
 }
 
 void ResultPanel::addHistory(const QString &sql)

@@ -124,6 +124,37 @@ bool payloadHasMap(const sqlparser::ParseResult &p, const QString &key)
     return p.payload.contains(key) && p.payload.value(key).typeId() == QMetaType::QVariantMap;
 }
 
+bool simpleConditionsFromPayload(const QVariantList &conditionsPayload,
+                                 QList<SimpleCondition> *conditions,
+                                 QString *error)
+{
+    if (conditions != nullptr) conditions->clear();
+    if (error != nullptr) error->clear();
+
+    for (const QVariant &conditionValue : conditionsPayload) {
+        if (conditionValue.typeId() != QMetaType::QVariantMap) {
+            if (error != nullptr) *error = QStringLiteral("WHERE payload is incomplete");
+            return false;
+        }
+
+        const QVariantMap conditionMap = conditionValue.toMap();
+        const QString columnName = conditionMap.value(QStringLiteral("columnName")).toString().trimmed();
+        if (columnName.isEmpty()) {
+            if (error != nullptr) *error = QStringLiteral("WHERE payload is incomplete");
+            return false;
+        }
+
+        if (conditions != nullptr) {
+            conditions->append(SimpleCondition{
+                columnName,
+                conditionMap.value(QStringLiteral("value")).toString()
+            });
+        }
+    }
+
+    return true;
+}
+
 } // namespace
 
 // ============================================================
@@ -154,6 +185,8 @@ SqlExecResult SqlDispatcher::dispatch(const sqlparser::ParseResult& p) {
     if (cmd == "CREATE_TABLE")    return fillMeta(execCreateTable(p));
     if (cmd == "DROP_TABLE")      return fillMeta(execDropTable(p));
     if (cmd == "ALTER_TABLE")     return fillMeta(execAlterTable(p));
+    if (cmd == "CREATE_INDEX")    return fillMeta(execCreateIndex(p));
+    if (cmd == "DROP_INDEX")      return fillMeta(execDropIndex(p));
     if (cmd == "SHOW_TABLES")        return fillMeta(execShowTables(p));
     if (cmd == "DESC_TABLE")        return fillMeta(execDescTable(p));
     if (cmd == "SHOW_CREATE_TABLE") return fillMeta(execShowCreateTable(p));
@@ -260,7 +293,11 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
         if (!payloadHasMap(p, QStringLiteral("column"))) {
             return {false, QStringLiteral("ALTER TABLE ADD COLUMN requires a complete column payload")};
         }
-        ColumnDefinition colDef = columnDefinitionFromPayload(p.payload.value(QStringLiteral("column")).toMap());
+        const QVariantMap columnMap = p.payload.value(QStringLiteral("column")).toMap();
+        if (columnMap.value(QStringLiteral("name")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE ADD COLUMN requires a complete column payload")};
+        }
+        ColumnDefinition colDef = columnDefinitionFromPayload(columnMap);
         auto r = table_service::addColumn(tableName, colDef);
         if (r.success) return {true, {}, "Column added"};
         return {false, r.errorMessage};
@@ -278,7 +315,11 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
         if (!payloadHasMap(p, QStringLiteral("column"))) {
             return {false, QStringLiteral("ALTER TABLE MODIFY COLUMN requires a complete column payload")};
         }
-        ColumnDefinition colDef = columnDefinitionFromPayload(p.payload.value(QStringLiteral("column")).toMap());
+        const QVariantMap columnMap = p.payload.value(QStringLiteral("column")).toMap();
+        if (columnMap.value(QStringLiteral("name")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE MODIFY COLUMN requires a complete column payload")};
+        }
+        ColumnDefinition colDef = columnDefinitionFromPayload(columnMap);
         auto r = table_service::modifyColumn(tableName, colDef.column.name, colDef);
         if (r.success) return {true, {}, "Column modified"};
         return {false, r.errorMessage};
@@ -287,7 +328,11 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
         if (!payloadHasMap(p, QStringLiteral("constraint"))) {
             return {false, QStringLiteral("ALTER TABLE ADD CONSTRAINT requires a complete constraint payload")};
         }
-        tabledef::Constraint con = constraintFromPayload(p.payload.value(QStringLiteral("constraint")).toMap(), tableName, 1);
+        const QVariantMap constraintMap = p.payload.value(QStringLiteral("constraint")).toMap();
+        if (constraintMap.value(QStringLiteral("type")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE ADD CONSTRAINT requires a complete constraint payload")};
+        }
+        tabledef::Constraint con = constraintFromPayload(constraintMap, tableName, 1);
         auto r = table_service::addConstraint(tableName, con);
         if (r.success) return {true, {}, "Constraint added"};
         return {false, r.errorMessage};
@@ -298,7 +343,14 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
             return {false, QStringLiteral("ALTER TABLE MODIFY CONSTRAINT requires complete constraint payload")};
         }
         const QString constraintName = p.payload.value(QStringLiteral("constraintName")).toString();
-        tabledef::Constraint con = constraintFromPayload(p.payload.value(QStringLiteral("constraint")).toMap(), tableName, 1);
+        QVariantMap constraintMap = p.payload.value(QStringLiteral("constraint")).toMap();
+        if (constraintMap.value(QStringLiteral("type")).toString().trimmed().isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE MODIFY CONSTRAINT requires complete constraint payload")};
+        }
+        if (constraintMap.value(QStringLiteral("name")).toString().trimmed().isEmpty()) {
+            constraintMap.insert(QStringLiteral("name"), constraintName);
+        }
+        tabledef::Constraint con = constraintFromPayload(constraintMap, tableName, 1);
         auto r = table_service::modifyConstraint(tableName, constraintName, con);
         if (r.success) return {true, {}, "Constraint modified"};
         return {false, r.errorMessage};
@@ -314,6 +366,33 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
     }
 
     return {false, "ALTER TABLE: unsupported action " + action};
+}
+
+SqlExecResult SqlDispatcher::execCreateIndex(const sqlparser::ParseResult& p) {
+    const QString tableName = p.payload.value(QStringLiteral("tableName")).toString().trimmed();
+    const QString indexName = p.payload.value(QStringLiteral("indexName")).toString().trimmed();
+    const QStringList columnNames = p.payload.value(QStringLiteral("columnNames")).toStringList();
+    const bool isUnique = p.payload.value(QStringLiteral("isUnique")).toBool();
+
+    if (indexName.isEmpty()) return {false, QStringLiteral("CREATE INDEX: expected index name")};
+    if (tableName.isEmpty()) return {false, QStringLiteral("CREATE INDEX: expected table name")};
+    if (columnNames.isEmpty()) return {false, QStringLiteral("CREATE INDEX: expected column list")};
+
+    auto r = table_service::createIndex(tableName, indexName, columnNames, isUnique);
+    if (r.success) return {true, {}, QString("Index '%1' created on '%2'").arg(indexName, tableName)};
+    return {false, r.errorMessage};
+}
+
+SqlExecResult SqlDispatcher::execDropIndex(const sqlparser::ParseResult& p) {
+    const QString tableName = p.payload.value(QStringLiteral("tableName")).toString().trimmed();
+    const QString indexName = p.payload.value(QStringLiteral("indexName")).toString().trimmed();
+
+    if (indexName.isEmpty()) return {false, QStringLiteral("DROP INDEX: expected index name")};
+    if (tableName.isEmpty()) return {false, QStringLiteral("DROP INDEX: expected table name")};
+
+    auto r = table_service::dropIndex(tableName, indexName);
+    if (r.success) return {true, {}, QString("Index '%1' dropped from '%2'").arg(indexName, tableName)};
+    return {false, r.errorMessage};
 }
 
 SqlExecResult SqlDispatcher::execShowTables(const sqlparser::ParseResult&) {
@@ -351,6 +430,10 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
+    QString conditionError;
+    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+        return {false, conditionError};
+    }
 
     auto r = tuple_service::selectRows(table, projection, conditions, limit);
     if (r.success)
@@ -412,6 +495,10 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
+    QString conditionError;
+    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+        return {false, conditionError};
+    }
 
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
@@ -431,6 +518,10 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
     QString table = p.payload["tableName"].toString();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
+    QString conditionError;
+    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+        return {false, conditionError};
+    }
 
     auto r = tuple_service::deleteRows(table, conditions);
     if (r.success)

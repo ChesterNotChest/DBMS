@@ -36,6 +36,8 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "COLUMN")         return TokenType::COLUMN;
     if (w == "MODIFY")         return TokenType::MODIFY;
     if (w == "CONSTRAINT")     return TokenType::CONSTRAINT;
+    if (w == "INDEX")          return TokenType::INDEX;
+    if (w == "ON")             return TokenType::ON;
     if (w == "PRIMARY")        return TokenType::PRIMARY_KEY;
     if (w == "FOREIGN")        return TokenType::FOREIGN_KEY;
     if (w == "REFERENCES")     return TokenType::REFERENCES;

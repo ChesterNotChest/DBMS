@@ -42,6 +42,16 @@ static int findMatchingParen(const QVector<SqlToken>& tokens, int lparen) {
     return -1;
 }
 
+static int lastMeaningfulTokenIndex(const QVector<SqlToken> &tokens)
+{
+    for (int i = tokens.size() - 1; i >= 0; --i) {
+        if (tokens[i].type != TokenType::END_OF_INPUT && tokens[i].type != TokenType::SEMICOLON) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static bool hasWhereClause(const QVector<SqlToken>& tokens)
 {
     for (int i = 0; i < tokens.size(); ++i) {
@@ -50,6 +60,65 @@ static bool hasWhereClause(const QVector<SqlToken>& tokens)
         }
     }
     return false;
+}
+
+static bool isLiteralToken(TokenType type)
+{
+    return type == TokenType::INTEGER_LIT
+           || type == TokenType::FLOAT_LIT
+           || type == TokenType::STRING_LIT
+           || type == TokenType::IDENTIFIER
+           || type == TokenType::NULL_VAL;
+}
+
+static bool parseSimpleConditions(const QVector<SqlToken> &tokens,
+                                  int from,
+                                  int to,
+                                  QVariantList *conditions,
+                                  QString *error)
+{
+    if (conditions != nullptr) conditions->clear();
+    if (from > to) {
+        if (error != nullptr) *error = QStringLiteral("WHERE: expected condition");
+        return false;
+    }
+
+    int index = from;
+    while (index <= to) {
+        if (tokens[index].type != TokenType::IDENTIFIER) {
+            if (error != nullptr) *error = QStringLiteral("WHERE: expected column name");
+            return false;
+        }
+        if (index + 1 > to || tokens[index + 1].type != TokenType::EQ) {
+            if (error != nullptr) *error = QStringLiteral("WHERE only supports '=' conditions");
+            return false;
+        }
+        if (index + 2 > to || !isLiteralToken(tokens[index + 2].type)) {
+            if (error != nullptr) *error = QStringLiteral("WHERE: expected literal value");
+            return false;
+        }
+
+        QVariantMap condition;
+        condition.insert(QStringLiteral("columnName"), tokens[index].lexeme);
+        condition.insert(QStringLiteral("value"), tokens[index + 2].lexeme);
+        if (conditions != nullptr) {
+            conditions->append(condition);
+        }
+
+        index += 3;
+        if (index > to) break;
+        if (tokens[index].type != TokenType::AND) {
+            if (error != nullptr) *error = QStringLiteral("WHERE only supports AND-combined equality conditions");
+            return false;
+        }
+        ++index;
+        if (index > to) {
+            if (error != nullptr) *error = QStringLiteral("WHERE: expected condition after AND");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static bool parseSelectLimit(const QVector<SqlToken>& tokens,
@@ -105,11 +174,6 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
 
     // ── SELECT ──
     if (cmdType == "SELECT") {
-        if (hasWhereClause(tokens)) {
-            return {false, "WHERE is not supported yet", cmdType, {}};
-        }
-
-        // SELECT cols FROM table
         QStringList projection;
         QString table;
         int tableIndex = -1;
@@ -133,15 +197,42 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
         if (table.isEmpty())
             return {false, "SELECT: expected FROM table", cmdType, {}};
 
+        int whereIdx = -1;
+        int limitIdx = -1;
+        for (int i = tableIndex + 1; i < tokens.size(); ++i) {
+            if (tokens[i].type == TokenType::WHERE && whereIdx < 0) {
+                whereIdx = i;
+            } else if (tokens[i].type == TokenType::LIMIT && limitIdx < 0) {
+                limitIdx = i;
+            }
+        }
+
+        if (whereIdx >= 0 && limitIdx >= 0 && limitIdx < whereIdx) {
+            return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
+        }
+
+        QVariantList conditions;
+        if (whereIdx >= 0) {
+            QString whereError;
+            const int whereEnd = limitIdx >= 0 ? limitIdx - 1 : lastMeaningfulTokenIndex(tokens);
+            if (!parseSimpleConditions(tokens, whereIdx + 1, whereEnd, &conditions, &whereError)) {
+                return {false, whereError, cmdType, {}};
+            }
+        }
+
         int limit = -1;
         QString limitError;
-        if (!parseSelectLimit(tokens, tableIndex + 1, &limit, &limitError)) {
+        const int limitParseStart = limitIdx >= 0 ? limitIdx : (whereIdx >= 0 ? tokens.size() - 1 : tableIndex + 1);
+        if (!parseSelectLimit(tokens, limitParseStart, &limit, &limitError)) {
             return {false, limitError, cmdType, {}};
         }
 
         payload["projection"] = projection;
         payload["tableName"] = table;
         payload["limit"] = limit;
+        if (!conditions.isEmpty()) {
+            payload["conditions"] = conditions;
+        }
 
         return {true, "", cmdType, payload};
     }
@@ -226,13 +317,9 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
 
     // ── UPDATE ──
     if (cmdType == "UPDATE") {
-        if (hasWhereClause(tokens)) {
-            return {false, "WHERE is not supported yet", cmdType, {}};
-        }
-
-        // UPDATE table SET col=val
         QString table;
         QVariantMap assignments;
+        QVariantList conditions;
 
         int setIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -247,6 +334,14 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
             return {false, "UPDATE: expected table name", cmdType, {}};
 
         // SET 子句
+        int whereIdx = -1;
+        for (int i = setIdx + 1; i < tokens.size(); ++i) {
+            if (tokens[i].type == TokenType::WHERE) {
+                whereIdx = i;
+                break;
+            }
+        }
+
         for (int i = setIdx + 1; i < tokens.size(); ++i) {
             if (tokens[i].type == TokenType::WHERE) break;
             if (tokens[i].type == TokenType::END_OF_INPUT) break;
@@ -265,20 +360,26 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
             }
         }
 
+        if (whereIdx >= 0) {
+            QString whereError;
+            if (!parseSimpleConditions(tokens, whereIdx + 1, lastMeaningfulTokenIndex(tokens), &conditions, &whereError)) {
+                return {false, whereError, cmdType, {}};
+            }
+        }
+
         payload["tableName"] = table;
         payload["assignments"] = assignments;
+        if (!conditions.isEmpty()) {
+            payload["conditions"] = conditions;
+        }
 
         return {true, "", cmdType, payload};
     }
 
     // ── DELETE ──
     if (cmdType == "DELETE") {
-        if (hasWhereClause(tokens)) {
-            return {false, "WHERE is not supported yet", cmdType, {}};
-        }
-
-        // DELETE FROM table
         QString table;
+        QVariantList conditions;
 
         int fromIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -292,7 +393,24 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
         if (table.isEmpty())
             return {false, "DELETE: expected table name", cmdType, {}};
 
+        if (hasWhereClause(tokens)) {
+            int whereIdx = -1;
+            for (int i = fromIdx + 1; i < tokens.size(); ++i) {
+                if (tokens[i].type == TokenType::WHERE) {
+                    whereIdx = i;
+                    break;
+                }
+            }
+            QString whereError;
+            if (!parseSimpleConditions(tokens, whereIdx + 1, lastMeaningfulTokenIndex(tokens), &conditions, &whereError)) {
+                return {false, whereError, cmdType, {}};
+            }
+        }
+
         payload["tableName"] = table;
+        if (!conditions.isEmpty()) {
+            payload["conditions"] = conditions;
+        }
 
         return {true, "", cmdType, payload};
     }
@@ -314,7 +432,8 @@ ParseResult parseSql(const QString& sql) {
 
     // 表级
     if (cmdType == "CREATE_TABLE" || cmdType == "DROP_TABLE" ||
-        cmdType == "ALTER_TABLE"  || cmdType == "SHOW_TABLES" ||
+        cmdType == "ALTER_TABLE"  || cmdType == "CREATE_INDEX" ||
+        cmdType == "DROP_INDEX"   || cmdType == "SHOW_TABLES" ||
         cmdType == "DESC_TABLE" || cmdType == "SHOW_CREATE_TABLE")
         return parseTableSql(sql, tokens);
 

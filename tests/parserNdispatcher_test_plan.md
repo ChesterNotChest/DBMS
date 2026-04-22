@@ -2,30 +2,73 @@
 
 ## 目标
 
-本文件按当前实际存在的 `tests/test_parser_dispatcher.cpp` 整理，记录已经落地的回归点，不再保留未实现的扩展计划。
+本文件记录当前已经落地的 parser / dispatcher 回归范围，直接对应 [test_parser_dispatcher.cpp](E:/Qt-projects/DBMS/tests/test_parser_dispatcher.cpp)。
 
-当前覆盖重点是：
+当前覆盖目标分成两层：
 
-- parser 是否只输出当前协议允许的 `commandType + payload`
-- dispatcher 是否能把 payload 正确落到现有 service
-- 当前明确拒绝的 SQL 语义是否稳定失败
+- parser 是否按协议输出正确的 `commandType + payload`
+- dispatcher 是否把 payload 正确下推到现有 service，并拒绝不完整输入
 
 ## 当前覆盖
 
-### parser
+### parser 成功路径
 
-- `test_parseCreateTableUsesQtBasePayload`：验证 `CREATE TABLE` 会输出 Qt 基础类型 payload，`columns` 和 `constraints` 都是 `QVariantList`，列级外键动作和表级约束信息都能保留。
-- `test_parseSelectLimitAndRejectUnsupportedClauses`：验证 `SELECT ... LIMIT n` 可以正确解析 `tableName`、`projection` 和 `limit`，同时 `ORDER BY` 会被拒绝。
-- `test_parseUpdateAndDeleteRejectWhere`：验证 `UPDATE` 和 `DELETE` 只要带 `WHERE` 就会直接失败，并返回明确的拒绝信息。
-- `test_parseInsertWithoutColumnListProducesSingleRowPayload`：验证无列名列表的 `INSERT` 会解析成单行 `rows` payload，并正确保留字面值。
+- `test_parseCreateTableUsesQtBasePayload`
+  验证 `CREATE TABLE` 输出的 `columns`、`constraints` 都是 Qt 基础类型，并保留列级 / 表级 FK 动作。
+- `test_parseSelectLimitAndSimpleWhere`
+  验证 `SELECT ... WHERE ... AND ... LIMIT ...` 能正确输出 `projection / tableName / limit / conditions`。
+- `test_parseUpdateAndDeleteSupportSimpleWhere`
+  验证 `UPDATE`、`DELETE` 的简单 `WHERE` 会转成 `conditions`。
+- `test_parseInsertWithoutColumnListProducesSingleRowPayload`
+  验证无列名 `INSERT` 仍会产出单行 `rows` payload。
+- `test_parseAlterAndIndexProduceCompletePayload`
+  验证 `ALTER TABLE ADD/MODIFY COLUMN`、`ADD/MODIFY CONSTRAINT`、`CREATE/DROP INDEX` 会输出完整 payload。
+- `test_parseAlterForeignKeyAndMultiColumnIndexPayload`
+  验证 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY ...` 和多列索引的 payload 收口。
 
-### dispatcher
+### parser 失败路径
 
-- `test_dispatcherInsertWithoutColumnListUsesSchemaOrder`：验证 dispatcher 在 `INSERT INTO ... VALUES (...)` 没有显式列名时，会按表 schema 的真实列序写入。
-- `test_dispatcherShowCreateTableReturnsText`：验证 `SHOW CREATE TABLE` 会贯通到 service，并返回以 `CREATE TABLE` 开头的文本结果。
-- `test_dispatcherAlterRejectsIncompletePayload`：验证 `ALTER TABLE ADD / MODIFY COLUMN / CONSTRAINT` 在 payload 不完整时会被拒绝，错误信息会指向缺失的 column 或 constraint payload。
-- `test_dispatcherIndexSqlCurrentlyUnsupported`：验证 `CREATE INDEX` 和 `DROP INDEX` 目前仍然属于 parser 层的未支持语句，解析结果会直接失败。
+- `test_parseSelectLimitAndSimpleWhere`
+  验证 `ORDER BY` 等未支持子句仍被拒绝。
+- `test_parseUpdateAndDeleteSupportSimpleWhere`
+  验证 `>` 这类非等值谓词被拒绝。
+- `test_parseWhereRejectsUnsupportedForms`
+  验证 `OR`、`AND` 结尾、缺失字面量等非法 `WHERE` 形式被拒绝。
+
+### dispatcher 集成路径
+
+- `test_dispatcherInsertWithoutColumnListUsesSchemaOrder`
+  验证 dispatcher 会用 schema 列序补齐无列名 `INSERT`。
+- `test_dispatcherShowCreateTableReturnsText`
+  验证 `SHOW CREATE TABLE` 贯通到 service。
+- `test_dispatcherAlterSqlPathsCallService`
+  验证 `ALTER TABLE ADD/MODIFY COLUMN/CONSTRAINT` 的 SQL 会真正改动 schema。
+- `test_dispatcherWhereAndLimitFlowToService`
+  验证 `SELECT / UPDATE / DELETE` 的简单 `WHERE` 和 `LIMIT` 会真正下推到 `tuple_service`。
+- `test_dispatcherIndexSqlUsesService`
+  验证 `CREATE INDEX / DROP INDEX` 会真正下推到 `table_service`。
+- `test_dispatcherUniqueAndMultiColumnIndexSqlUseService`
+  验证 `CREATE UNIQUE INDEX` 和多列索引的元数据下推正确。
+
+### dispatcher 拒绝路径
+
+- `test_dispatcherAlterRejectsIncompletePayload`
+  验证 `ALTER` 在 payload 不完整时不会伪调用 service。
+- `test_dispatcherRejectsMalformedConditionsPayload`
+  验证不完整的 `conditions` payload 会被 dispatcher 拒绝。
 
 ## 当前结论
 
-现有测试已经覆盖了 CREATE TABLE、SELECT LIMIT、INSERT、SHOW CREATE TABLE 以及 ALTER TABLE 的拒绝路径；索引 SQL 仍然停留在未支持状态。后续如果补齐新的 SQL 通路，再把对应测试加到这里，而不是保留在计划草稿里。
+当前 parser / dispatcher 测试已经覆盖：
+
+- `CREATE TABLE`
+- `SELECT ... WHERE ... AND ... LIMIT ...`
+- `UPDATE ... WHERE ...`
+- `DELETE ... WHERE ...`
+- `INSERT`
+- `ALTER TABLE ADD/MODIFY COLUMN`
+- `ALTER TABLE ADD/MODIFY CONSTRAINT`
+- `CREATE INDEX / DROP INDEX`
+- 关键的失败边界与 payload 不完整拒绝策略
+
+仍未追求的是“所有语法变体穷举”，而不是主协议缺失。
