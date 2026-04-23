@@ -54,6 +54,8 @@ set(PROJECT_SOURCES
         # ── SQL Dispatcher（桥接 parser → service）──
         controller/sql_dispatcher.h
         controller/sql_dispatcher.cpp
+        controller/nest_query.h
+        controller/nest_query.cpp
         # ── Display 层（Qt 界面，不碰 repo）──
         display/editor_panel.h
         display/editor_panel.cpp
