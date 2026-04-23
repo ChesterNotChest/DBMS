@@ -9,11 +9,11 @@
 
 ```sql
 CREATE DATABASE demo_db;
-```
 
-切换数据库：
 
-```sql
+
+
+
 USE demo_db;
 ```
 
@@ -31,7 +31,6 @@ SHOW TABLES;
 
 ## 2. 建表
 
-父表：
 
 ```sql
 CREATE TABLE parent (
@@ -40,55 +39,38 @@ CREATE TABLE parent (
   age INT DEFAULT 18,
   CONSTRAINT uq_parent_name UNIQUE (name)
 );
-```
 
-普通子表：
-
-```sql
 CREATE TABLE child (
   id INT PRIMARY KEY,
   parent_id INT,
   note VARCHAR(64),
   CONSTRAINT fk_child_parent FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE NO ACTION ON UPDATE NO ACTION
 );
-```
 
-用于演示 `DELETE CASCADE / UPDATE CASCADE` 的子表：
 
-```sql
+
 CREATE TABLE child_cascade (
   id INT PRIMARY KEY,
   parent_id INT,
   note VARCHAR(64),
   CONSTRAINT fk_child_cascade_parent FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
-```
 
-用于演示 `DELETE SET NULL` 的子表：
 
-```sql
 CREATE TABLE child_null (
   id INT PRIMARY KEY,
   parent_id INT,
   note VARCHAR(64),
   CONSTRAINT fk_child_null_parent FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET NULL ON UPDATE NO ACTION
 );
-```
 
-用于演示 `DELETE SET DEFAULT` 的子表：
-
-```sql
 CREATE TABLE child_default (
   id INT PRIMARY KEY,
   parent_id INT DEFAULT 0,
   note VARCHAR(64),
   CONSTRAINT fk_child_default_parent FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET DEFAULT ON UPDATE NO ACTION
 );
-```
 
-用于演示 `NO ACTION` 的子表：
-
-```sql
 CREATE TABLE child_no_action (
   id INT PRIMARY KEY,
   parent_id INT,
@@ -115,24 +97,11 @@ SHOW CREATE TABLE parent;
 
 ```sql
 INSERT INTO parent (id, name, age) VALUES (1, 'alice', 20), (2, 'bob', 21);
-```
 
-不写列名插入：
-
-```sql
 INSERT INTO parent VALUES (3, 'carol', 22);
-```
 
-插入普通子表：
-
-```sql
 INSERT INTO child (id, parent_id, note) VALUES (1, 1, 'child of alice'), (2, 2, 'child of bob');
-```
 
-插入 FK 演示数据。
-这里刻意给不同动作分配不同父键，避免相互干扰：
-
-```sql
 INSERT INTO parent (id, name, age) VALUES
   (0, 'root', 0),
   (11, 'cascade_parent', 0),
@@ -152,9 +121,6 @@ INSERT INTO child_no_action (id, parent_id, note) VALUES (40, 41, 'no action chi
 
 ```sql
 SELECT * FROM parent;
-```
-
-投影查询：
 
 ```sql
 SELECT id, name FROM parent;
@@ -184,17 +150,9 @@ SELECT * FROM parent WHERE id = 1 AND name = 'alice';
 
 ```sql
 UPDATE parent SET age = 30 WHERE id = 1;
-```
 
-带多条件 `AND` 更新：
-
-```sql
 UPDATE parent SET name = 'alice_new' WHERE id = 1 AND age = 30;
-```
 
-带 `WHERE` 删除：
-
-```sql
 DELETE FROM child WHERE id = 2;
 ```
 
