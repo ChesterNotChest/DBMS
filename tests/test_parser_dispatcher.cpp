@@ -1,5 +1,6 @@
 #include "../service/service.h"
 #include "../controller/sql_dispatcher.h"
+#include "../controller/nest_query.h"
 #include "../utils/sql_parser/sql_parser.h"
 
 #include <QDir>
@@ -554,6 +555,49 @@ private slots:
         QCOMPARE(rows.resultTable.rows.size(), 1);
         QCOMPARE(rows.resultTable.rows.at(0),
                  QStringList({QStringLiteral("1"), QStringLiteral("carol")}));
+    }
+
+    void test_queryExecutorSelectUsesServiceWithIsolatedContext()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_select_db");
+        const QString tableName = QStringLiteral("test_query_executor_select_table");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName, {
+            {{QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("name"), QStringLiteral("alice")}},
+            {{QStringLiteral("id"), QStringLiteral("2")}, {QStringLiteral("name"), QStringLiteral("bob")}},
+        });
+
+        currentDatabase.clear();
+
+        QueryExecutor executor;
+        QueryExecuteContext context;
+        context.currentDatabase = databaseName;
+        context.dataRoot = m_dataRoot;
+
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT * FROM %1 WHERE id = 2 LIMIT 1").arg(tableName),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.commandType, QStringLiteral("SELECT"));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("2"), QStringLiteral("bob")}));
+        QVERIFY(currentDatabase.isEmpty());
+    }
+
+    void test_queryExecutorRejectsNonSelectCommands()
+    {
+        QueryExecutor executor;
+        QueryExecuteContext context;
+        context.currentDatabase = QStringLiteral("unused_db");
+        context.dataRoot = m_dataRoot;
+
+        const QueryExecuteResult result = executor.executeSql(
+            QStringLiteral("SHOW TABLES;"),
+            context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("only supports SELECT")));
     }
 
     void test_dispatcherIndexSqlUsesService()
