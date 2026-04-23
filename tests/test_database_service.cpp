@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QtTest>
 
-#include "service_test_entry.h"
+#include "test_entry.h"
 
 using namespace service;
 

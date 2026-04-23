@@ -8,7 +8,7 @@
 #define SERVICE_SQL_DISPATCHER_H
 
 #include "../utils/sql_parser/sql_parser.h"
-#include "service.h"
+#include "../service/service.h"
 
 namespace service {
 
@@ -34,6 +34,9 @@ public:
     /** 执行一条 SQL，自动识别类型并分发 */
     SqlExecResult execute(const QString& sql);
 
+    /** 将 SQL 脚本按顶层分号切分为多条语句 */
+    static QStringList splitStatements(const QString &sqlScript);
+
     /** 执行已解析的 ParseResult */
     SqlExecResult dispatch(const sqlparser::ParseResult& parsed);
 
@@ -48,6 +51,8 @@ private:
     SqlExecResult execCreateTable(const sqlparser::ParseResult& p);
     SqlExecResult execDropTable(const sqlparser::ParseResult& p);
     SqlExecResult execAlterTable(const sqlparser::ParseResult& p);
+    SqlExecResult execCreateIndex(const sqlparser::ParseResult& p);
+    SqlExecResult execDropIndex(const sqlparser::ParseResult& p);
     SqlExecResult execShowTables(const sqlparser::ParseResult& p);
     SqlExecResult execDescTable(const sqlparser::ParseResult& p);
     SqlExecResult execShowCreateTable(const sqlparser::ParseResult& p);

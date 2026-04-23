@@ -30,11 +30,15 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
         QString next = tokens[1].lexeme.toUpper();
         if (next == "DATABASE") return {"CREATE_DATABASE", {}};
         if (next == "TABLE")    return {"CREATE_TABLE", {}};
+        if (next == "INDEX")    return {"CREATE_INDEX", {}};
+        if (next == "UNIQUE" && tokens.size() >= 3 && tokens[2].lexeme.toUpper() == "INDEX")
+            return {"CREATE_INDEX", {}};
     }
     if (kw == "DROP" && tokens.size() >= 2) {
         QString next = tokens[1].lexeme.toUpper();
         if (next == "DATABASE") return {"DROP_DATABASE", {}};
         if (next == "TABLE")    return {"DROP_TABLE", {}};
+        if (next == "INDEX")    return {"DROP_INDEX", {}};
     }
     if (kw == "USE" && tokens.size() >= 2 && tokens[1].type == TokenType::IDENTIFIER)
         return {"USE_DATABASE", {}};

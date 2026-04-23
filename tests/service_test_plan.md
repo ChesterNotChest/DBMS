@@ -10,259 +10,100 @@
 
 ## [test_database_service.cpp](test_database_service.cpp)
 
-### `test_createDatabase`
-用例 1：传入空白数据库名，期望创建失败，错误信息提示数据库名不能为空。
-
-用例 2：创建 `test_database_service_create_alpha`，期望成功。
-
-用例 3：创建 `test_database_service_create_beta`，期望成功。
-
-用例 4：重复创建 `test_database_service_create_alpha`，期望失败，错误信息提示已存在。
-
-用例 5：调用 `showDatabases()`，期望返回 `alpha` 和 `beta` 两条记录。
-
-### `test_dropDatabase`
-用例 1：先创建 `test_database_service_drop_alpha` 和 `test_database_service_drop_beta`，再切换当前数据库到 `alpha`。
-
-用例 2：删除不存在的 `test_database_service_drop_missing`，期望失败。
-
-用例 3：删除当前数据库 `alpha`，期望成功，并清空 `currentDatabase`。
-
-用例 4：再次调用 `showDatabases()`，期望只剩 `beta`。
-
-用例 5：再次删除已经不存在的 `alpha`，期望失败。
-
-### `test_useDatabase`
-用例 1：先创建 `test_database_service_use_alpha` 和 `test_database_service_use_beta`。
-
-用例 2：切换到不存在的 `test_database_service_use_missing`，期望失败。
-
-用例 3：切换到带前后空格的 `test_database_service_use_alpha`，期望成功，并把 `currentDatabase` 更新为 `alpha`。
-
-用例 4：再切换到 `beta`，期望成功，并把 `currentDatabase` 更新为 `beta`。
-
-### `test_showDatabases`
-用例 1：空根目录下调用 `showDatabases()`，期望返回 0 条记录。
-
-用例 2：先创建 `test_database_service_show_alpha` 和 `test_database_service_show_beta`。
-
-用例 3：再次调用 `showDatabases()`，期望结果包含这两个数据库名，顺序与创建顺序一致。
+- `test_createDatabase`：覆盖空白库名拒绝、创建两个数据库、重复创建失败，以及 `showDatabases()` 返回已有数据库列表。
+- `test_dropDatabase`：覆盖删除不存在数据库失败、删除当前数据库后清空 `currentDatabase`，以及再次列出数据库时只剩未删除项。
+- `test_useDatabase`：覆盖切换到不存在数据库失败、带前后空格的数据库名可正常切换，以及连续切换多个数据库后 `currentDatabase` 正确更新。
+- `test_showDatabases`：覆盖空数据根目录和创建两个数据库后的列表返回顺序。
 
 ## [test_table_service.cpp](test_table_service.cpp)
 
-### `test_createTable`
-用例 1：数据库名为空白时创建表，期望失败。
+### 基础建表与删表
 
-用例 2：表名为空白时创建表，期望失败。
+- `test_createTable`：覆盖空白数据库名、空白表名、正常创建、重复创建失败、`showTables()` 只返回当前表，以及引用不存在父表的外键结构失败。
+- `test_createTableWithSelfReferenceForeignKey`：覆盖自引用外键建表与其约束信息的正确落盘。
+- `test_dropTable`：覆盖删除不存在表失败、删除已存在表成功、`showTables()` 结果清空，以及父子表引用关系下的删除约束。
 
-用例 3：在 `test_table_service_create_db` 中创建 `test_table_service_create_table_main`，期望成功。
+### 列操作
 
-用例 4：重复创建同名表，期望失败。
+- `test_addColumn`：覆盖新增列后表结构和已有数据同步变化，以及重复添加同名列失败。
+- `test_addColumnRejectsGeneratedConstraintViolation`：覆盖新增带约束的列时，存量数据会违反新约束的失败路径。
+- `test_addColumnCreatesBoundIndex`：覆盖新增列后绑定索引的生成和可见性。
+- `test_deleteColumn`：覆盖删除普通列后数据列数和 describe 结果同步变化。
+- `test_deleteColumnRejectsForeignKeyColumns`：覆盖删除被外键保护的列会失败。
+- `test_modifyColumn`：覆盖修改列类型、长度、默认值、非空属性，以及查询回读后的字段定义变化。
+- `test_modifyColumnRejectsEmptyDefinitionName`：覆盖修改列时定义名为空的拒绝路径。
+- `test_modifyColumnRenamesIndexedColumn`：覆盖被索引列改名后索引元数据同步重建或迁移。
+- `test_modifyColumnRejectsTypeConversionFailure`：覆盖修改列类型时现有数据无法转换的失败路径。
+- `test_modifyColumnCreatesBoundIndex`：覆盖修改列后新的绑定索引仍然可用。
 
-用例 5：调用 `showTables()`，期望只返回这一张表。
+### 约束操作
 
-用例 6：创建一个引用不存在父表的 FOREIGN KEY 约束表结构，期望失败。
+- `test_addConstraint`：覆盖新增普通约束、`showCreateTable()` 可见约束信息，以及同名约束重复添加失败。
+- `test_addForeignKeyConstraintWithActions`：覆盖带 `ON DELETE / ON UPDATE` 动作的外键约束新增。
+- `test_addForeignKeyConstraintRejectsInvalidActionColumns`：覆盖外键动作列定义不合法时的拒绝路径。
+- `test_addConstraintRejectsDuplicateConstraintName`：覆盖约束名与现有主键或其他约束冲突时的失败路径。
+- `test_addConstraintRejectsExistingDataViolations`：覆盖新增唯一约束时，存量重复数据导致失败的路径。
+- `test_addConstraintRejectsBrokenForeignKey`：覆盖引用不存在父表或父列时新增外键失败。
+- `test_modifyConstraint`：覆盖约束改名或改定义后的回读变化，以及修改不存在约束失败。
+- `test_modifyForeignKeyConstraintWithActions`：覆盖外键约束修改后动作配置正确保留。
+- `test_modifyConstraintUpdatesExistingBoundIndexMetadata`：覆盖约束修改时绑定索引元数据同步更新。
+- `test_modifyConstraintSurfacesBoundIndexDeletionFailure`：覆盖绑定索引删除失败会向上冒泡。
+- `test_modifyConstraintRejectsBrokenForeignKey`：覆盖修改成坏外键时的拒绝路径。
+- `test_deleteConstraint`：覆盖删除普通约束后 `showCreateTable()` 不再显示该约束。
+- `test_deleteForeignKeyConstraintRemovesProtection`：覆盖删除外键约束后，原来受保护的数据操作重新放行。
+- `test_deleteConstraintSurfacesBoundIndexDeletionFailure`：覆盖删除约束时绑定索引删除失败的反馈路径。
 
-### `test_dropTable`
-用例 1：在 `test_table_service_drop_db` 中创建 `test_table_service_drop_table_main`。
+### 查询与展示
 
-用例 2：删除不存在的 `test_table_service_drop_missing`，期望失败。
+- `test_showTables`：覆盖当前数据库下表列表的读取。
+- `test_describeTable`：覆盖表结构描述的文本输出。
+- `test_describeTableShowsForeignKeyActions`：覆盖 describe 输出中外键动作信息的展示。
+- `test_showCreateTable`：覆盖 `SHOW CREATE TABLE` 文本生成和回读。
 
-用例 3：删除已存在的 `test_table_service_drop_table_main`，期望成功。
+### parser / dispatcher 贯通
 
-用例 4：再次调用 `showTables()`，期望结果为空。
+- `test_parseCreateTableWithCompositeConstraints`：覆盖创建表 SQL 中复合约束的解析结果。
+- `test_dispatcherCreateTablePreservesSchemaConstraints`：覆盖 dispatcher 把 parser payload 转成 schema 时，约束信息没有丢失。
+- `test_dispatcherSelectLimitAndRejectsWhere`：覆盖 `SELECT LIMIT` 的贯通和 `WHERE` 的拒绝路径。
 
-用例 5：创建父表和引用它的子表后，删除父表应失败；删除子表后再删父表应成功。
+### 索引与绑定索引
 
-### `test_addColumn`
-用例 1：在 `test_table_service_add_column_db/test_table_service_add_column_table` 中先插入一行 `{1, alice}`。
-
-用例 2：新增 `age INT DEFAULT 18`，期望成功。
-
-用例 3：再次查看表结构，期望字段列表变成 `id, name, age`。
-
-用例 4：再次查询表数据，期望原有行自动补入默认值 `18`。
-
-用例 5：重复添加 `age` 列，期望失败。
-
-### `test_addColumnRejectsGeneratedConstraintViolation`
-用例 1：在目标表中先放入两行不同主键但相同业务列数据。
-
-用例 2：新增一个带 `UNIQUE` 的列且默认值相同，期望失败，因为存量数据会违反新约束。
-
-### `test_deleteColumn`
-用例 1：在 `test_table_service_delete_column_db/test_table_service_delete_column_table` 中先插入一行 `{1, alice, 22}`。
-
-用例 2：删除 `age` 列，期望成功。
-
-用例 3：再次查询表数据，期望只剩 `id, name` 两列，且行值变为 `{1, alice}`。
-
-用例 4：再次查看描述信息，期望不再包含 `age`。
-
-用例 5：删除不存在的 `missing` 列，期望失败。
-
-### `test_modifyColumn`
-用例 1：在 `test_table_service_modify_column_db/test_table_service_modify_column_table` 中创建基础表。
-
-用例 2：把 `name` 列修改成 `VARCHAR(64) NOT NULL DEFAULT guest`，期望成功。
-
-用例 3：再次读取列定义，期望 `name` 的默认值变成 `guest`，并保持 `notNull = true`。
-
-用例 4：修改不存在的 `missing` 列，期望失败。
-
-### `test_modifyColumnRejectsEmptyDefinitionName`
-用例 1：在 `test_table_service_modify_column_empty_name_db/test_table_service_modify_column_empty_name_table` 中创建基础表。
-
-用例 2：把 `name` 列修改成一个空列名定义，期望失败，错误信息提示列名不能为空。
-
-### `test_modifyColumnRejectsTypeConversionFailure`
-用例 1：在目标表中先插入一条字符串类型数据。
-
-用例 2：把同名列改成 `INT`，期望失败，因为现有数据无法转换。
-
-### `test_addConstraint`
-用例 1：在 `test_table_service_add_constraint_db/test_table_service_add_constraint_table` 中创建基础表。
-
-用例 2：添加 `uq_test_table_service_name UNIQUE(name)`，期望成功。
-
-用例 3：查看 `showCreateTable()`，期望文本中包含 `UNIQUE` 和约束名。
-
-用例 4：再次添加同名约束，期望失败。
-
-### `test_addConstraintRejectsDuplicateConstraintName`
-用例 1：在 `test_table_service_add_constraint_name_dup_db/test_table_service_add_constraint_name_dup_table` 中创建基础表。
-
-用例 2：添加与现有主键同名的 `UNIQUE(name)` 约束，期望失败，错误信息提示约束名已存在。
-
-### `test_addConstraintRejectsExistingDataViolations`
-用例 1：在目标表中先插入两行 `name` 相同的数据。
-
-用例 2：新增 `UNIQUE(name)`，期望失败，因为存量数据已违规。
-
-### `test_addConstraintRejectsBrokenForeignKey`
-用例 1：在目标表中准备一个外键列，但不创建父表。
-
-用例 2：添加引用不存在父表的 FOREIGN KEY，期望失败。
-
-用例 3：创建父表后，再添加引用不存在父列的 FOREIGN KEY，期望失败。
-
-### `test_modifyConstraint`
-用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
-
-用例 2：把它改成 `uq_test_table_service_name_mod UNIQUE(name)`，期望成功。
-
-用例 3：再次查看 `showCreateTable()`，期望旧名字消失，新名字出现。
-
-用例 4：修改不存在的 `missing` 约束，期望失败。
-
-### `test_modifyConstraintRejectsBrokenForeignKey`
-用例 1：先准备一个可修改的约束。
-
-用例 2：把它改成引用不存在父表的 FOREIGN KEY，期望失败。
-
-### `test_deleteConstraint`
-用例 1：先给表添加 `uq_test_table_service_name UNIQUE(name)`。
-
-用例 2：删除该约束，期望成功。
-
-用例 3：查看 `showCreateTable()`，期望不再包含该约束名。
-
-用例 4：删除不存在的 `missing` 约束，期望失败。
-
-### `test_showTables`
-用例 1：在同一个数据库中创建 `test_table_service_show_tables_a` 和 `test_table_service_show_tables_b`。
-
-用例 2：调用 `showTables()`，期望返回两张表。
-
-### `test_describeTable`
-用例 1：在 `test_table_service_describe_db/test_table_service_describe_table` 上创建基础结构。
-
-用例 2：再加一个 `UNIQUE(name)` 约束。
-
-用例 3：调用 `describeTable()`，期望返回内容同时包含 `id`、`name`、`age` 和 `UNIQUE`。
-
-### `test_showCreateTable`
-用例 1：在 `test_table_service_show_create_db/test_table_service_show_create_table` 上创建带 `age` 列和 `UNIQUE(name)` 的表。
-
-用例 2：调用 `showCreateTable()`，期望结果以 `CREATE TABLE` 开头。
-
-用例 3：期望结果中同时包含 `age` 列和约束定义。
+- `test_createIndexAndDropIndex`：覆盖普通索引的创建、查询和删除闭环。
+- `test_createIndexCleansUpOnTreeFailure`：覆盖索引树构建失败时的清理回滚。
+- `test_sortIndexLeafNextChain`：覆盖 sort index 的叶子链表 next 指针关系。
+- `test_primaryKeyBoundIndexIsUnique`：覆盖主键绑定索引必须保持唯一性。
+- `test_sortIndexPersistsSourceTable`：覆盖 sort index 元数据中源表名的持久化。
+- `test_createUniqueIndexRejectsDuplicateData`：覆盖唯一索引在重复数据下的创建失败。
+- `test_createUniqueIndexHandlesSeparatorLikeValues`：覆盖包含分隔符特征值时的复合唯一索引创建和查询。
+- `test_createUniqueIndexIgnoresEmptyValues`：覆盖空值在唯一索引构建中的处理。
+- `test_boundIndexLifecycle`：覆盖绑定索引从创建、读取、改名到删除的完整生命周期。
 
 ## [test_tuple_service.cpp](test_tuple_service.cpp)
 
-### `test_selectRows`
-用例 1：在 `test_tuple_service_select_db/test_tuple_service_select_table` 中插入 `{1, alice}` 和 `{2, bob}`。
-
-用例 2：用 `*` 查询，期望返回全部列和两行数据。
-
-用例 3：用投影列 `name` 加条件 `id = 2` 查询，期望只返回一行 `bob`。
-
-### `test_insertRows`
-用例 1：创建父表 `test_tuple_service_insert_parent` 和子表 `test_tuple_service_insert_child`。
-
-用例 2：向父表批量插入 `{1, alice}` 和 `{2, bob}`，期望成功。
-
-用例 3：向子表插入 `{10, 1, ok}`，期望成功。
-
-用例 4：向子表插入 `{11, 999, broken}`，期望失败，错误信息提示父键缺失。
-
-### `test_deleteRows`
-用例 1：创建父表和子表，并插入父行 `{1, alice}`、`{2, bob}`，再插入子行 `{10, 1, child}`。
-
-用例 2：删除父表中 `id = 1` 的行，期望失败，因为子表仍引用它。
-
-用例 3：先删除子表中 `id = 10` 的行，期望成功。
-
-用例 4：再删除父表中 `id = 1` 的行，期望成功。
-
-### `test_updateRows`
-用例 1：创建父表和子表，并插入父行 `{1, alice}`、`{2, bob}`，再插入子行 `{10, 1, child}`。
-
-用例 2：更新父表中 `id = 1` 的 `name` 为 `alice_updated`，期望成功。
-
-用例 3：更新子表中 `id = 10` 的 `parent_id` 为 `2`，期望成功。
-
-用例 4：把父表中 `id = 2` 的主键改成 `3`，期望失败，因为子表已经引用该键。
-
-## 索引与 row id 新增测试
-
-### `test_createIndexAndDropIndex`
-用例 1：创建一张基础表，并先插入两行 `name` 不同的数据。
-
-用例 2：调用 `table_service::createIndex()` 创建普通索引，期望成功，并能通过 `IndexRepo` 读到该索引元数据。
-
-用例 3：通过 `SortIndexRepo::search()` 按索引列查找，期望命中对应行定位。
-
-用例 4：调用 `table_service::dropIndex()` 删除普通索引，期望成功，并且 `IndexRepo` 中不再存在该索引。
-
-用例 5：对同名索引重复创建，期望失败；对空白索引名创建，期望失败。
-
-### `test_createUniqueIndexRejectsDuplicateData`
-用例 1：创建一张基础表，并插入两行 `name` 相同的数据。
-
-用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name)`，期望失败，因为存量数据存在重复键。
-
-### `test_createUniqueIndexHandlesSeparatorLikeValues`
-用例 1：创建一张带 `name`、`age` 列的基础表，并插入两行包含旧分隔符特征值的数据。
-
-用例 2：调用 `table_service::createIndex()` 创建 `UNIQUE(name, age)`，期望成功。
-
-用例 3：分别按两组复合键值调用 `SortIndexRepo::search()`，期望都能命中各自对应的行定位。
-
-### `test_boundIndexLifecycle`
-用例 1：先给表添加 `UNIQUE(name)` 约束，期望自动生成绑定索引。
-
-用例 2：通过 `IndexRepo::listIndexes()` 读取索引元数据，期望能看到绑定索引名。
-
-用例 3：修改该约束名称，期望绑定索引随之重建或改名，旧索引名不再存在。
-
-用例 4：删除该约束，期望绑定索引和 `table.idx` 记录同步删除。
-
-### `test_incrementalIndexMaintenance`
-用例 1：创建一张带 `UNIQUE(name)` 约束的表，插入两行数据。
-
-用例 2：通过 `repo::FlatFileTableStore` 读取 row id 侧车文件，期望行数与表记录数一致。
-
-用例 3：更新被索引列 `name`，期望 `SortIndexRepo::search()` 能查到新键、查不到旧键。
-
-用例 4：删除其中一行，期望 row id 侧车文件同步缩减，且索引搜索结果同步消失。
+- `test_selectRows`：覆盖全列查询、投影查询和带条件查询的结果正确性。
+- `test_insertRows`：覆盖普通插入、批量插入和外键校验失败路径。
+- `test_insertRowsSelfReferenceBatch`：覆盖自引用表批量插入的约束校验。
+- `test_deleteRows`：覆盖普通删除和被外键引用时的删除保护。
+- `test_updateRows`：覆盖普通更新、外键相关更新，以及主键被引用时的更新失败。
+- `test_deleteRowsCascadeRecursively`：覆盖级联删除的递归传播。
+- `test_deleteRowsCascadeMultipleParentRows`：覆盖多个父行同时参与级联删除的情况。
+- `test_deleteRowsCascadeDoesNotTouchUnrelatedRowIdSidecar`：覆盖级联删除不会误伤无关 row id sidecar 数据。
+- `test_updateRowsCascade`：覆盖级联更新的基本传播。
+- `test_updateRowsCascadeRecursively`：覆盖级联更新的递归传播。
+- `test_updateRowsGraphPlanMixedBranches`：覆盖图状依赖下混合分支更新计划的执行。
+- `test_updateRowsSelfReferenceCascadeTerminates`：覆盖自引用级联更新不会无限循环。
+- `test_deleteRowsSelfReferenceCascadeTerminates`：覆盖自引用级联删除不会无限循环。
+- `test_deleteRowsSelfReferenceNoActionAllowsDeletingAllRows`：覆盖自引用 No Action 场景下允许清空删除链。
+- `test_deleteRowsCascadeBlockedByRecursiveNoActionRollsBack`：覆盖递归 No Action 阻断级联删除并回滚。
+- `test_deleteRowsRestrict`：覆盖 RESTRICT 删除保护。
+- `test_updateRowsRestrict`：覆盖 RESTRICT 更新保护。
+- `test_deleteRowsSetNull`：覆盖删除时把外键列置空。
+- `test_updateRowsSetNull`：覆盖更新时把外键列置空。
+- `test_updateRowsSetDefault`：覆盖更新时把外键列恢复为默认值。
+- `test_deleteRowsSetDefault`：覆盖删除时把外键列恢复为默认值。
+- `test_deleteRowsSetDefaultRejectsMissingDefaultParentAndRollsBack`：覆盖删除时缺少默认父键导致失败并回滚。
+- `test_updateRowsSetDefaultRejectsMissingDefaultParentAndRollsBack`：覆盖更新时缺少默认父键导致失败并回滚。
+- `test_deleteRowsCascadeDiamondTopology`：覆盖菱形拓扑下的级联删除。
+- `test_uniqueConstraintRejectsDuplicateDml`：覆盖 DML 写入违反唯一约束时的拒绝。
+- `test_uniqueConstraintStillRejectsDuplicatesWithoutIndexMetadata`：覆盖缺少索引元数据时唯一约束仍然生效。
+- `test_incrementalIndexMaintenance`：覆盖增量写入下索引维护的一致性。

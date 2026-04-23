@@ -1,5 +1,5 @@
 #include "mainwindow.h"
-#include "tests/service_test_entry.h"
+#include "tests/test_entry.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -14,6 +14,10 @@ int main(int argc, char *argv[])
     qDebug() << "Database service tests:" << (databaseTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << databaseTestResult << ")";
 
+    const int parserDispatcherTestResult = service_tests::runParserDispatcherTests();
+    qDebug() << "Parser/dispatcher tests:" << (parserDispatcherTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << parserDispatcherTestResult << ")";
+
     const int tableTestResult = service_tests::runTableServiceTests();
     qDebug() << "Table service tests:" << (tableTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tableTestResult << ")";
@@ -23,6 +27,7 @@ int main(int argc, char *argv[])
              << "(code=" << tupleTestResult << ")";
 
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
+                                  + (parserDispatcherTestResult == 0 ? 0 : 1)
                                   + (tableTestResult == 0 ? 0 : 1)
                                   + (tupleTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";

@@ -1,9 +1,9 @@
-/**
- * mainwindow.cpp — DBMS 主窗口
+﻿/**
+ * mainwindow.cpp - DBMS 主窗口
  *
  * 职责：
  *  - 整体布局和组件挂载
- *  - 信号中转（display 层 ↔ service 层）
+ *  - 信号中转：display 层 -> controller/service 层
  *  - 统一入口：所有 SQL 执行走 SqlDispatcher
  *  - 状态同步：currentDatabase / currentTable
  *
@@ -13,7 +13,7 @@
  *  - 在此文件直接访问文件
  */
 #include "mainwindow.h"
-#include "service/sql_dispatcher.h"
+#include "controller/sql_dispatcher.h"
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QHeaderView>
@@ -194,13 +194,13 @@ void MainWindow::setupLayout()
     m_statusRowsLabel = new QLabel("");
     m_statusRowsLabel->setStyleSheet("color:#666666; font-size:11px;");
 
-    QLabel *verLabel = new QLabel("DBMS v1.0  ·  Qt6 + CSV");
+    QLabel *verLabel = new QLabel("DBMS v1.0 · Qt6 + CSV");
     verLabel->setStyleSheet("color:#999999; font-size:11px;");
     m_statusBar->addPermanentWidget(verLabel);
     m_statusBar->addWidget(m_statusDbLabel);
     m_statusBar->addWidget(m_statusRowsLabel);
 
-    // ── 信号连接 ──
+
     connect(m_structurePanel, &StructurePanel::databaseSelected,
             this, &MainWindow::onDatabaseSelected);
     connect(m_structurePanel, &StructurePanel::tableSelected,
@@ -214,49 +214,50 @@ void MainWindow::setupLayout()
     connect(m_structurePanel, &StructurePanel::deleteDatabaseRequested,
             this, &MainWindow::onDeleteDatabase);
 
-    // editor 执行请求 → 主窗口统一执行
+    // editor 执行请求 -> 主窗口统一执行
     connect(m_editorPanel, &EditorPanel::executeRequested,
             this, &MainWindow::onExecuteRequested);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  执行入口：所有 SQL 统一走这里
-// ─────────────────────────────────────────────────────────────────
+
+// SQL 执行入口：所有 SQL 统一走这里
+
 void MainWindow::onExecuteRequested(const QString &sql)
 {
-    m_resultPanel->showLog("▶ " + sql);
+    const QStringList statements = service::SqlDispatcher::splitStatements(sql);
+    if (statements.isEmpty()) return;
+
     m_resultPanel->addHistory(sql);
 
     service::setDataRoot(dataRoot());
     if (!m_currentDatabase.isEmpty())
         service::currentDatabase = m_currentDatabase;
 
+    service::SqlDispatcher disp;
     QElapsedTimer timer;
     timer.start();
 
-    service::SqlDispatcher disp;
-    service::SqlExecResult r = disp.execute(sql);
+    auto applyResult = [&](const service::SqlExecResult &r) -> bool {
+        if (!r.success) {
+            const QString ts = "[" + QTime::currentTime().toString("hh:mm:ss") + "] ";
+            m_resultPanel->showError(ts + r.errorMessage);
+            m_statusBar->showMessage("错误", 5000);
+            return false;
+        }
 
-    qint64 execTime = timer.elapsed();
-
-    if (r.success) {
-        // 成功日志
         if (!r.text.isEmpty())
             m_resultPanel->showLog(r.text);
         else
             m_resultPanel->showLog("执行成功");
 
-        // SHOW CREATE TABLE 结果：展示为表格
         if (r.commandType == "SHOW_CREATE_TABLE" && !r.text.isEmpty()) {
-            QString tableName = r.payload["tableName"].toString();
-            QStringList headers = {"Table", "Create Table"};
+            const QString tableName = r.payload["tableName"].toString();
+            const QStringList headers = {"Table", "Create Table"};
             QList<QStringList> rows;
             rows.append({tableName, r.text});
             m_resultPanel->showTable(headers, rows);
             m_statusRowsLabel->setText(" 1 行 × 2 列");
-        }
-        // SELECT 结果：展示为表格
-        else if (r.selectResult.success && !r.selectResult.resultTable.columns.isEmpty()) {
+        } else if (r.selectResult.success && !r.selectResult.resultTable.columns.isEmpty()) {
             const auto &tbl = r.selectResult.resultTable;
             QStringList headers;
             for (const QString &c : tbl.columns) headers.append(c);
@@ -264,24 +265,22 @@ void MainWindow::onExecuteRequested(const QString &sql)
             for (const auto &row : tbl.rows) rows.append(row);
             m_resultPanel->showTable(headers, rows);
 
-            int cols = tbl.columns.size();
-            int rowsCnt = tbl.rows.size();
+            const int cols = tbl.columns.size();
+            const int rowsCnt = tbl.rows.size();
             m_statusRowsLabel->setText(QString("  %1 行 × %2 列").arg(rowsCnt).arg(cols));
         } else {
             m_statusRowsLabel->setText(
                 r.affectedRows >= 0 ? QString("  %1 行受影响").arg(r.affectedRows) : "");
         }
 
-        // 检测 DDL：CREATE / DROP / ALTER → 刷新结构树
-        if (r.commandType.startsWith("CREATE_") ||
-            r.commandType.startsWith("DROP_") ||
-            r.commandType.startsWith("ALTER_")) {
+        if (r.commandType.startsWith("CREATE_")
+            || r.commandType.startsWith("DROP_")
+            || r.commandType.startsWith("ALTER_")) {
             m_structurePanel->refresh();
         }
 
-        // 检测 USE：更新当前数据库状态
         if (r.commandType == "USE_DATABASE") {
-            QString dbName = r.payload["databaseName"].toString();
+            const QString dbName = r.payload["databaseName"].toString();
             if (!dbName.isEmpty()) {
                 m_currentDatabase = dbName;
                 m_currentTable.clear();
@@ -290,17 +289,41 @@ void MainWindow::onExecuteRequested(const QString &sql)
             }
         }
 
-    } else {
-        // 错误展示
-        QString ts = "[" + QTime::currentTime().toString("hh:mm:ss") + "] ";
-        m_resultPanel->showError(ts + r.errorMessage);
-        m_statusBar->showMessage("错误", 5000);
+        return true;
+    };
+
+    for (int i = 0; i < statements.size(); ++i) {
+        const QString &statement = statements.at(i);
+        if (statements.size() == 1) {
+            m_resultPanel->showLog("▶ " + statement);
+        } else {
+            m_resultPanel->showLog(QString("▶ [%1/%2] %3")
+                                       .arg(i + 1)
+                                       .arg(statements.size())
+                                       .arg(statement));
+        }
+
+        const service::SqlExecResult r = disp.execute(statement);
+        if (!applyResult(r)) {
+            if (statements.size() > 1) {
+                m_resultPanel->showLog(
+                    QString("批量执行已停止：完成 %1/%2 条").arg(i).arg(statements.size()));
+            }
+            return;
+        }
+    }
+
+    if (statements.size() > 1) {
+        m_resultPanel->showLog(
+            QString("批量执行完成：%1 条，耗时 %2 ms")
+                .arg(statements.size())
+                .arg(timer.elapsed()));
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  结构树信号处理
-// ─────────────────────────────────────────────────────────────────
+
+// 结构树信号处理
+
 void MainWindow::onDatabaseSelected(const QString &dbName)
 {
     m_currentDatabase = dbName;
@@ -343,9 +366,9 @@ void MainWindow::updateStatusDbLabel()
     m_statusDbLabel->setText("数据库：" + db + tbl);
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  菜单/工具栏操作
-// ─────────────────────────────────────────────────────────────────
+
+// 菜单和工具栏操作
+
 void MainWindow::onToolbarExecute()   { m_editorPanel->execute(); }
 void MainWindow::onToolbarNewQuery()   { m_editorPanel->newQuery(); }
 void MainWindow::onExecuteSql()        { m_editorPanel->execute(); }
@@ -449,9 +472,8 @@ void MainWindow::onAbout()
         "支持：<br>"
         "CREATE DATABASE / USE / DROP / SHOW DATABASES<br>"
         "CREATE TABLE / DROP TABLE / ALTER TABLE / DESC<br>"
-        "INSERT / SELECT / UPDATE / DELETE<br>"
-        "WHERE 简单条件<br><br>"
-        "快捷键：F5执行 · Ctrl+N新建 · Ctrl+W关闭");
+        "INSERT / SELECT / UPDATE / DELETE<br><br>"
+        "快捷键：F5 执行 · Ctrl+N 新建 · Ctrl+W 关闭");
 }
 
 void MainWindow::onExit()
@@ -468,3 +490,4 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
         QMainWindow::keyPressEvent(e);
     }
 }
+

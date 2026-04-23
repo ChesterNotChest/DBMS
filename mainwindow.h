@@ -19,7 +19,7 @@
 #include "display/structure_panel.h"
 #include "display/editor_panel.h"
 #include "display/result_panel.h"
-#include "service/sql_dispatcher.h"
+#include "controller/sql_dispatcher.h"
 
 class MainWindow : public QMainWindow
 {

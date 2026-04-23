@@ -39,7 +39,8 @@ set(PROJECT_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
-        tests/service_test_entry.h
+        tests/test_entry.h
+        tests/test_parser_dispatcher.cpp
         tests/test_database_service.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp
@@ -51,8 +52,8 @@ set(PROJECT_SOURCES
         utils/sql_parser/table_parser.cpp
         utils/sql_parser/tuple_parser.cpp
         # ── SQL Dispatcher（桥接 parser → service）──
-        service/sql_dispatcher.h
-        service/sql_dispatcher.cpp
+        controller/sql_dispatcher.h
+        controller/sql_dispatcher.cpp
         # ── Display 层（Qt 界面，不碰 repo）──
         display/editor_panel.h
         display/editor_panel.cpp

@@ -1,470 +1,1187 @@
-# wty 前端 / 解析器对齐收口计划
+# WTY 前端 / Parser / Service 对齐依据
 
-## 目的
+## 1. 文档定位
 
-这份文档只用于对齐，不用于本轮直接修代码。
+本文档的目标不是讨论理想设计，而是作为当前代码的实际对齐依据。
 
-当前最合适的集成思路是把双方工作做一次“左右 JOIN”：
+对齐范围限定为：
 
-- 左侧：`wty` 分支已经完成的前端、SQL 解析器、SQL 分发器。
-- 右侧：当前 `chester` 分支已经完成的 service / repo / FK / index 能力。
+- 前端调用入口
+- `sqlparser::*` 解析输出
+- `service::SqlDispatcher::*` 分发输入输出
+- `database_service / table_service / tuple_service` 的实际函数接口
 
-不要默认任何一侧是另一侧的严格超集。
+对齐精度限定为函数级，并精确到输入输出。
 
-需要注意：
+本文档以当前仓库代码为准；若旧报告中的现状描述与代码不符，以本文档修正后的描述为准。
 
-- `wty` 侧有些 SQL 入口已经写出来了，但当前 service 层并没有对应执行语义。
-- 当前 service 侧有些能力已经实现了，但 `wty` 侧 parser / dispatcher 还没有解析或调度入口。
-- 第一轮合并只应该接双方交集，也就是能用稳定函数输入输出明确收口的部分。
+## 2. 总体原则
 
-## 依托的 review comment
+当前这轮收口遵守下面 6 条原则：
 
-第一轮收口建议严格依托下面这组 comment：
+1. `payload` 只允许使用 Qt 基础类型，不允许再把自定义 C++ 结构直接塞进 `QVariant`。
+2. parser 负责“识别并结构化表达输入”，不负责调用 service。
+3. dispatcher 负责“把 parser payload 转成 service 输入”，不直接操作 repo。
+4. service 负责真实业务语义与约束，不要求前端理解底层存储。
+5. 对于当前 payload 不完整、无法安全落到 service 的语句，必须明确拒绝，不能伪执行。
+6. 对于当前未实现的 SQL 语义，拒绝优于静默降级。
 
-```text
-animated_button.h 补全 Qt 绘制相关头文件，修复编译错误。
-mainwindow.cpp 调整初始化顺序，确保 setDataRoot 在 setupLayout 之前执行。
-mainwindow.cpp 修复 USE 语句解析逻辑，仅在语句以分号结尾时才移除末尾分号。
-mainwindow.cpp 修正 “关于” 界面文案，仅保留当前已实际支持的 SQL 功能。
-table_parser.cpp 修复约束解析逻辑，按括号深度正确跳过完整约束定义。
-structure_panel.cpp 修正 service.h 错误的相对路径引用。
-sql_dispatcher.cpp 修复 QVariant 获取自定义类型问题，禁止使用未注册元类型。
-sql_dispatcher.cpp 彻底回滚 buildConditions 相关伪实现，不支持任何 WHERE 条件。
-回滚 listTablesInDatabase、listAllDatabases 的硬编码实现，不属于本次 PR 范围。
-table_parser.cpp 修复 QVector<ColumnDef> 存入 QVariant 的问题，改用基础类型传递。
-tuple_parser.cpp 避免重复 tokenize，统一使用一次分词结果。
-```
+## 3. 当前真实边界
 
-这组 comment 适合作为第一轮合并边界，因为它主要解决：
+### 3.1 当前已经对齐的主链路
 
-- 编译阻断问题。
-- 启动路径状态问题。
-- UI 功能宣称越界问题。
-- `QVariant` 自定义类型传递风险。
-- WHERE 伪支持问题。
-- 非本 PR 范围的硬编码 service helper。
+- `CREATE DATABASE`
+- `DROP DATABASE`
+- `USE`
+- `SHOW DATABASES`
+- `CREATE TABLE`
+- `DROP TABLE`
+- `SHOW TABLES`
+- `DESC` / `DESCRIBE`
+- `SHOW CREATE TABLE`
+- `INSERT`
+- `SELECT ... LIMIT n`
+- 无 `WHERE` 的 `UPDATE`
+- 无 `WHERE` 的 `DELETE`
+- `ALTER TABLE DROP COLUMN`
+- `ALTER TABLE DROP CONSTRAINT`
 
-它不要求重构整个 DBMS。
+### 3.2 当前明确拒绝的内容
 
-## 当前难度判断
+- 任何 `WHERE`
+- `SELECT` 中除 `LIMIT` 外的额外子句
+- `ALTER TABLE ADD COLUMN`
+- `ALTER TABLE MODIFY COLUMN`
+- `ALTER TABLE ADD CONSTRAINT`
+- `ALTER TABLE MODIFY CONSTRAINT`
 
-继续对齐没有明显的结构性困难。
+这些语句不是“部分支持”，而是当前代码中应当被视为“未收口，不允许执行”。
 
-难度等级：中低。
+### 3.3 当前 service 有，但 parser/dispatcher 还没有 SQL 通路的内容
 
-主要风险在于：
+- `table_service::createIndex(...)`
+- `table_service::dropIndex(...)`
 
-- `wty` UI 宣称了超过双方当前真实能力的 SQL 功能。
-- `wty` dispatcher 调了一些当前主线 service 边界里不存在的 helper。
-- `wty` parser 把自定义 C++ 类型塞进 `QVariant`，如果不注册元类型，运行期容易取值失败。
-- 当前 service 层已经有更丰富的 schema、constraint、index、FK action 能力，但 `wty` parser 还没有完整表达这些输入。
-- 不能因为 parser 识别了 `WHERE` 关键字，就默认 service 已经支持 SQL WHERE 语义。
+因此当前前端不能宣称已经支持 `CREATE INDEX` / `DROP INDEX` SQL。
 
-## 左右 JOIN 总览
+## 4. 前端入口与返回约定
 
-### 左侧：`wty` 分支已经提供的东西
-
-| 模块 | `wty` 入口 | 状态 |
-|---|---|---|
-| UI 执行入口 | `MainWindow::onExecuteRequested(sql)` | 可用 |
-| UI 结果展示 | `ResultPanel::showTable/showLog/showError` | 可用 |
-| UI 编辑器 | `EditorPanel::executeRequested(sql)` | 可用 |
-| 结构树 | `StructurePanel::loadStructure()` | 可用，但当前依赖非主线 helper |
-| Parser 总入口 | `sqlparser::parseSql(sql)` | 可用 |
-| Tokenizer | `SqlTokenizer::tokenize(sql)` | 可用 |
-| Dispatcher 总入口 | `SqlDispatcher::execute(sql)` | 可用 |
-| DDL 分发 | `execCreateDatabase/execDropDatabase/execUseDatabase/execCreateTable/...` | 部分可用 |
-| DML 分发 | `execSelect/execInsert/execUpdate/execDelete` | 部分可用 |
-
-### 右侧：当前 service 已经提供的东西
-
-| 模块 | 当前 service 入口 | 状态 |
-|---|---|---|
-| 数据根目录 | `service::setDataRoot/getDataRoot` | 稳定 |
-| 当前数据库会话 | `service::currentDatabase` | 当前设计下可用 |
-| 数据库 DDL | `database_service::createDatabase/dropDatabase/useDatabase/showDatabases` | 稳定 |
-| 表 DDL | `table_service::createTable/dropTable/addColumn/deleteColumn/modifyColumn` | 稳定 |
-| 约束 DDL | `table_service::addConstraint/modifyConstraint/deleteConstraint` | 稳定 |
-| 索引 DDL | `table_service::createIndex/dropIndex` | 稳定 |
-| 表元信息展示 | `table_service::showTables/describeTable/showCreateTable` | 稳定 |
-| 元组 DML | `tuple_service::selectRows/insertRows/updateRows/deleteRows` | 稳定 |
-| 条件输入 | `QList<SimpleCondition>` | 只有简单等值语义，不等于 SQL WHERE |
-
-## 按 `origin/wty` 当时已有 service 口对齐
-
-这一节只对齐 `origin/wty` 当时已经存在的 service 口。
-
-理论排除以下三个结构树临时 helper：
-
-```cpp
-QStringList listAllDatabases();
-QStringList listTablesInDatabase(const QString &databaseName);
-QStringList listTableColumns(const QString &tableName);
-```
-
-排除理由：
-
-- 它们是结构树展示便利函数，不是 SQL dispatcher 的核心业务 API。
-- 它们在 `wty` 分支里仍然存在，但不应该作为本轮 parser/dispatcher 对齐依据。
-- 如果结构树确实需要这类能力，应后续单独设计正式 read-only service，而不是混在本 PR 里。
-
-### 对方已有 service 口对齐表
-
-| 对方已有 service 口 | dispatcher 应接收的 parser 输入 | dispatcher 应调用方式 | 返回值收口 | 当前对齐建议 |
-|---|---|---|---|---|
-| `database_service::createDatabase(const QString &databaseName)` | `payload["databaseName"]` | `createDatabase(databaseName)` | `TaskResult.success/errorMessage` | 可直接对齐 |
-| `database_service::dropDatabase(const QString &databaseName)` | `payload["databaseName"]` | `dropDatabase(databaseName)` | `TaskResult.success/errorMessage/affectedRowCount` | 可直接对齐 |
-| `database_service::useDatabase(const QString &databaseName)` | `payload["databaseName"]` | `useDatabase(databaseName)` | `TaskResult.success/errorMessage` | 可直接对齐；UI 应通过执行结果同步当前库 |
-| `database_service::showDatabases()` | 无 payload | `showDatabases()` | `SelectRowsResult.resultTable` | 可直接对齐；UI 展示表格 |
-| `table_service::createTable(const QString &tableName, const tabledef::TableSchema &schema)` | `tableName` + `columns` + 可选 `constraints` | dispatcher 构造 `TableSchema` 后调用 | `TaskResult.success/errorMessage` | 可对齐，但 parser payload 必须改成基础类型 |
-| `table_service::dropTable(const QString &tableName)` | `payload["tableName"]` | `dropTable(tableName)` | `TaskResult.success/errorMessage` | 可直接对齐 |
-| `table_service::addColumn(const QString &tableName, const ColumnDefinition &definition)` | `tableName` + 完整 column map | dispatcher 构造 `ColumnDefinition` 后调用 | `TaskResult.success/errorMessage` | 只有 parser 能输出完整列定义时才开放 |
-| `table_service::deleteColumn(const QString &tableName, const QString &columnName)` | `tableName` + `columnName` | `deleteColumn(tableName, columnName)` | `TaskResult.success/errorMessage` | 可对齐 |
-| `table_service::modifyColumn(const QString &tableName, const QString &columnName, const ColumnDefinition &definition)` | `tableName` + `columnName` + 完整 column map | dispatcher 构造 `ColumnDefinition` 后调用 | `TaskResult.success/errorMessage` | 只有 parser 能输出完整列定义时才开放 |
-| `table_service::addConstraint(const QString &tableName, const tabledef::Constraint &constraint)` | `tableName` + 完整 constraint map | dispatcher 构造 `Constraint` 后调用 | `TaskResult.success/errorMessage` | 不能传空 `Constraint`；payload 不完整就拒绝 |
-| `table_service::modifyConstraint(const QString &tableName, const QString &constraintName, const tabledef::Constraint &constraint)` | `tableName` + `constraintName` + 完整 constraint map | dispatcher 构造 `Constraint` 后调用 | `TaskResult.success/errorMessage` | 不能传空 `Constraint`；payload 不完整就拒绝 |
-| `table_service::deleteConstraint(const QString &tableName, const QString &constraintName)` | `tableName` + `constraintName` | `deleteConstraint(tableName, constraintName)` | `TaskResult.success/errorMessage` | 可对齐 |
-| `table_service::showTables()` | 无 payload，但依赖 `currentDatabase` | `showTables()` | `SelectRowsResult.resultTable` | 可直接对齐；执行前必须已有当前库 |
-| `table_service::describeTable(const QString &tableName)` | `payload["tableName"]` | `describeTable(tableName)` | `TextResult.text` | 可直接对齐 |
-| `table_service::showCreateTable(const QString &tableName)` | `payload["tableName"]` | `showCreateTable(tableName)` | `TextResult.text` | 对方 service 有，但 dispatcher 暂无 SQL 通路；可暂缓 |
-| `tuple_service::selectRows(const QString &tableName, const QStringList &projectionColumns, const QList<SimpleCondition> &conditions, int limit = -1)` | `tableName` + `projection` + 可选 `limit`，本轮不接 WHERE | `selectRows(tableName, projection, {}, limit)` | `SelectRowsResult.resultTable` | 可对齐；如果 parser 发现 WHERE，应拒绝而不是静默忽略 |
-| `tuple_service::insertRows(const QString &tableName, const QList<QMap<QString, QString>> &rows)` | `tableName` + `columnNames` + `rows` | dispatcher 转成 `QList<QMap<QString, QString>>` 后调用 | `TaskResult.success/errorMessage/affectedRowCount` | 可对齐；rows payload 必须改成基础 `QVariantList` |
-| `tuple_service::updateRows(const QString &tableName, const QMap<QString, QString> &assignmentMap, const QList<SimpleCondition> &conditions)` | `tableName` + `assignments`，本轮不接 WHERE | `updateRows(tableName, assignmentMap, {})` | `TaskResult.success/errorMessage/affectedRowCount` | 可对齐；如果 parser 发现 WHERE，应拒绝而不是全表更新 |
-| `tuple_service::deleteRows(const QString &tableName, const QList<SimpleCondition> &conditions)` | `tableName`，本轮不接 WHERE | `deleteRows(tableName, {})` | `TaskResult.success/errorMessage/affectedRowCount` | 可对齐；如果 parser 发现 WHERE，应拒绝而不是全表删除 |
-
-### 不建议 dispatcher 直接对齐的底层口
-
-`origin/wty` 当时也有 `TableDmlService`：
-
-```cpp
-TableDmlService::selectRows(...)
-TableDmlService::insertRows(...)
-TableDmlService::updateRows(...)
-TableDmlService::deleteRows(...)
-```
-
-这些是通用二维表 DML 底层 service，不建议 SQL dispatcher 直接调用。
-
-推荐边界：
-
-- SQL dispatcher 调 `database_service` / `table_service` / `tuple_service`。
-- DDL/DML service 内部再按需要调用 `TableDmlService`。
-
-这样能避免 dispatcher 绕过 schema 加载、约束检查、当前数据库上下文等上层语义。
-
-### 新版 `origin/wty` 的歧义变化
-
-相比上一版，歧义减少的点：
-
-- `parseSql` 已经改成一次 tokenize 后把 token stream 传给具体 parser，重复 tokenize 问题基本收口。
-- dispatcher 里的 `buildConditions()` 函数已经消失，不再主动把 WHERE 包装成 `SimpleCondition`。
-- `listAllDatabases()` / `listTablesInDatabase()` 的实现已经改为复用 `showDatabases()` / `showTables()`，比直接读 repo 更接近 service 语义。
-
-仍未完全收口的点：
-
-- `service.h` 里仍声明了 `listAllDatabases()`、`listTablesInDatabase()`、`listTableColumns()`，本轮理论上仍应排除。
-- `sql_dispatcher.cpp` 仍在使用 `payload["columns"].value<QVector<sqlparser::ColumnDef>>()`。
-- `sql_dispatcher.cpp` 仍在使用 `payload["rows"].value<QVector<QVector<QVariant>>>()`。
-- `table_parser.cpp` 仍以 `QVector<ColumnDef>` 作为中间 payload 形态，仍需改成基础 `QVariantList/QVariantMap`。
-- `tuple_parser.cpp` 仍会解析并写入 `whereColumn/whereOp/whereValue`，但 dispatcher 现在只是忽略 WHERE。更安全的行为应该是：只要 payload 出现 WHERE，直接返回 unsupported，避免 `UPDATE/DELETE WHERE ...` 被误执行成全表操作。
-
-## 双方交集：第一轮可以安全合并的范围
-
-这些路径双方都有明确函数级入口，可以作为第一轮合并范围。
-
-| SQL / 功能 | Parser 输出 | Dispatcher 调用 | Service 调用 | 输出收口 |
-|---|---|---|---|---|
-| `CREATE DATABASE name` | `databaseName` | `execCreateDatabase` | `database_service::createDatabase` | `SqlExecResult{success,text,errorMessage}` |
-| `DROP DATABASE name` | `databaseName` | `execDropDatabase` | `database_service::dropDatabase` | `SqlExecResult{success,text,errorMessage}` |
-| `USE name` | `databaseName` | `execUseDatabase` | `database_service::useDatabase` | `SqlExecResult{success,activeDatabase}` |
-| `SHOW DATABASES` | 无 | `execShowDatabases` | `database_service::showDatabases` | `SqlExecResult{selectResult}` |
-| `CREATE TABLE` 基础列定义 | `tableName`, `columns` | `execCreateTable` | `table_service::createTable` | `SqlExecResult{success,text,errorMessage}` |
-| `DROP TABLE name` | `tableName` | `execDropTable` | `table_service::dropTable` | `SqlExecResult{success,text,errorMessage}` |
-| `SHOW TABLES` | 无 | `execShowTables` | `table_service::showTables` | `SqlExecResult{selectResult}` |
-| `DESC table` | `tableName` | `execDescTable` | `table_service::describeTable` | `SqlExecResult{text}` |
-| `INSERT INTO table ...` | `tableName`, `columnNames`, `rows` | `execInsert` | `tuple_service::insertRows` | `SqlExecResult{affectedRows}` |
-| `SELECT cols FROM table` 无 WHERE | `tableName`, `projection` | `execSelect` | `tuple_service::selectRows` | `SqlExecResult{selectResult}` |
-| `UPDATE table SET ...` 无 WHERE | `tableName`, `assignments` | `execUpdate` | `tuple_service::updateRows` | `SqlExecResult{affectedRows}` |
-| `DELETE FROM table` 无 WHERE | `tableName` | `execDelete` | `tuple_service::deleteRows` | `SqlExecResult{affectedRows}` |
-
-第一轮规则：
-
-- SQL 中出现 `WHERE` 时，dispatcher 先拒绝。
-- SQL 中出现 `LIMIT n` 时，可以在 parser/dispatcher 显式解析为非负整数并下推到 service；如果没有完成这条下推，就必须拒绝，不能静默执行成无上限 SELECT。
-- SQL 中出现 `ORDER BY`、`GROUP BY`、`HAVING`、`JOIN`、聚合函数、子查询时，parser 或 dispatcher 先拒绝。
-- 拒绝比伪执行更安全。
-
-## 左侧独有：`wty` 有，但当前不能照收的内容
-
-| `wty` 侧内容 | 问题 | 第一轮决策 |
-|---|---|---|
-| `database_service::listAllDatabases()` | 硬编码只读 helper，不属于当前正式 service API | 本 PR 回滚 |
-| `database_service::listTablesInDatabase(databaseName)` | 硬编码只读 helper，不属于当前正式 service API | 本 PR 回滚 |
-| `table_service::listTableColumns(tableName)` | 硬编码只读 helper，不属于当前正式 service API | 本 PR 回滚 |
-| `buildConditions()` | 假装 WHERE 可以映射进 service | 彻底回滚 |
-| About 文案宣称 ORDER/GROUP/JOIN 等复杂查询 | 功能宣称不真实 | 移除宣称；`LIMIT` 只有完成 parser/dispatcher 下推后才能宣称 |
-| tokenizer 识别大量高级 SQL 关键字 | token 支持不等于执行支持 | tokenizer 可保留，但 dispatcher 必须拒绝未支持语义 |
-| `QVariant::fromValue(QVector<ColumnDef>)` | 需要注册元类型 | 改成 `QVariantList/QVariantMap` |
-| `QVariant::fromValue(QVector<QVector<QVariant>>)` | 需要注册元类型 | 改成基础 `QVariantList` 行结构 |
-
-重要区分：
-
-- 回滚硬编码 list helper，不代表结构树不能做。
-- 它只表示这次 PR 不应该偷偷新增非正式 service API。
-- 如果结构树长期需要这些能力，应该后续单独设计正式 read-only service。
-
-## 右侧独有：当前 service 有，但 `wty` 暂时不必接的内容
-
-| 当前 service 能力 | `wty` 支持情况 | 第一轮决策 |
-|---|---|---|
-| FK 的 `onDeleteAction/onUpdateAction` | parser 暂未完整表达 | 除非 CREATE TABLE FK 语法已明确解析，否则暂缓 |
-| 多列 FK / PK / UNIQUE | parser 当前 table constraint 解析不稳 | 至少不能解析坏；完整支持可分阶段 |
-| `createIndex/dropIndex` | `wty` parser 暂无 CREATE/DROP INDEX 通路 | 暂缓 |
-| `showCreateTable` | `wty` 暂无直接 SQL 通路 | 暂缓 |
-| `modifyConstraint` | `wty` ALTER payload 不完整 | 暂缓 |
-| FK DML 级联行为 | service 内部已支持 | 不需要 UI/parser 额外处理 |
-
-结论：
-
-当前 service 可以比第一轮前端/parser 合并范围更丰富。
-
-## 函数级输入输出收口
-
-### 1. UI 到 Dispatcher
+### 4.1 前端统一执行入口
 
 函数：
 
 ```cpp
-SqlExecResult SqlDispatcher::execute(const QString &sql);
+service::SqlExecResult service::SqlDispatcher::execute(const QString &sql);
 ```
 
 输入：
 
-- 编辑器传入的原始 SQL 字符串。
+- `sql`：原始 SQL 字符串
 
 输出：
 
-- `success`
-- `errorMessage`
-- `text`
-- `affectedRows`
-- `selectResult`
-- 可选：`activeDatabase`
-- 可选：`structureChanged`
+```cpp
+struct SqlExecResult {
+    bool success;
+    QString errorMessage;
+    QString text;
+    int affectedRows;
+    SelectRowsResult selectResult;
+    QString commandType;
+    QVariantMap payload;
+};
+```
 
-收口规则：
+前端使用约定：
 
-- UI 不应该通过解析 SQL 字符串来推断业务状态。
-- UI 不应该手动解析 `USE`。
-- UI 应该通过 dispatcher 的返回结果更新当前数据库和结构树。
+- 成功时，不应重新解析 SQL 判断业务结果，应只看 `SqlExecResult`。
+- `SELECT` 类结果优先读取 `selectResult`，不要解析 `text`。
+- `SHOW CREATE TABLE` 当前走 `text`，UI 可按 `commandType == "SHOW_CREATE_TABLE"` 特判展示。
+- `USE_DATABASE` 成功后，前端当前是从 `payload["databaseName"]` 同步当前库，而不是从单独字段同步。
+- DDL 完成后，前端可按 `commandType` 前缀 `CREATE_ / DROP_ / ALTER_` 刷新结构树。
 
-### 2. Parser 到 Dispatcher
+### 4.2 结构树读取边界
+
+当前合理读取方式是：
+
+- 数据库列表：`database_service::showDatabases()`
+- 当前库表列表：`table_service::showTables()`
+
+## 5. Parser 总入口约定
+
+### 5.1 总入口
 
 函数：
 
 ```cpp
-sqlparser::ParseResult parseSql(const QString &sql);
+sqlparser::ParseResult sqlparser::parseSql(const QString &sql);
 ```
-
-输入：
-
-- 原始 SQL 字符串。
 
 输出：
 
-- `success`
-- `errorMessage`
-- `commandType`
-- `payload`
+```cpp
+struct ParseResult {
+    bool success;
+    QString errorMessage;
+    QString commandType;
+    QVariantMap payload;
+};
+```
 
-收口规则：
+### 5.2 `payload` 允许的值类型
 
-- `payload` 只使用 Qt 基础类型。
-- 不把自定义 `QVector<CustomType>` 塞进 `QVariant`。
-- parser 不调用 service。
-- parser 不访问 repo。
-
-推荐 payload 基础类型：
+当前代码中的 `payload` 只应包含 Qt 基础类型：
 
 - `QString`
 - `QStringList`
 - `QVariantMap`
 - `QVariantList`
 - `int`
+- `double`
 - `bool`
 
-### 3. Dispatcher 到 database service
+不允许再出现：
 
-接受的映射：
+- `QVector<ColumnDef>`
+- `QVector<ConstraintDef>`
+- 任何自定义 struct
 
-```cpp
-database_service::createDatabase(QString) -> TaskResult
-database_service::dropDatabase(QString) -> TaskResult
-database_service::useDatabase(QString) -> TaskResult
-database_service::showDatabases() -> SelectRowsResult
-```
+### 5.3 分层入口
 
-收口规则：
-
-- 本 PR 不新增 `listAllDatabases()`。
-- 结构树如果需要数据库列表，可以临时消费 `showDatabases()`，或者等待后续正式 read-only service。
-
-### 4. Dispatcher 到 table service
-
-接受的映射：
+当前 parser 分层如下：
 
 ```cpp
-table_service::createTable(QString, TableSchema) -> TaskResult
-table_service::dropTable(QString) -> TaskResult
-table_service::showTables() -> SelectRowsResult
-table_service::describeTable(QString) -> TextResult
+ParseResult parseDatabaseSql(const QString &sql, const QVector<SqlToken> &tokens);
+ParseResult parseTableSql(const QString &sql, const QVector<SqlToken> &tokens);
+ParseResult parseTupleSql(const QString &sql, const QVector<SqlToken> &tokens);
 ```
 
-有条件接受：
+`parseSql()` 负责统一 `tokenize` 一次，再把同一份 `tokens` 下传；不应重复 tokenize。
+
+## 6. 命令级输入输出对齐表
+
+本节是本文档最核心的收口依据。
+
+### 6.1 数据库级命令
+
+| commandType | SQL 形式 | parser 输出 payload | dispatcher 函数 | service 函数 | dispatcher 成功输出 |
+|---|---|---|---|---|---|
+| `CREATE_DATABASE` | `CREATE DATABASE db;` | `databaseName: QString` | `execCreateDatabase` | `database_service::createDatabase(const QString &databaseName)` | `success=true`, `text="Database 'db' created"` |
+| `DROP_DATABASE` | `DROP DATABASE db;` | `databaseName: QString` | `execDropDatabase` | `database_service::dropDatabase(const QString &databaseName)` | `success=true`, `text="Database 'db' dropped"` |
+| `USE_DATABASE` | `USE db;` | `databaseName: QString` | `execUseDatabase` | `database_service::useDatabase(const QString &databaseName)` | `success=true`, `text="Using database 'db'"` |
+| `SHOW_DATABASES` | `SHOW DATABASES;` | 空 | `execShowDatabases` | `database_service::showDatabases()` | `success=true`, `selectResult` 有效 |
+
+说明：
+
+- `USE_DATABASE` 的当前前端同步依据是返回 `payload["databaseName"]`。
+- `SHOW_DATABASES` 的 UI 应基于 `selectResult.resultTable` 展示，而不是解析 `text`。
+
+### 6.2 表级命令
+
+#### 6.2.1 `CREATE TABLE`
+
+SQL 形式：
+
+```sql
+CREATE TABLE t (
+  id INT PRIMARY KEY,
+  name VARCHAR(20) NOT NULL,
+  parent_id INT,
+  CONSTRAINT fk_t_parent FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE
+);
+```
+
+parser 输出：
 
 ```cpp
-table_service::addColumn(...)
-table_service::deleteColumn(...)
-table_service::modifyColumn(...)
-table_service::addConstraint(...)
-table_service::modifyConstraint(...)
-table_service::deleteConstraint(...)
+payload["tableName"] = QString
+payload["columns"] = QVariantList<columnMap>
+payload["constraints"] = QVariantList<constraintMap>
 ```
 
-只有 parser payload 完整时才允许接。
+其中 `columnMap` 当前统一键集合为：
 
-第一轮不要求接：
+```cpp
+{
+  "name": QString,
+  "type": QString,
+  "length": int,
+  "notNull": bool,
+  "primaryKey": bool,
+  "autoIncrement": bool,
+  "unique": bool,
+  "defaultValue": QString,
+  "checkClause": QString,
+  "referencesTable": QString,
+  "referencedColumns": QStringList,
+  "onDeleteAction": QString,
+  "onUpdateAction": QString
+}
+```
+
+其中 `constraintMap` 当前统一键集合为：
+
+```cpp
+{
+  "name": QString,
+  "type": QString,               // PRIMARY_KEY / UNIQUE / CHECK / FOREIGN_KEY
+  "columns": QStringList,
+  "checkClause": QString,
+  "referencedTable": QString,
+  "referencedColumns": QStringList,
+  "onDeleteAction": QString,
+  "onUpdateAction": QString
+}
+```
+
+dispatcher 行为：
+
+- `execCreateTable(const ParseResult &p)`
+- 读取 `tableName`
+- 读取 `columns: QVariantList`
+- 把每个 `columnMap` 转成 `ColumnDefinition`
+- 由 `buildGeneratedConstraints(definition)` 自动生成列级约束
+- 把 `constraints: QVariantList` 转成 `tabledef::Constraint`
+- 组装 `tabledef::TableSchema`
+- 调用：
+
+```cpp
+table_service::createTable(const QString &tableName,
+                           const tabledef::TableSchema &schema)
+```
+
+dispatcher 拒绝条件：
+
+- `columns` 为空
+- 某列缺少 `name`
+- 某表级约束缺少 `type`
+
+当前错误文案：
+
+- `CREATE TABLE: columns payload is empty or incomplete`
+- `CREATE TABLE: column payload is incomplete`
+- `CREATE TABLE: constraint payload is incomplete`
+
+#### 6.2.2 `DROP TABLE`
+
+| commandType | SQL 形式 | parser 输出 payload | dispatcher 函数 | service 函数 | dispatcher 成功输出 |
+|---|---|---|---|---|---|
+| `DROP_TABLE` | `DROP TABLE t;` | `tableName: QString` | `execDropTable` | `table_service::dropTable(const QString &tableName)` | `success=true`, `text="Table 't' dropped"` |
+
+#### 6.2.3 `SHOW TABLES`
+
+| commandType | SQL 形式 | parser 输出 payload | dispatcher 函数 | service 函数 | dispatcher 成功输出 |
+|---|---|---|---|---|---|
+| `SHOW_TABLES` | `SHOW TABLES;` | 空 | `execShowTables` | `table_service::showTables()` | `success=true`, `selectResult` 有效 |
+
+说明：
+
+- `showTables()` 依赖当前会话库 `service::currentDatabase`。
+- 前端在调用前必须确保当前库已经通过 `USE` 或其它 UI 行为同步到 service。
+
+#### 6.2.4 `DESC` / `DESCRIBE`
+
+| commandType | SQL 形式 | parser 输出 payload | dispatcher 函数 | service 函数 | dispatcher 成功输出 |
+|---|---|---|---|---|---|
+| `DESC_TABLE` | `DESC t;` / `DESCRIBE t;` | `tableName: QString` | `execDescTable` | `table_service::describeTable(const QString &tableName)` | `success=true`, `text` 有效 |
+
+#### 6.2.5 `SHOW CREATE TABLE`
+
+| commandType | SQL 形式 | parser 输出 payload | dispatcher 函数 | service 函数 | dispatcher 成功输出 |
+|---|---|---|---|---|---|
+| `SHOW_CREATE_TABLE` | `SHOW CREATE TABLE t;` | `tableName: QString` | `execShowCreateTable` | `table_service::showCreateTable(const QString &tableName)` | `success=true`, `text` 有效 |
+
+说明：
+
+- 当前 UI 会把 `SHOW_CREATE_TABLE` 的 `text` 转成两列表格展示。
+- 这条链路已经收口，不应再视为缺失功能。
+
+### 6.3 `ALTER TABLE` 当前收口状态
+
+当前 parser 已能识别 `ALTER_TABLE`，但不同动作的收口程度不同。
+
+| alterAction | parser 当前输出 | dispatcher 当前要求 | 当前状态 |
+|---|---|---|---|
+| `ADD_COLUMN` | `tableName`, `alterAction`, `columnName` | 需要完整 `payload["column"]: QVariantMap` | 当前拒绝执行 |
+| `MODIFY_COLUMN` | `tableName`, `alterAction`, `columnName` | 需要完整 `payload["column"]: QVariantMap` | 当前拒绝执行 |
+| `ADD_CONSTRAINT` | `tableName`, `alterAction` | 需要完整 `payload["constraint"]: QVariantMap` | 当前拒绝执行 |
+| `MODIFY_CONSTRAINT` | `tableName`, `alterAction` | 需要 `constraintName + constraint` | 当前拒绝执行 |
+| `DROP_COLUMN` | `tableName`, `alterAction`, `columnName` | 只需 `columnName` | 当前已对齐 |
+| `DROP_CONSTRAINT` | `tableName`, `alterAction`, `constraintName` | 只需 `constraintName` | 当前已对齐 |
+
+dispatcher 当前对应函数：
+
+```cpp
+SqlExecResult execAlterTable(const sqlparser::ParseResult &p);
+```
+
+当前可真正落到 service 的只有：
+
+```cpp
+table_service::deleteColumn(const QString &tableName,
+                            const QString &columnName);
+
+table_service::deleteConstraint(const QString &tableName,
+                                const QString &constraintName);
+```
+
+如果后续要补齐 `ADD/MODIFY`，parser 必须输出：
+
+- `payload["column"]`：格式与 `CREATE TABLE` 的 `columnMap` 完全一致
+- `payload["constraint"]`：格式与 `CREATE TABLE` 的 `constraintMap` 完全一致
+- `payload["constraintName"]`：仅 `MODIFY_CONSTRAINT / DROP_CONSTRAINT` 需要
+
+### 6.4 元组级命令
+
+#### 6.4.1 `SELECT`
+
+SQL 形式：
+
+```sql
+SELECT * FROM t;
+SELECT id, name FROM t LIMIT 100;
+```
+
+parser 输出：
+
+```cpp
+payload["projection"] = QStringList
+payload["tableName"] = QString
+payload["limit"] = int    // 缺省为 -1
+```
+
+dispatcher 行为：
+
+```cpp
+tuple_service::selectRows(const QString &tableName,
+                          const QStringList &projectionColumns,
+                          const QList<SimpleCondition> &conditions,
+                          int limit = -1);
+```
+
+当前 dispatcher 调用规则：
+
+- `conditions` 固定传空
+- `limit` 从 payload 下推
+
+当前已支持：
+
+- `LIMIT` 非负整数
+- `LIMIT` 缺省时按 `-1` 传入
+
+当前明确拒绝：
+
+- 任何 `WHERE`
+- 任何额外子句，例如 `ORDER BY`、`GROUP BY`、`JOIN`
+
+当前错误文案包括：
+
+- `WHERE is not supported yet`
+- `SELECT: duplicate LIMIT clause`
+- `SELECT: LIMIT requires a non-negative integer`
+- `SELECT: unsupported clause '...'`
+
+#### 6.4.2 `INSERT`
+
+SQL 形式：
+
+```sql
+INSERT INTO t (id, name) VALUES (1, 'a'), (2, 'b');
+INSERT INTO t VALUES (1, 'a');
+```
+
+parser 输出：
+
+```cpp
+payload["tableName"] = QString
+payload["columnNames"] = QStringList
+payload["rowCount"] = int
+payload["rows"] = QVariantList<rowList>
+```
+
+其中每个 `rowList` 是一个 `QVariantList`，内部元素为基础类型值。
+
+dispatcher 行为：
+
+- 若 `columnNames` 为空，则先加载表 schema，使用真实列序补足映射。
+- 再把 `rows` 转成：
+
+```cpp
+QList<QMap<QString, QString>>
+```
+
+- 最终调用：
+
+```cpp
+tuple_service::insertRows(const QString &tableName,
+                          const QList<QMap<QString, QString>> &rows);
+```
+
+#### 6.4.3 `UPDATE`
+
+SQL 形式：
+
+```sql
+UPDATE t SET name = 'x';
+```
+
+parser 输出：
+
+```cpp
+payload["tableName"] = QString
+payload["assignments"] = QVariantMap
+```
+
+dispatcher 行为：
+
+- 把 `assignments` 转成：
+
+```cpp
+QMap<QString, QString>
+```
+
+- `conditions` 固定为空
+- 调用：
+
+```cpp
+tuple_service::updateRows(const QString &tableName,
+                          const QMap<QString, QString> &assignmentMap,
+                          const QList<SimpleCondition> &conditions);
+```
+
+当前明确拒绝：
+
+- 任何 `WHERE`
+
+#### 6.4.4 `DELETE`
+
+SQL 形式：
+
+```sql
+DELETE FROM t;
+```
+
+parser 输出：
+
+```cpp
+payload["tableName"] = QString
+```
+
+dispatcher 行为：
+
+- `conditions` 固定为空
+- 调用：
+
+```cpp
+tuple_service::deleteRows(const QString &tableName,
+                          const QList<SimpleCondition> &conditions);
+```
+
+当前明确拒绝：
+
+- 任何 `WHERE`
+
+## 7. Service 侧函数收口
+
+本节只记录当前 parser/dispatcher 需要依赖的 service 口。
+
+### 7.1 数据库级
+
+```cpp
+TaskResult createDatabase(const QString &databaseName);
+TaskResult dropDatabase(const QString &databaseName);
+TaskResult useDatabase(const QString &databaseName);
+SelectRowsResult showDatabases();
+```
+
+### 7.2 表级
+
+```cpp
+TaskResult createTable(const QString &tableName,
+                       const tabledef::TableSchema &schema);
+
+TaskResult dropTable(const QString &tableName);
+
+TaskResult addColumn(const QString &tableName,
+                     const ColumnDefinition &definition);
+
+TaskResult deleteColumn(const QString &tableName,
+                        const QString &columnName);
+
+TaskResult modifyColumn(const QString &tableName,
+                        const QString &columnName,
+                        const ColumnDefinition &definition);
+
+TaskResult addConstraint(const QString &tableName,
+                         const tabledef::Constraint &constraint);
+
+TaskResult modifyConstraint(const QString &tableName,
+                            const QString &constraintName,
+                            const tabledef::Constraint &constraint);
+
+TaskResult deleteConstraint(const QString &tableName,
+                            const QString &constraintName);
+
+TaskResult createIndex(const QString &tableName,
+                       const QString &indexName,
+                       const QStringList &columnNames,
+                       bool isUnique);
+
+TaskResult dropIndex(const QString &tableName,
+                     const QString &indexName);
+
+SelectRowsResult showTables();
+
+TextResult describeTable(const QString &tableName);
+
+TextResult showCreateTable(const QString &tableName);
+```
+
+### 7.3 元组级
+
+```cpp
+SelectRowsResult selectRows(const QString &tableName,
+                            const QStringList &projectionColumns,
+                            const QList<SimpleCondition> &conditions,
+                            int limit = -1);
+
+TaskResult insertRows(const QString &tableName,
+                      const QList<QMap<QString, QString>> &rows);
+
+TaskResult deleteRows(const QString &tableName,
+                      const QList<SimpleCondition> &conditions);
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QList<SimpleCondition> &conditions);
+```
+
+说明：
+
+- `SimpleCondition` 目前不是 SQL `WHERE` 的正式外部协议。
+- 当前 SQL 层没有把 `WHERE` 收口到 `SimpleCondition`，因此不能对外宣称已支持 `WHERE`。
+
+## 8. 当前 parser -> service 的关键转换规则
+
+### 8.1 列定义转换
+
+dispatcher 当前将 `columnMap` 转成：
+
+```cpp
+service::ColumnDefinition
+```
+
+其核心来源字段如下：
+
+| `columnMap` 键 | 目标字段 |
+|---|---|
+| `name` | `definition.column.name` |
+| `type` | `definition.column.type` |
+| `length` | `definition.column.length` |
+| `notNull` | `definition.column.notNull` |
+| `defaultValue` | `definition.column.defaultValue` |
+| `autoIncrement` | `definition.column.autoIncrement` |
+| `checkClause` | `definition.column.check` 与 `definition.checkClause` |
+| `primaryKey` | `definition.primaryKey` |
+| `unique` | `definition.unique` |
+| `referencesTable` | `definition.referencedTable` |
+| `referencedColumns` | `definition.referencedColumns` |
+| `onDeleteAction` | `definition.onDeleteAction` |
+| `onUpdateAction` | `definition.onUpdateAction` |
+
+### 8.2 表级约束转换
+
+dispatcher 当前将 `constraintMap` 转成：
+
+```cpp
+tabledef::Constraint
+```
+
+其核心来源字段如下：
+
+| `constraintMap` 键 | 目标字段 |
+|---|---|
+| `type` | `constraint.type` |
+| `columns` | `constraint.columns` |
+| `checkClause` | `constraint.checkClause` |
+| `referencedTable` | `constraint.referencedTable` |
+| `referencedColumns` | `constraint.referencedColumns` |
+| `onDeleteAction` | `constraint.onDeleteAction` |
+| `onUpdateAction` | `constraint.onUpdateAction` |
+| `name` | `constraint.name`，为空时 dispatcher 自动生成 |
+
+### 8.3 自动生成的列级约束
+
+`CREATE TABLE` 中列级语义：
+
+- `PRIMARY KEY`
+- `UNIQUE`
+- `CHECK`
+- 列级 `REFERENCES ...`
+
+不会直接以表级 `constraints[]` 传入，而是先进入 `ColumnDefinition`，再由：
+
+```cpp
+buildGeneratedConstraints(definition)
+```
+
+自动生成 `schema.constraints`。
+
+因此：
+
+- parser 必须保留列级语义字段
+- dispatcher 不应丢弃这些字段
+
+## 9. SERVICE FULL COVERAGE GAP
+
+本节的目标不是改造 service，而是以当前 `service.h` 为基准，补齐“为了让 SQL 执行软件覆盖全部正式 service 能力，还差哪些 parser / dispatcher / SQL 协议工作”。
+
+### 9.1 统计口径
+
+本节的“service 全覆盖”只统计当前适合由前端 / parser / dispatcher 直接对接的正式 service 入口：
+
+- `database_service::*`
+- `table_service::*`
+- `tuple_service::*`
+
+不纳入“SQL 直连全覆盖”目标的接口：
+
+- `service::setDataRoot(...)`
+- `service::getDataRoot()`
+- `service::currentDatabase`
+- `service::TableDmlService::*`
+
+原因：
+
+- 前三者属于运行环境 / 会话状态，不是面向 SQL 的业务命令。
+- `TableDmlService` 属于更底层的通用二维表引擎，不应成为前端 SQL 的直接落点。
+
+### 9.2 已完全覆盖的正式 service 入口
+
+| service 函数 | 当前 SQL 通路 | 覆盖状态 |
+|---|---|---|
+| `database_service::createDatabase(...)` | `CREATE DATABASE` | 已覆盖 |
+| `database_service::dropDatabase(...)` | `DROP DATABASE` | 已覆盖 |
+| `database_service::useDatabase(...)` | `USE` | 已覆盖 |
+| `database_service::showDatabases()` | `SHOW DATABASES` | 已覆盖 |
+| `table_service::createTable(...)` | `CREATE TABLE` | 已覆盖 |
+| `table_service::dropTable(...)` | `DROP TABLE` | 已覆盖 |
+| `table_service::deleteColumn(...)` | `ALTER TABLE ... DROP COLUMN ...` | 已覆盖 |
+| `table_service::deleteConstraint(...)` | `ALTER TABLE ... DROP CONSTRAINT ...` | 已覆盖 |
+| `table_service::showTables()` | `SHOW TABLES` | 已覆盖 |
+| `table_service::describeTable(...)` | `DESC` / `DESCRIBE` | 已覆盖 |
+| `table_service::showCreateTable(...)` | `SHOW CREATE TABLE` | 已覆盖 |
+| `tuple_service::insertRows(...)` | `INSERT` | 已覆盖 |
+| `tuple_service::selectRows(..., limit)` | `SELECT` / `SELECT ... LIMIT n` | 已覆盖无条件路径 |
+| `tuple_service::updateRows(..., {})` | 无 `WHERE` 的 `UPDATE` | 已覆盖无条件路径 |
+| `tuple_service::deleteRows(..., {})` | 无 `WHERE` 的 `DELETE` | 已覆盖无条件路径 |
+
+说明：
+
+- 对 `tuple_service::selectRows / updateRows / deleteRows` 而言，当前只覆盖了“空条件”调用路径。
+- 因为这 3 个函数还带有 `QList<SimpleCondition>`，所以它们在“按 service 能力完全覆盖”的意义上仍然存在条件路径缺口。
+
+### 9.3 仍未覆盖到 SQL 的正式 service 能力
+
+本节不再只写“缺什么”，而是把剩余缺口直接写成可开发协议。
+
+### 9.3.1 `ALTER TABLE ADD/MODIFY COLUMN` 的正式协议
+
+目标覆盖的 service 函数：
+
+```cpp
+table_service::addColumn(const QString &tableName,
+                         const ColumnDefinition &definition);
+
+table_service::modifyColumn(const QString &tableName,
+                            const QString &columnName,
+                            const ColumnDefinition &definition);
+```
+
+分层归属：
+
+- tokenizer：不需要新增 token，复用现有 `ALTER / TABLE / ADD / MODIFY / COLUMN`
+- parser：负责把列定义解析成完整 `columnMap`
+- dispatcher：负责把 `columnMap` 转成 `ColumnDefinition`
+- service：继续只接收 `ColumnDefinition`，不负责重解析 SQL
+
+SQL 协议：
+
+```sql
+ALTER TABLE table_name ADD COLUMN column_definition;
+ALTER TABLE table_name MODIFY COLUMN column_definition;
+```
+
+其中 `column_definition` 的语法与 `CREATE TABLE` 中单列定义完全一致，例如：
+
+```sql
+id INT PRIMARY KEY
+name VARCHAR(20) NOT NULL DEFAULT 'a'
+parent_id INT REFERENCES parent(id) ON DELETE CASCADE
+```
+
+parser 正式输出：
+
+```cpp
+payload["tableName"] = QString
+payload["alterAction"] = "ADD_COLUMN" | "MODIFY_COLUMN"
+payload["column"] = QVariantMap
+```
+
+`payload["column"]` 的键集合必须与 `CREATE TABLE` 的单列 `columnMap` 完全一致：
+
+```cpp
+{
+  "name": QString,
+  "type": QString,
+  "length": int,
+  "notNull": bool,
+  "primaryKey": bool,
+  "autoIncrement": bool,
+  "unique": bool,
+  "defaultValue": QString,
+  "checkClause": QString,
+  "referencesTable": QString,
+  "referencedColumns": QStringList,
+  "onDeleteAction": QString,
+  "onUpdateAction": QString
+}
+```
+
+dispatcher 正式行为：
+
+- `ADD_COLUMN`
+  - 校验 `payload["column"]` 必须存在且为 `QVariantMap`
+  - 校验 `column["name"]` 非空
+  - 将其转为 `ColumnDefinition`
+  - 调用：
+
+```cpp
+table_service::addColumn(tableName, definition);
+```
+
+- `MODIFY_COLUMN`
+  - 校验 `payload["column"]` 必须存在且为 `QVariantMap`
+  - 校验 `column["name"]` 非空
+  - 将其转为 `ColumnDefinition`
+  - 调用：
+
+```cpp
+table_service::modifyColumn(tableName, definition.column.name, definition);
+```
+
+约束说明：
+
+- 本协议下，`MODIFY COLUMN` 不额外支持“旧列名 -> 新列名”的改名语义。
+- 因为当前 service 接口没有单独的 rename 协议，所以 `definition.column.name` 就是要修改的目标列名。
+
+dispatcher 错误边界：
+
+- 缺少 `column`：`ALTER TABLE ADD/MODIFY COLUMN requires a complete column payload`
+- `column["name"]` 为空：视为不完整 payload，拒绝调用 service
+
+### 9.3.2 `ALTER TABLE ADD/MODIFY CONSTRAINT` 的正式协议
+
+目标覆盖的 service 函数：
+
+```cpp
+table_service::addConstraint(const QString &tableName,
+                             const tabledef::Constraint &constraint);
+
+table_service::modifyConstraint(const QString &tableName,
+                                const QString &constraintName,
+                                const tabledef::Constraint &constraint);
+```
+
+分层归属：
+
+- tokenizer：不需要新增 token，复用现有 `ALTER / TABLE / ADD / MODIFY / CONSTRAINT`
+- parser：负责把表级约束解析成完整 `constraintMap`
+- dispatcher：负责把 `constraintMap` 转成 `tabledef::Constraint`
+- service：继续只接收 `tabledef::Constraint`
+
+SQL 协议：
+
+```sql
+ALTER TABLE table_name ADD constraint_definition;
+ALTER TABLE table_name MODIFY CONSTRAINT old_constraint_name constraint_definition;
+```
+
+其中 `constraint_definition` 的语法与 `CREATE TABLE` 中表级约束定义完全一致，例如：
+
+```sql
+CONSTRAINT pk_t PRIMARY KEY (id)
+CONSTRAINT uq_t UNIQUE (a, b)
+CONSTRAINT ck_t CHECK (id > 0)
+CONSTRAINT fk_t FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE NO ACTION
+```
+
+parser 正式输出：
+
+- `ADD_CONSTRAINT`
+
+```cpp
+payload["tableName"] = QString
+payload["alterAction"] = "ADD_CONSTRAINT"
+payload["constraint"] = QVariantMap
+```
+
+- `MODIFY_CONSTRAINT`
+
+```cpp
+payload["tableName"] = QString
+payload["alterAction"] = "MODIFY_CONSTRAINT"
+payload["constraintName"] = QString
+payload["constraint"] = QVariantMap
+```
+
+`payload["constraint"]` 的键集合必须与 `CREATE TABLE` 的单个 `constraintMap` 完全一致：
+
+```cpp
+{
+  "name": QString,
+  "type": QString,
+  "columns": QStringList,
+  "checkClause": QString,
+  "referencedTable": QString,
+  "referencedColumns": QStringList,
+  "onDeleteAction": QString,
+  "onUpdateAction": QString
+}
+```
+
+dispatcher 正式行为：
+
+- `ADD_CONSTRAINT`
+  - 校验 `payload["constraint"]` 必须存在且为 `QVariantMap`
+  - 校验 `constraint["type"]` 非空
+  - 转成 `tabledef::Constraint`
+  - 调用：
+
+```cpp
+table_service::addConstraint(tableName, constraint);
+```
+
+- `MODIFY_CONSTRAINT`
+  - 校验 `constraintName` 非空
+  - 校验 `payload["constraint"]` 必须存在且为 `QVariantMap`
+  - 若 `constraint["name"]` 为空，则 dispatcher 应先把它补成 `constraintName`
+  - 转成 `tabledef::Constraint`
+  - 调用：
+
+```cpp
+table_service::modifyConstraint(tableName, constraintName, constraint);
+```
+
+dispatcher 错误边界：
+
+- 缺少 `constraint`：`ALTER TABLE ADD/MODIFY CONSTRAINT requires a complete constraint payload`
+- 缺少 `constraintName`：`ALTER TABLE MODIFY CONSTRAINT requires constraintName`
+- 缺少 `constraint["type"]`：视为不完整 payload，拒绝调用 service
+
+### 9.3.3 `CREATE/DROP INDEX` 的正式协议
+
+目标覆盖的 service 函数：
+
+```cpp
+table_service::createIndex(const QString &tableName,
+                           const QString &indexName,
+                           const QStringList &columnNames,
+                           bool isUnique);
+
+table_service::dropIndex(const QString &tableName,
+                         const QString &indexName);
+```
+
+分层归属：
+
+- tokenizer：需要新增 `INDEX`、`ON`
+- parser：负责识别索引 SQL 并输出 index payload
+- dispatcher：负责校验 payload 并调用现有 service
+- service：继续只接收 `tableName / indexName / columnNames / isUnique`
+
+SQL 协议：
+
+```sql
+CREATE INDEX index_name ON table_name (col1, col2, ...);
+CREATE UNIQUE INDEX index_name ON table_name (col1, col2, ...);
+DROP INDEX index_name ON table_name;
+```
+
+建议 commandType：
+
+```cpp
+"CREATE_INDEX"
+"DROP_INDEX"
+```
+
+parser 正式输出：
+
+- `CREATE_INDEX`
+
+```cpp
+payload["tableName"] = QString
+payload["indexName"] = QString
+payload["columnNames"] = QStringList
+payload["isUnique"] = bool
+```
+
+- `DROP_INDEX`
+
+```cpp
+payload["tableName"] = QString
+payload["indexName"] = QString
+```
+
+dispatcher 正式行为：
+
+- 新增：
+
+```cpp
+SqlExecResult execCreateIndex(const sqlparser::ParseResult &p);
+SqlExecResult execDropIndex(const sqlparser::ParseResult &p);
+```
+
+- `CREATE_INDEX`
+  - 校验 `tableName`、`indexName` 非空
+  - 校验 `columnNames` 非空
+  - 调用：
+
+```cpp
+table_service::createIndex(tableName, indexName, columnNames, isUnique);
+```
+
+- `DROP_INDEX`
+  - 校验 `tableName`、`indexName` 非空
+  - 调用：
+
+```cpp
+table_service::dropIndex(tableName, indexName);
+```
+
+dispatcher 错误边界：
+
+- `CREATE INDEX: expected index name`
+- `CREATE INDEX: expected table name`
+- `CREATE INDEX: expected column list`
+- `DROP INDEX: expected index name`
+- `DROP INDEX: expected table name`
+
+### 9.3.4 `WHERE` 条件路径的正式协议
+
+目标覆盖的 service 函数：
+
+```cpp
+tuple_service::selectRows(const QString &tableName,
+                          const QStringList &projectionColumns,
+                          const QList<SimpleCondition> &conditions,
+                          int limit);
+
+tuple_service::updateRows(const QString &tableName,
+                          const QMap<QString, QString> &assignmentMap,
+                          const QList<SimpleCondition> &conditions);
+
+tuple_service::deleteRows(const QString &tableName,
+                          const QList<SimpleCondition> &conditions);
+```
+
+分层归属：
+
+- tokenizer：复用现有 `WHERE / AND / EQ`
+- parser：只负责把支持范围内的 `WHERE` 解析成条件列表
+- dispatcher：只负责把条件 payload 转成 `QList<SimpleCondition>`
+- service：继续只接收 `QList<SimpleCondition>`，不负责解释 SQL 语法
+
+当前 `SimpleCondition` 的真实语义边界：
+
+```cpp
+struct SimpleCondition
+{
+    QString columnName;
+    QString value;
+};
+```
+
+结合 `table_dml_service.cpp` 的匹配逻辑，当前能正式暴露给 SQL 的最小条件协议必须限定为：
+
+```sql
+WHERE col1 = literal [AND col2 = literal ...]
+```
+
+明确不纳入本阶段协议的内容：
+
+- `OR`
+- `!=`, `<`, `>`, `<=`, `>=`
+- `LIKE`, `IN`, `BETWEEN`, `IS NULL`
+- 括号
+
+parser 正式输出：
+
+```cpp
+payload["conditions"] = QVariantList<conditionMap>
+```
+
+其中每个 `conditionMap` 为：
+
+```cpp
+{
+  "columnName": QString,
+  "value": QString
+}
+```
+
+命令级适用方式：
+
+- `SELECT`
+
+```cpp
+payload["tableName"] = QString
+payload["projection"] = QStringList
+payload["limit"] = int
+payload["conditions"] = QVariantList    // 无 WHERE 时可省略
+```
+
+- `UPDATE`
+
+```cpp
+payload["tableName"] = QString
+payload["assignments"] = QVariantMap
+payload["conditions"] = QVariantList    // 无 WHERE 时可省略
+```
+
+- `DELETE`
+
+```cpp
+payload["tableName"] = QString
+payload["conditions"] = QVariantList    // 无 WHERE 时可省略
+```
+
+dispatcher 正式行为：
+
+- 新增条件转换辅助函数，例如：
+
+```cpp
+QList<SimpleCondition> simpleConditionsFromPayload(const QVariantList &conditionsPayload);
+```
+
+- `SELECT`
+
+```cpp
+tuple_service::selectRows(tableName, projectionColumns, conditions, limit);
+```
+
+- `UPDATE`
+
+```cpp
+tuple_service::updateRows(tableName, assignmentMap, conditions);
+```
+
+- `DELETE`
+
+```cpp
+tuple_service::deleteRows(tableName, conditions);
+```
+
+dispatcher 错误边界：
+
+- condition 缺少 `columnName`：拒绝
+- `WHERE` 出现了非 `=` 运算符：parser 直接拒绝
+- 出现 `AND` 之外的组合方式：parser 直接拒绝
+
+### 9.4 达成 service 全覆盖前的分层实施清单
+
+若目标是“SQL 层覆盖全部正式 service 能力”，则应按分层补齐，而不是把职责滑到错误层级。
+
+tokenizer 必补：
+
+1. 新增 `INDEX`
+2. 新增 `ON`
+
+parser 必补：
+
+1. `ALTER TABLE ADD COLUMN` 输出完整 `payload["column"]`
+2. `ALTER TABLE MODIFY COLUMN` 输出完整 `payload["column"]`
+3. `ALTER TABLE ADD CONSTRAINT` 输出完整 `payload["constraint"]`
+4. `ALTER TABLE MODIFY CONSTRAINT` 输出 `constraintName + constraint`
+5. `CREATE INDEX / CREATE UNIQUE INDEX` 输出 index payload
+6. `DROP INDEX` 输出 index payload
+7. `SELECT / UPDATE / DELETE` 在简单 `WHERE` 下输出 `payload["conditions"]`
+
+dispatcher 必补：
+
+1. 新增 index 的 `execCreateIndex / execDropIndex`
+2. 为 `ALTER` 完整 payload 调用现有 `addColumn / modifyColumn / addConstraint / modifyConstraint`
+3. 新增 `conditions payload -> QList<SimpleCondition>` 的转换
+4. 对不完整 payload 继续保持“拒绝调用 service”的策略
+
+service 必补：
+
+- 无新增签名要求
+- 现有正式函数直接作为最终落点使用
+
+### 9.5 达成 service 全覆盖前的结论
+
+在完成 9.3 和 9.4 中定义的协议之前，当前系统只能称为“覆盖已收口交集”，不能称为“覆盖全部正式 service 能力”。
+
+## 10. 当前不应再出现的旧描述
+
+下面这些旧说法已经不符合当前代码，应视为废弃：
+
+- “payload 可以直接传 `QVector<ColumnDef>` / `QVector<ConstraintDef>`”
+- “dispatcher 可以临时 buildConditions 支持简单 WHERE”
+- “前端当前支持 `WHERE` 简单条件”
+- “`SHOW CREATE TABLE` 还没有 service 通路”
+- “`LIMIT` 还没有下推到 service”
+
+## 11. 下一步若继续补齐的最低要求
+
+若下一步继续扩 parser / dispatcher，而不改 service 边界，最低要求如下：
+
+### 11.1 若要补 `ALTER TABLE ADD/MODIFY COLUMN`
+
+parser 必须输出完整 `payload["column"]`，格式必须与 `CREATE TABLE` 的单列 `columnMap` 完全一致。
+
+### 11.2 若要补 `ALTER TABLE ADD/MODIFY CONSTRAINT`
+
+parser 必须输出完整 `payload["constraint"]`，格式必须与 `CREATE TABLE` 的单个 `constraintMap` 完全一致。
+
+### 11.3 若要补 `WHERE`
+
+不能再走“parser 解析一点，dispatcher 忽略一点”的伪支持路线。
+
+至少需要：
+
+- 明确 SQL `WHERE` 到 `QList<SimpleCondition>` 的映射规则
+- 明确运算符集合
+- 明确多条件组合规则
+- 明确 parser/dispatcher/service 三层都同时收口
+
+### 11.4 若要补索引 SQL
+
+必须新增 parser / dispatcher 通路，并最终落到：
 
 ```cpp
 table_service::createIndex(...)
 table_service::dropIndex(...)
-table_service::showCreateTable(...)
 ```
 
-### 5. Dispatcher 到 tuple service
+不能只在 UI 文案中宣称支持。
 
-接受的映射：
+## 12. 结论
 
-```cpp
-tuple_service::selectRows(tableName, projectionColumns, {}, limit) -> SelectRowsResult
-tuple_service::insertRows(tableName, rows) -> TaskResult
-tuple_service::updateRows(tableName, assignmentMap, {}) -> TaskResult
-tuple_service::deleteRows(tableName, {}) -> TaskResult
-```
+当前可作为主要对齐依据的，不再是“wty 旧实现拥有什么”，而是：
 
-本 PR 拒绝：
+- parser 当前真实能输出什么 `payload`
+- dispatcher 当前真实接受什么 `payload`
+- service 当前真实提供什么函数接口
 
-```cpp
-tuple_service::*Rows(..., conditionsFromWhere)
-```
+基于当前代码，最稳妥的对齐结论是：
 
-原因：
+1. `CREATE/DROP/USE/SHOW DATABASES`
+2. `CREATE/DROP TABLE`、`SHOW TABLES`、`DESC`、`SHOW CREATE TABLE`
+3. `INSERT`
+4. `SELECT ... LIMIT n`
+5. 无 `WHERE` 的 `UPDATE/DELETE`
+6. `ALTER TABLE DROP COLUMN / DROP CONSTRAINT`
 
-- 当前 `SimpleCondition` 不是完整 SQL WHERE 模型。
-- review comment 已经明确要求回滚 `buildConditions` 伪实现。
-
-如果未来要开放 WHERE，应先定义窄契约：
-
-```text
-WHERE column = literal
-```
-
-并拒绝其他所有操作符。
-
-## 基于 review comment 的验收清单
-
-### 编译和启动
-
-| Comment | 收口目标 | 验收 |
-|---|---|---|
-| `animated_button.h` includes | 补 Qt 绘制头文件 | 构建通过 |
-| `structure_panel.cpp` include | 修正 include 路径 | 构建通过 |
-| `setDataRoot` 早于 `setupLayout` | 在 `StructurePanel` 构造前设置 data root | 首次结构树加载路径正确 |
-
-### UI 状态和文案
-
-| Comment | 收口目标 | 验收 |
-|---|---|---|
-| `USE` chopped bug | 仅在末尾存在分号时移除，或直接使用 dispatcher 返回结果 | `USE db` 和 `USE db;` 都正确 |
-| About 文案越界 | 只保留当前真实支持的 SQL | UI 文案与当前能力一致 |
-
-### Parser
-
-| Comment | 收口目标 | 验收 |
-|---|---|---|
-| 约束遇逗号跳过错误 | 按括号深度处理完整约束定义 | 多列约束不被错误拆开 |
-| `QVector<ColumnDef>` in QVariant | 使用 `QVariantList/QVariantMap` | 不需要元类型注册 |
-| 重复 tokenize | 统一只分词一次 | parser 路径只有一份 token stream |
-
-### Dispatcher
-
-| Comment | 收口目标 | 验收 |
-|---|---|---|
-| QVariant 自定义类型提取 | 改用基础 QVariant 类型 | 运行期取值稳定 |
-| `buildConditions` 伪 WHERE | 删除或拒绝 WHERE | WHERE SQL 返回 unsupported |
-| 硬编码 list helper | 从本 PR 回滚 | 不新增非正式 service API |
-
-## 第一轮支持的 SQL 集合
-
-支持：
-
-```sql
-CREATE DATABASE db;
-DROP DATABASE db;
-USE db;
-SHOW DATABASES;
-CREATE TABLE t (...);
-DROP TABLE t;
-SHOW TABLES;
-DESC t;
-INSERT INTO t VALUES (...);
-INSERT INTO t (a, b) VALUES (...);
-SELECT * FROM t;
-SELECT a, b FROM t;
-UPDATE t SET a = 1;
-DELETE FROM t;
-SELECT * FROM t LIMIT 100;
-```
-
-拒绝：
-
-```sql
-SELECT * FROM t WHERE a = 1;
-UPDATE t SET a = 1 WHERE id = 1;
-DELETE FROM t WHERE id = 1;
-SELECT * FROM t ORDER BY id;
-SELECT * FROM a JOIN b ON a.id = b.id;
-SELECT a, COUNT(*) FROM t GROUP BY a;
-```
-
-原因：
-
-- 拒绝比假执行更安全。
-- `LIMIT` 只有在 parser 解析出非负整数、dispatcher 下推到 `tuple_service::selectRows(..., limit)` 时才算支持。
-- 查询谓词和查询引擎可以后续单独设计。
-
-## 推荐合并策略
-
-1. 先让 `wty` 按 review comment 完成修正。
-2. 然后做一次 compile-only merge rehearsal。
-3. 再补 dispatcher-service 函数映射测试。
-4. 交集稳定后，再决定结构树是否需要正式 read-only service API。
-5. 第一轮合并不要顺手扩大 SQL 支持范围。
-
-## 最终判断
-
-这次集成可行。
-
-最安全的心智模型是：
-
-```text
-wty frontend/parser LEFT JOIN current service
-current service RIGHT JOIN wty frontend/parser
-intersection = 第一轮合并范围
-left-only = 回滚、拒绝或暂缓
-right-only = 暂缓，除非 parser payload 已经完整
-```
-
-按这组 review comment 收口，足够完成第一轮对齐。
-
-下一步真正需要单独决策的是：结构树读取能力是否要成为正式 service API。这个不应该藏在前端/parser PR 里硬加。
+以上可以作为本轮前端 -> parser -> dispatcher -> service 的正式交集。
