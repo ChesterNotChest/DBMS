@@ -567,22 +567,50 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected"};
 
-    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
-        return {false, "WHERE: complex predicates are not supported by SqlDispatcher"};
-    }
-
     QString table = p.payload["tableName"].toString();
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
-    // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
-    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
-        return {false, conditionError};
+    const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
+    if (!hasComplexWhere) {
+        if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+            return {false, conditionError};
+        }
     }
 
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
+
+    const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
+    if (!conditionError.isEmpty()) {
+        return {false, conditionError};
+    }
+
+    TableDmlService dmlService;
+    if (hasComplexWhere) {
+        QueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.currentDatabase = currentDatabase;
+        evalContext.dataRoot = getDataRoot();
+        evalContext.allowSubquery = true;
+
+        const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+        const TableDmlResult r = dmlService.updateRows(currentDatabase,
+                                                       table,
+                                                       TargetTableKind::TableDat,
+                                                       schema,
+                                                       assignMap,
+                                                       conditions,
+                                                       ValidationMode::UserData,
+                                                       &whereAst,
+                                                       &evalContext);
+        if (r.success)
+            return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
+                    r.affectedRowCount};
+        return {false, r.errorMessage};
+    }
 
     auto r = tuple_service::updateRows(table, assignMap, conditions);
     if (r.success)
@@ -595,16 +623,43 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected"};
 
-    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
-        return {false, "WHERE: complex predicates are not supported by SqlDispatcher"};
-    }
-
     QString table = p.payload["tableName"].toString();
-    // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
-    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
-        return {false, conditionError};
+    const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
+    if (!hasComplexWhere) {
+        if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+            return {false, conditionError};
+        }
+    }
+
+    if (hasComplexWhere) {
+        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
+        if (!conditionError.isEmpty()) {
+            return {false, conditionError};
+        }
+
+        QueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.currentDatabase = currentDatabase;
+        evalContext.dataRoot = getDataRoot();
+        evalContext.allowSubquery = true;
+
+        const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+        TableDmlService dmlService;
+        const TableDmlResult r = dmlService.deleteRows(currentDatabase,
+                                                       table,
+                                                       TargetTableKind::TableDat,
+                                                       schema,
+                                                       conditions,
+                                                       ValidationMode::UserData,
+                                                       &whereAst,
+                                                       &evalContext);
+        if (r.success)
+            return {true, {}, QString("%1 row(s) deleted from '%2'").arg(r.affectedRowCount).arg(table),
+                    r.affectedRowCount};
+        return {false, r.errorMessage};
     }
 
     auto r = tuple_service::deleteRows(table, conditions);

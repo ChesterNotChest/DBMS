@@ -251,6 +251,8 @@ private slots:
 
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.columnTypes.size(), 1);
+        QCOMPARE(result.selectResult.columnTypes.first(), tabledef::ColumnType::Int);
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
     }

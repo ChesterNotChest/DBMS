@@ -258,6 +258,59 @@ private slots:
         QVERIFY(!complexWhere.payload.contains(QStringLiteral("conditions")));
     }
 
+    void test_dispatcherUpdateAndDeleteApplyComplexWhere()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_complex_dml_db");
+        const QString updateTable = QStringLiteral("student_update_complex");
+        const QString deleteTable = QStringLiteral("student_delete_complex");
+        ensureDatabase(databaseName);
+        ensureTable(updateTable, baseSchema(updateTable));
+        ensureTable(deleteTable, baseSchema(deleteTable));
+
+        seedRows(updateTable,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                              {QStringLiteral("name"), QStringLiteral("carol")}}),
+                 });
+
+        seedRows(deleteTable,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                              {QStringLiteral("name"), QStringLiteral("carol")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult updateResult = dispatcher.execute(
+            QStringLiteral("UPDATE %1 SET name = 'updated' WHERE id = 1 OR name = 'bob'").arg(updateTable));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 2);
+
+        const SelectRowsResult updatedRows = selectAllRows(updateTable);
+        QVERIFY2(updatedRows.success, qPrintable(updatedRows.errorMessage));
+        QCOMPARE(updatedRows.resultTable.rows.size(), 3);
+        QCOMPARE(updatedRows.resultTable.rows.at(0), QStringList({QStringLiteral("1"), QStringLiteral("updated")}));
+        QCOMPARE(updatedRows.resultTable.rows.at(1), QStringList({QStringLiteral("2"), QStringLiteral("updated")}));
+        QCOMPARE(updatedRows.resultTable.rows.at(2), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
+
+        const SqlExecResult deleteResult = dispatcher.execute(
+            QStringLiteral("DELETE FROM %1 WHERE id = 1 OR name = 'bob'").arg(deleteTable));
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+        QCOMPARE(deleteResult.affectedRows, 2);
+
+        const SelectRowsResult remainingRows = selectAllRows(deleteTable);
+        QVERIFY2(remainingRows.success, qPrintable(remainingRows.errorMessage));
+        QCOMPARE(remainingRows.resultTable.rows.size(), 1);
+        QCOMPARE(remainingRows.resultTable.rows.first(), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
+    }
+
     void test_parseWhereSupportsLogicOperators()
     {
         const sqlparser::ParseResult orResult = sqlparser::parseSql(

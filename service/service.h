@@ -10,6 +10,11 @@
 #include <QString>
 #include <QStringList>
 
+namespace logic {
+struct LogicNode;
+struct LogicEvalContext;
+}
+
 namespace service {
 
 inline QString currentDatabase;
@@ -77,6 +82,7 @@ struct SelectRowsResult
     bool success = false;
     QString errorMessage;
     repo::TableData resultTable;
+    QList<tabledef::ColumnType> columnTypes;
     int affectedRowCount = 0;
 };
 
@@ -118,14 +124,18 @@ public:
                               const tabledef::TableSchema &targetSchema,
                               const QMap<QString, QString> &assignmentMap,
                               const QList<SimpleCondition> &simpleConditions,
-                              ValidationMode validationMode) const;
+                              ValidationMode validationMode,
+                              const logic::LogicNode *complexWhereAst = nullptr,
+                              const logic::LogicEvalContext *evalContext = nullptr) const;
 
     TableDmlResult deleteRows(const QString &targetDatabaseName,
                               const QString &targetTableName,
                               TargetTableKind targetTableKind,
                               const tabledef::TableSchema &targetSchema,
                               const QList<SimpleCondition> &simpleConditions,
-                              ValidationMode validationMode) const;
+                              ValidationMode validationMode,
+                              const logic::LogicNode *complexWhereAst = nullptr,
+                              const logic::LogicEvalContext *evalContext = nullptr) const;
 
 private:
 };

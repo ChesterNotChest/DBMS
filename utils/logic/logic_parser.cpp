@@ -267,7 +267,7 @@ LogicParseResult parsePrimaryExpression(LogicParserState &state, const QString &
         LogicNode node;
         node.type = LogicNodeType::ExistsSubquery;
         node.rawText = subquerySql;
-        node.subquerySql = subquerySql.trimmed();
+        node.subquerySql = subquerySql;
         LogicError outerError;
         if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
             return makeParseError(outerError.message, outerError.position);
@@ -341,7 +341,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
         const QString innerText = setText.trimmed();
         if (innerText.startsWith(QStringLiteral("SELECT"), Qt::CaseInsensitive)) {
             node.type = LogicNodeType::InSubquery;
-            node.subquerySql = innerText;
+            node.subquerySql = setText;
             LogicError outerError;
             if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
                 return makeParseError(outerError.message, outerError.position);
@@ -398,7 +398,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
             node.compareOperator = op;
             node.quantifier = quantifierToken == LogicKeywordType::Any ? LogicQuantifier::Any : LogicQuantifier::All;
             node.children.append(lhs);
-            node.subquerySql = subquerySql.trimmed();
+            node.subquerySql = subquerySql;
             LogicError outerError;
             if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
                 return makeParseError(outerError.message, outerError.position);
@@ -440,7 +440,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
         const QString innerText = setText.trimmed();
         if (innerText.startsWith(QStringLiteral("SELECT"), Qt::CaseInsensitive)) {
             node.type = LogicNodeType::InSubquery;
-            node.subquerySql = innerText;
+            node.subquerySql = setText;
             LogicError outerError;
             if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
                 return makeParseError(outerError.message, outerError.position);

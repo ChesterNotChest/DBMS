@@ -84,6 +84,39 @@ bool rowMatchesConditions(const repo::TableRow &row,
     return true;
 }
 
+logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
+                                       const repo::TableData &table,
+                                       int rowIndex);
+
+bool rowMatchesComplexWhere(const tabledef::TableSchema &schema,
+                            const repo::TableData &table,
+                            int rowIndex,
+                            const logic::LogicNode &whereAst,
+                            const logic::LogicEvalContext &evalContext,
+                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (rowIndex < 0 || rowIndex >= table.rows.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("row index is out of range");
+        }
+        return false;
+    }
+
+    const logic::LogicRowContext rowContext = buildRowContext(schema, table, rowIndex);
+    const logic::LogicEvalResult evalResult = logic::evaluateLogicExpression(whereAst, rowContext, evalContext);
+    if (!evalResult.success) {
+        if (error != nullptr) {
+            *error = evalResult.error.message;
+        }
+        return false;
+    }
+
+    return evalResult.truth == logic::LogicTruthValue::True;
+}
+
 tabledef::ColumnType columnTypeForName(const tabledef::TableSchema &schema, const QString &columnName)
 {
     for (const tabledef::Column &column : schema.columns) {
@@ -2079,7 +2112,9 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                            const tabledef::TableSchema &targetSchema,
                                            const QMap<QString, QString> &assignmentMap,
                                            const QList<SimpleCondition> &simpleConditions,
-                                           ValidationMode validationMode) const
+                                           ValidationMode validationMode,
+                                           const logic::LogicNode *complexWhereAst,
+                                           const logic::LogicEvalContext *evalContext) const
 {
     TableDmlResult result;
 
@@ -2131,7 +2166,22 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     QList<int> matchedRowIndexes;
     for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
         QString matchError;
-        if (!rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError)) {
+        bool includeRow = false;
+        if (complexWhereAst != nullptr) {
+            if (evalContext == nullptr) {
+                result.errorMessage = QStringLiteral("complex WHERE evaluation context is missing");
+                return result;
+            }
+            includeRow = rowMatchesComplexWhere(targetSchema,
+                                                currentTable,
+                                                rowIndex,
+                                                *complexWhereAst,
+                                                *evalContext,
+                                                &matchError);
+        } else {
+            includeRow = rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError);
+        }
+        if (!includeRow) {
             if (!matchError.isEmpty()) {
                 result.errorMessage = matchError;
                 return result;
@@ -2331,7 +2381,9 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
                                            TargetTableKind targetTableKind,
                                            const tabledef::TableSchema &targetSchema,
                                            const QList<SimpleCondition> &simpleConditions,
-                                           ValidationMode validationMode) const
+                                           ValidationMode validationMode,
+                                           const logic::LogicNode *complexWhereAst,
+                                           const logic::LogicEvalContext *evalContext) const
 {
     TableDmlResult result;
 
@@ -2376,7 +2428,22 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     QList<int> matchedRowIndexes;
     for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
         QString matchError;
-        if (!rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError)) {
+        bool includeRow = false;
+        if (complexWhereAst != nullptr) {
+            if (evalContext == nullptr) {
+                result.errorMessage = QStringLiteral("complex WHERE evaluation context is missing");
+                return result;
+            }
+            includeRow = rowMatchesComplexWhere(targetSchema,
+                                                currentTable,
+                                                rowIndex,
+                                                *complexWhereAst,
+                                                *evalContext,
+                                                &matchError);
+        } else {
+            includeRow = rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError);
+        }
+        if (!includeRow) {
             if (!matchError.isEmpty()) {
                 result.errorMessage = matchError;
                 return result;

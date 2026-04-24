@@ -303,6 +303,15 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     const bool selectAll = parsed.payload.value(QStringLiteral("selectAll"), false).toBool();
     const int limit = parsed.payload.value(QStringLiteral("limit"), -1).toInt();
 
+    auto columnTypeForName = [&](const QString &columnName) {
+        for (const tabledef::Column &column : schema.columns) {
+            if (column.name == columnName) {
+                return column.type;
+            }
+        }
+        return tabledef::ColumnType::Varchar;
+    };
+
     SelectRowsResult selectResult;
     selectResult.success = true;
 
@@ -310,6 +319,11 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
         selectResult.resultTable.columns = schema.columns.isEmpty()
                                               ? tableData.columns
                                               : tabledef::schemaColumnNames(schema);
+        if (!schema.columns.isEmpty()) {
+            for (const tabledef::Column &column : schema.columns) {
+                selectResult.columnTypes.append(column.type);
+            }
+        }
     } else {
         if (projection.isEmpty()) {
             result.success = false;
@@ -318,6 +332,9 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
             return result;
         }
         selectResult.resultTable.columns = projection;
+        for (const QString &columnName : projection) {
+            selectResult.columnTypes.append(columnTypeForName(columnName));
+        }
     }
 
     const bool useSimpleConditions = !hasWhereAst

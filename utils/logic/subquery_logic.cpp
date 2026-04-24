@@ -83,12 +83,16 @@ QList<setdef::SetValue> normalizeSelectResultToSet(const service::SelectRowsResu
         return values;
     }
 
+    const tabledef::ColumnType valueType = result.columnTypes.isEmpty()
+                                               ? tabledef::ColumnType::Varchar
+                                               : result.columnTypes.first();
+
     for (const repo::TableRow &row : result.resultTable.rows) {
         if (row.isEmpty()) {
-            values.append(setdef::SetValue{});
+            values.append(setdef::SetValue{QString(), valueType, true});
             continue;
         }
-        values.append(setdef::SetValue{row.first(), tabledef::ColumnType::Varchar, row.first().isEmpty()});
+        values.append(setdef::SetValue{row.first(), valueType, row.first().isEmpty()});
     }
     return values;
 }
