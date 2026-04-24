@@ -7,12 +7,8 @@
 namespace logic {
 
 namespace {
-
-const LogicToken &peekToken(const LogicParserState &state);
-bool isAtEnd(const LogicParserState &state);
-LogicParseResult makeParseError(const QString &message, int position);
 QString captureParenthesizedText(const QString &expressionText, LogicParserState &state);
-QString captureSubquerySql(const QString &expressionText, LogicParserState &state);
+QString captureSubquerySqlTextInternal(const QString &expressionText, LogicParserState &state);
 
 bool isComparisonOperatorToken(const LogicToken &token)
 {
@@ -263,7 +259,7 @@ LogicParseResult parsePrimaryExpression(LogicParserState &state, const QString &
         if (isAtEnd(state) || peekToken(state).type != LogicTokenType::LeftParen) {
             return makeParseError(QStringLiteral("EXISTS requires subquery parentheses"), token.position);
         }
-        const QString subquerySql = captureSubquerySql(expressionText, state);
+        const QString subquerySql = captureSubquerySqlTextInternal(expressionText, state);
         if (subquerySql.isEmpty()) {
             return makeParseError(QStringLiteral("EXISTS: invalid subquery"), token.position);
         }
@@ -392,7 +388,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
             if (isAtEnd(state) || peekToken(state).type != LogicTokenType::LeftParen) {
                 return makeParseError(QStringLiteral("quantified comparison requires subquery parentheses"), token.position);
             }
-            const QString subquerySql = captureSubquerySql(expressionText, state);
+            const QString subquerySql = captureSubquerySqlTextInternal(expressionText, state);
             if (subquerySql.isEmpty()) {
                 return makeParseError(QStringLiteral("quantified comparison: invalid subquery"), token.position);
             }
@@ -559,6 +555,21 @@ LogicParseResult parseExpression(LogicParserState &state, const QString &express
     return parseOrExpression(state, expressionText);
 }
 
+QString captureSubquerySqlTextInternal(const QString &expressionText, LogicParserState &state)
+{
+    const int startIndex = state.index;
+    const QString captured = captureParenthesizedText(expressionText, state);
+    if (captured.isEmpty()) {
+        return {};
+    }
+    const QString trimmed = captured.trimmed();
+    if (!trimmed.startsWith(QStringLiteral("SELECT"), Qt::CaseInsensitive)) {
+        state.index = startIndex;
+        return {};
+    }
+    return captured;
+}
+
 } // namespace
 
 const LogicToken &peekToken(const LogicParserState &state)
@@ -596,21 +607,6 @@ LogicParseResult makeParseError(const QString &message, int position)
     result.error.message = message;
     result.error.position = position;
     return result;
-}
-
-QString captureSubquerySql(const QString &expressionText, LogicParserState &state)
-{
-    const int startIndex = state.index;
-    const QString captured = captureParenthesizedText(expressionText, state);
-    if (captured.isEmpty()) {
-        return {};
-    }
-    const QString trimmed = captured.trimmed();
-    if (!trimmed.startsWith(QStringLiteral("SELECT"), Qt::CaseInsensitive)) {
-        state.index = startIndex;
-        return {};
-    }
-    return captured;
 }
 
 LogicParseResult parseLogicTokens(const QString &expressionText, const QList<LogicToken> &tokens)

@@ -1,4 +1,5 @@
 #include "simple_logic.h"
+#include "logic_evaluator.h"
 
 namespace logic {
 

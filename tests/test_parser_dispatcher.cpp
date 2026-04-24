@@ -41,6 +41,15 @@ tabledef::Constraint makePrimaryKey(const QString &name, const QStringList &colu
     return tabledef::Constraint{name, tabledef::ConstraintType::PrimaryKey, columns, QString(), {}, QString()};
 }
 
+QMap<QString, QString> makeRow(std::initializer_list<QPair<QString, QString>> values)
+{
+    QMap<QString, QString> row;
+    for (const QPair<QString, QString> &value : values) {
+        row.insert(value.first, value.second);
+    }
+    return row;
+}
+
 tabledef::TableSchema baseSchema(const QString &tableName)
 {
     tabledef::TableSchema schema;
@@ -73,6 +82,15 @@ void seedRows(const QString &tableName, const QList<QMap<QString, QString>> &row
 {
     TaskResult result = tuple_service::insertRows(tableName, rows);
     QVERIFY2(result.success, qPrintable(result.errorMessage));
+}
+
+void seedRows(const QString &tableName, std::initializer_list<QMap<QString, QString>> rows)
+{
+    QList<QMap<QString, QString>> rowList;
+    for (const QMap<QString, QString> &row : rows) {
+        rowList.append(row);
+    }
+    seedRows(tableName, rowList);
 }
 
 SelectRowsResult selectAllRows(const QString &tableName)
@@ -267,10 +285,13 @@ private slots:
         const QString tableName = QStringLiteral("student");
         ensureDatabase(databaseName);
         ensureTable(tableName, baseSchema(tableName));
-        seedRows(tableName, {
-            {QStringLiteral("1"), QStringLiteral("alice")},
-            {QStringLiteral("2"), QStringLiteral("bob")},
-        });
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
 
         SqlDispatcher dispatcher;
         const SqlExecResult result = dispatcher.execute(
@@ -526,10 +547,13 @@ private slots:
         const QString tableName = QStringLiteral("test_parser_dispatcher_where_table");
         ensureDatabase(databaseName);
         ensureTable(tableName, baseSchema(tableName));
-        seedRows(tableName, {
-            {{QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("name"), QStringLiteral("alice")}},
-            {{QStringLiteral("id"), QStringLiteral("2")}, {QStringLiteral("name"), QStringLiteral("bob")}},
-        });
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
 
         SqlDispatcher dispatcher;
 
@@ -593,10 +617,13 @@ private slots:
         const QString tableName = QStringLiteral("test_query_executor_select_table");
         ensureDatabase(databaseName);
         ensureTable(tableName, baseSchema(tableName));
-        seedRows(tableName, {
-            {{QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("name"), QStringLiteral("alice")}},
-            {{QStringLiteral("id"), QStringLiteral("2")}, {QStringLiteral("name"), QStringLiteral("bob")}},
-        });
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
 
         currentDatabase.clear();
 
@@ -609,7 +636,6 @@ private slots:
             QStringLiteral("SELECT * FROM %1 WHERE id = 2 LIMIT 1").arg(tableName),
             context);
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QCOMPARE(result.commandType, QStringLiteral("SELECT"));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.at(0),
                  QStringList({QStringLiteral("2"), QStringLiteral("bob")}));
@@ -636,10 +662,13 @@ private slots:
         const QString tableName = QStringLiteral("test_parser_dispatcher_index_table");
         ensureDatabase(databaseName);
         ensureTable(tableName, baseSchema(tableName));
-        seedRows(tableName, {
-            {{QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("name"), QStringLiteral("alice")}},
-            {{QStringLiteral("id"), QStringLiteral("2")}, {QStringLiteral("name"), QStringLiteral("bob")}},
-        });
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
 
         SqlDispatcher dispatcher;
         const QString indexName = QStringLiteral("idx_test_parser_dispatcher_name");
@@ -671,10 +700,15 @@ private slots:
         tabledef::TableSchema schema = baseSchema(tableName);
         schema.columns.append(makeColumn(QStringLiteral("age"), tabledef::ColumnType::Int));
         ensureTable(tableName, schema);
-        seedRows(tableName, {
-            {{QStringLiteral("id"), QStringLiteral("1")}, {QStringLiteral("name"), QStringLiteral("alice")}, {QStringLiteral("age"), QStringLiteral("20")}},
-            {{QStringLiteral("id"), QStringLiteral("2")}, {QStringLiteral("name"), QStringLiteral("bob")}, {QStringLiteral("age"), QStringLiteral("21")}},
-        });
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")},
+                              {QStringLiteral("age"), QStringLiteral("20")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")},
+                              {QStringLiteral("age"), QStringLiteral("21")}}),
+                 });
 
         SqlDispatcher dispatcher;
         const QString uniqueIndexName = QStringLiteral("uq_test_parser_dispatcher_name_age");

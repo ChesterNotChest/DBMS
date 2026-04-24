@@ -6,6 +6,7 @@
 namespace service {
 struct QueryExecuteContext;
 struct QueryExecuteResult;
+struct SelectRowsResult;
 class QueryExecutor;
 } // namespace service
 

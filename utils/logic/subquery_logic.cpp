@@ -1,6 +1,7 @@
 #include "subquery_logic.h"
 
 #include "logic_evaluator.h"
+#include "set_logic.h"
 #include "../../controller/nest_query.h"
 
 #include <algorithm>
