@@ -1,6 +1,7 @@
 #include "../service/service.h"
 #include "../controller/sql_dispatcher.h"
 #include "../controller/nest_query.h"
+#include "../utils/logic/logic.h"
 #include "../utils/sql_parser/sql_parser.h"
 
 #include <QDir>
@@ -199,6 +200,8 @@ private slots:
         QCOMPARE(limited.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("student"));
         QCOMPARE(limited.payload.value(QStringLiteral("projection")).toStringList(), QStringList({QStringLiteral("id")}));
         QCOMPARE(limited.payload.value(QStringLiteral("limit")).toInt(), 3);
+        QCOMPARE(limited.payload.value(QStringLiteral("hasComplexWhere")).toBool(), false);
+        QVERIFY(limited.payload.contains(QStringLiteral("whereAst")));
 
         const QVariantList conditions = limited.payload.value(QStringLiteral("conditions")).toList();
         QCOMPARE(conditions.size(), 2);
@@ -230,28 +233,55 @@ private slots:
         QCOMPARE(deleted.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("student"));
         QCOMPARE(deleted.payload.value(QStringLiteral("conditions")).toList().size(), 1);
 
-        const sqlparser::ParseResult unsupported = sqlparser::parseSql(
+        const sqlparser::ParseResult complexWhere = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE id > 1"));
-        QVERIFY(!unsupported.success);
-        QVERIFY(unsupported.errorMessage.contains(QStringLiteral("only supports '='")));
+        QVERIFY2(complexWhere.success, qPrintable(complexWhere.errorMessage));
+        QCOMPARE(complexWhere.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
+        QVERIFY(!complexWhere.payload.contains(QStringLiteral("conditions")));
     }
 
-    void test_parseWhereRejectsUnsupportedForms()
+    void test_parseWhereSupportsLogicOperators()
     {
         const sqlparser::ParseResult orResult = sqlparser::parseSql(
             QStringLiteral("SELECT * FROM student WHERE id = 1 OR name = 'alice';"));
-        QVERIFY(!orResult.success);
-        QVERIFY(orResult.errorMessage.contains(QStringLiteral("AND-combined")));
+        QVERIFY2(orResult.success, qPrintable(orResult.errorMessage));
+        QCOMPARE(orResult.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
+        const logic::LogicNode orAst = orResult.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+        QCOMPARE(orAst.type, logic::LogicNodeType::Binary);
+        QCOMPARE(orAst.binaryOperator, logic::LogicBinaryOperator::Or);
 
         const sqlparser::ParseResult trailingAndResult = sqlparser::parseSql(
             QStringLiteral("UPDATE student SET name = 'alice' WHERE id = 1 AND;"));
         QVERIFY(!trailingAndResult.success);
-        QVERIFY(trailingAndResult.errorMessage.contains(QStringLiteral("expected condition after AND")));
+        QVERIFY(trailingAndResult.errorMessage.contains(QStringLiteral("expected")));
 
         const sqlparser::ParseResult missingValueResult = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE id = ;"));
         QVERIFY(!missingValueResult.success);
-        QVERIFY(missingValueResult.errorMessage.contains(QStringLiteral("expected literal value")));
+        QVERIFY(missingValueResult.errorMessage.contains(QStringLiteral("expected")));
+    }
+
+    void test_dispatchSelectAppliesComplexWhere()
+    {
+        const QString databaseName = QStringLiteral("test_dispatch_select_db");
+        const QString tableName = QStringLiteral("student");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName, {
+            {QStringLiteral("1"), QStringLiteral("alice")},
+            {QStringLiteral("2"), QStringLiteral("bob")},
+        });
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT id FROM student WHERE id = 1 OR name = 'bob'"));
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns,
+                 QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("2"));
     }
 
     void test_parseInsertWithoutColumnListProducesSingleRowPayload()

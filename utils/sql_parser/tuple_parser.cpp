@@ -5,6 +5,7 @@
  * 支持：SELECT, INSERT, UPDATE, DELETE
  */
 #include "sql_parser.h"
+#include "../logic/logic.h"
 #include <QDebug>
 
 namespace sqlparser {
@@ -69,6 +70,120 @@ static bool isLiteralToken(TokenType type)
            || type == TokenType::STRING_LIT
            || type == TokenType::IDENTIFIER
            || type == TokenType::NULL_VAL;
+}
+
+static QString sliceClauseText(const QString &sql,
+                               const QVector<SqlToken> &tokens,
+                               int from,
+                               int to)
+{
+    if (from < 0 || to < from || from >= tokens.size() || to >= tokens.size()) {
+        return {};
+    }
+
+    const int startPos = tokens[from].position;
+    const int tokenLength = tokens[to].length > 0 ? tokens[to].length : tokens[to].lexeme.size();
+    const int endPos = tokens[to].position + tokenLength;
+    if (startPos < 0 || endPos < startPos || endPos > sql.size()) {
+        return {};
+    }
+    return sql.mid(startPos, endPos - startPos);
+}
+
+static bool isSimpleWhereNode(const logic::LogicNode &node, QVariantList *conditions)
+{
+    if (node.type == logic::LogicNodeType::Binary
+        && node.binaryOperator == logic::LogicBinaryOperator::And) {
+        return isSimpleWhereNode(node.children.value(0), conditions)
+               && isSimpleWhereNode(node.children.value(1), conditions);
+    }
+
+    if (node.type != logic::LogicNodeType::Comparison
+        || node.compareOperator != logic::LogicCompareOperator::Eq
+        || node.children.size() != 2) {
+        return false;
+    }
+
+    const logic::LogicNode &lhs = node.children.at(0);
+    const logic::LogicNode &rhs = node.children.at(1);
+    if (lhs.type != logic::LogicNodeType::ColumnRef
+        || lhs.reference.scope != logic::LogicReferenceScope::Local) {
+        return false;
+    }
+    if (rhs.type != logic::LogicNodeType::Literal || rhs.literalIsNull) {
+        return false;
+    }
+
+    QVariantMap condition;
+    condition.insert(QStringLiteral("columnName"), lhs.reference.name);
+    condition.insert(QStringLiteral("value"), rhs.literalValue);
+    if (conditions != nullptr) {
+        conditions->append(condition);
+    }
+    return true;
+}
+
+static bool extractWherePayload(const QString &sql,
+                                const QVector<SqlToken> &tokens,
+                                int whereIdx,
+                                int limitIdx,
+                                QVariantMap *payload,
+                                QString *error)
+{
+    if (payload != nullptr) {
+        payload->remove(QStringLiteral("conditions"));
+        payload->remove(QStringLiteral("whereAst"));
+        payload->remove(QStringLiteral("hasComplexWhere"));
+    }
+
+    if (whereIdx < 0) {
+        if (payload != nullptr) {
+            payload->insert(QStringLiteral("hasComplexWhere"), false);
+        }
+        return true;
+    }
+
+    const int whereStart = whereIdx + 1;
+    const int whereEnd = limitIdx >= 0 ? limitIdx - 1 : lastMeaningfulTokenIndex(tokens);
+    const QString whereText = sliceClauseText(sql, tokens, whereStart, whereEnd);
+    if (whereText.trimmed().isEmpty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("WHERE: expected condition");
+        }
+        return false;
+    }
+
+    const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(whereText);
+    if (!tokenized.success) {
+        if (error != nullptr) {
+            *error = tokenized.error.message;
+        }
+        return false;
+    }
+
+    const logic::LogicParseResult parsed = logic::parseLogicTokens(whereText, tokenized.tokens);
+    if (!parsed.success) {
+        if (error != nullptr) {
+            *error = parsed.error.message;
+        }
+        return false;
+    }
+
+    QVariantList conditions;
+    const bool simpleWhere = isSimpleWhereNode(parsed.root, &conditions);
+    if (payload != nullptr) {
+        payload->insert(QStringLiteral("whereAst"), QVariant::fromValue(parsed.root));
+        payload->insert(QStringLiteral("hasComplexWhere"), !simpleWhere);
+        if (simpleWhere && !conditions.isEmpty()) {
+            payload->insert(QStringLiteral("conditions"), conditions);
+        }
+    }
+    return true;
+}
+
+static bool projectionIsSelectAll(const QStringList &projection)
+{
+    return projection.size() == 1 && projection.first() == QStringLiteral("*");
 }
 
 static bool parseSimpleConditions(const QVector<SqlToken> &tokens,
@@ -167,10 +282,10 @@ static bool parseSelectLimit(const QVector<SqlToken>& tokens,
 // ============================================================
 //  parseTupleSql
 // ============================================================
-ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& tokens) {
+ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (tokens.isEmpty()) return {false, "Empty input", "UNKNOWN", {}};
 
-    auto [cmdType, payload] = classifySql("", tokens);
+    auto [cmdType, payload] = classifySql(sql, tokens);
 
     // ── SELECT ──
     if (cmdType == "SELECT") {
@@ -211,13 +326,9 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
             return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
         }
 
-        QVariantList conditions;
-        if (whereIdx >= 0) {
-            QString whereError;
-            const int whereEnd = limitIdx >= 0 ? limitIdx - 1 : lastMeaningfulTokenIndex(tokens);
-            if (!parseSimpleConditions(tokens, whereIdx + 1, whereEnd, &conditions, &whereError)) {
-                return {false, whereError, cmdType, {}};
-            }
+        QString whereError;
+        if (!extractWherePayload(sql, tokens, whereIdx, limitIdx, &payload, &whereError)) {
+            return {false, whereError, cmdType, {}};
         }
 
         int limit = -1;
@@ -227,12 +338,13 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
             return {false, limitError, cmdType, {}};
         }
 
+        payload["selectAll"] = projectionIsSelectAll(projection);
+        if (payload.value(QStringLiteral("selectAll")).toBool()) {
+            projection.clear();
+        }
         payload["projection"] = projection;
         payload["tableName"] = table;
         payload["limit"] = limit;
-        if (!conditions.isEmpty()) {
-            payload["conditions"] = conditions;
-        }
 
         return {true, "", cmdType, payload};
     }
@@ -319,7 +431,6 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
     if (cmdType == "UPDATE") {
         QString table;
         QVariantMap assignments;
-        QVariantList conditions;
 
         int setIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -362,16 +473,13 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
 
         if (whereIdx >= 0) {
             QString whereError;
-            if (!parseSimpleConditions(tokens, whereIdx + 1, lastMeaningfulTokenIndex(tokens), &conditions, &whereError)) {
+            if (!extractWherePayload(sql, tokens, whereIdx, -1, &payload, &whereError)) {
                 return {false, whereError, cmdType, {}};
             }
         }
 
         payload["tableName"] = table;
         payload["assignments"] = assignments;
-        if (!conditions.isEmpty()) {
-            payload["conditions"] = conditions;
-        }
 
         return {true, "", cmdType, payload};
     }
@@ -379,7 +487,6 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
     // ── DELETE ──
     if (cmdType == "DELETE") {
         QString table;
-        QVariantList conditions;
 
         int fromIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -402,15 +509,12 @@ ParseResult parseTupleSql(const QString& /*sql*/, const QVector<SqlToken>& token
                 }
             }
             QString whereError;
-            if (!parseSimpleConditions(tokens, whereIdx + 1, lastMeaningfulTokenIndex(tokens), &conditions, &whereError)) {
+            if (!extractWherePayload(sql, tokens, whereIdx, -1, &payload, &whereError)) {
                 return {false, whereError, cmdType, {}};
             }
         }
 
         payload["tableName"] = table;
-        if (!conditions.isEmpty()) {
-            payload["conditions"] = conditions;
-        }
 
         return {true, "", cmdType, payload};
     }

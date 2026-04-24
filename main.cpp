@@ -18,6 +18,14 @@ int main(int argc, char *argv[])
     qDebug() << "Parser/dispatcher tests:" << (parserDispatcherTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << parserDispatcherTestResult << ")";
 
+    const int logicTestResult = service_tests::runLogicTests();
+    qDebug() << "Logic tests:" << (logicTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << logicTestResult << ")";
+
+    const int queryExecutorTestResult = service_tests::runQueryExecutorTests();
+    qDebug() << "Query executor tests:" << (queryExecutorTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << queryExecutorTestResult << ")";
+
     const int tableTestResult = service_tests::runTableServiceTests();
     qDebug() << "Table service tests:" << (tableTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tableTestResult << ")";
@@ -28,6 +36,8 @@ int main(int argc, char *argv[])
 
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
                                   + (parserDispatcherTestResult == 0 ? 0 : 1)
+                                  + (logicTestResult == 0 ? 0 : 1)
+                                  + (queryExecutorTestResult == 0 ? 0 : 1)
                                   + (tableTestResult == 0 ? 0 : 1)
                                   + (tupleTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";

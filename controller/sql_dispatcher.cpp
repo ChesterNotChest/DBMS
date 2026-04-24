@@ -4,6 +4,7 @@
  * 所有业务操作都走 service 层，不直接操作 repo 或文件。
  */
 #include "sql_dispatcher.h"
+#include "nest_query.h"
 #include "../utils/service_common/service_common.h"
 #include <QDebug>
 
@@ -477,6 +478,29 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected. Use USE database_name;"};
 
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+        QueryExecutor executor;
+        const QueryExecuteResult queryResult = executor.executeParsed(p,
+                                                                     QueryExecuteContext{currentDatabase,
+                                                                                         getDataRoot()});
+        if (queryResult.success) {
+            return {true,
+                    {},
+                    formatSelectResult(queryResult.selectResult),
+                    queryResult.affectedRows,
+                    queryResult.selectResult,
+                    p.commandType,
+                    p.payload};
+        }
+        return {false,
+                queryResult.errorMessage,
+                queryResult.errorMessage,
+                queryResult.affectedRows,
+                queryResult.selectResult,
+                p.commandType,
+                p.payload};
+    }
+
     QString table = p.payload["tableName"].toString();
     QStringList projection = p.payload["projection"].toStringList();
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
@@ -543,6 +567,10 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected"};
 
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+        return {false, "WHERE: complex predicates are not supported by SqlDispatcher"};
+    }
+
     QString table = p.payload["tableName"].toString();
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
     // WHERE 尚未完整实现，暂不传递条件
@@ -566,6 +594,10 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
 SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected"};
+
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+        return {false, "WHERE: complex predicates are not supported by SqlDispatcher"};
+    }
 
     QString table = p.payload["tableName"].toString();
     // WHERE 尚未完整实现，暂不传递条件

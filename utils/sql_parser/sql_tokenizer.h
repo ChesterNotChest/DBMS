@@ -49,12 +49,16 @@ enum class TokenType {
 struct SqlToken {
     TokenType type;
     QString    lexeme;      // 原始文本
+    int       position;     // 在原始 SQL 中的绝对字符偏移
+    int       length;       // 原始 SQL 中占用的字符数
     int       line;
     int       column;
     SqlToken(TokenType t = TokenType::UNKNOWN,
              const QString& lex = {},
+             int p = -1,
+             int len = 0,
              int l = 0, int c = 0)
-        : type(t), lexeme(lex), line(l), column(c) {}
+        : type(t), lexeme(lex), position(p), length(len), line(l), column(c) {}
 };
 
 /**
