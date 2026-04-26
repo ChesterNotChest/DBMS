@@ -229,6 +229,251 @@ private slots:
         QVERIFY2(allFalseResult.success, qPrintable(allFalseResult.error.message));
         QCOMPARE(allFalseResult.truth, logic::LogicTruthValue::False);
     }
+
+    void test_parseAndNotEvaluation()
+    {
+        const QString expr = QStringLiteral("a = 1 AND b = 2");
+
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::Binary);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        row.cellsByName.insert(QStringLiteral("b"),
+                              logic::LogicCellValue{QStringLiteral("2"), tabledef::ColumnType::Int, false});
+
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("b"),
+                              logic::LogicCellValue{QStringLiteral("3"), tabledef::ColumnType::Int, false});
+        const auto res2 = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res2.success, qPrintable(res2.error.message));
+        QCOMPARE(res2.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_notOrExpression()
+    {
+        const QString expr = QStringLiteral("NOT (a = 1 OR b = 2)");
+
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::Unary);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("0"), tabledef::ColumnType::Int, false});
+        row.cellsByName.insert(QStringLiteral("b"),
+                              logic::LogicCellValue{QStringLiteral("0"), tabledef::ColumnType::Int, false});
+
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        const auto res2 = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res2.success, qPrintable(res2.error.message));
+        QCOMPARE(res2.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_isNullAndIsNotNull()
+    {
+        const QString isNullExpr = QStringLiteral("a IS NULL");
+        auto tokenized = logic::tokenizeLogicExpression(isNullExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        auto parsed = logic::parseLogicTokens(isNullExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QString(), tabledef::ColumnType::Varchar, true});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        const QString isNotNullExpr = QStringLiteral("a IS NOT NULL");
+        tokenized = logic::tokenizeLogicExpression(isNotNullExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        parsed = logic::parseLogicTokens(isNotNullExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("x"), tabledef::ColumnType::Varchar, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        tokenized = logic::tokenizeLogicExpression(isNullExpr);
+        parsed = logic::parseLogicTokens(isNullExpr, tokenized.tokens);
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("x"), tabledef::ColumnType::Varchar, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_inListEmptyAndNullRules()
+    {
+        const QString expr = QStringLiteral("id IN (1, 2, NULL)");
+        auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::InList);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("3"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+
+        const QString emptyExpr = QStringLiteral("id IN ()");
+        tokenized = logic::tokenizeLogicExpression(emptyExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        parsed = logic::parseLogicTokens(emptyExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        const QString notEmptyExpr = QStringLiteral("id NOT IN ()");
+        tokenized = logic::tokenizeLogicExpression(notEmptyExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        parsed = logic::parseLogicTokens(notEmptyExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+    }
+
+    void test_quantifiedEmptySubquerySemantics()
+    {
+        const QString anyExpr = QStringLiteral("id = ANY (SELECT score FROM scores)");
+        auto tokenized = logic::tokenizeLogicExpression(anyExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        auto parsed = logic::parseLogicTokens(anyExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
+
+        repo::TableData emptyTable;
+        emptyTable.columns = {QStringLiteral("score")};
+        FixedSubqueryExecutor executor(emptyTable, {tabledef::ColumnType::Int});
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, evalContext);
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        const QString allExpr = QStringLiteral("id > ALL (SELECT score FROM scores)");
+        tokenized = logic::tokenizeLogicExpression(allExpr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        parsed = logic::parseLogicTokens(allExpr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
+
+        res = logic::evaluateLogicExpression(parsed.root, row, evalContext);
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+    }
+
+    void test_threeValueLogicPropagation()
+    {
+        const QString expr = QStringLiteral("a = 1 AND b = NULL");
+        auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        row.cellsByName.insert(QStringLiteral("b"),
+                              logic::LogicCellValue{QString(), tabledef::ColumnType::Int, true});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+
+        const QString exprOr = QStringLiteral("a = 2 OR b = NULL");
+        tokenized = logic::tokenizeLogicExpression(exprOr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        parsed = logic::parseLogicTokens(exprOr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("2"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("a"),
+                              logic::LogicCellValue{QStringLiteral("3"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+    }
+
+    void test_tokenizerPopulatesFieldsAndKeywordTypes()
+    {
+        const QString expr = QStringLiteral("a AND outer.id IS NULL");
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        bool sawAnd = false;
+        bool sawIs = false;
+        bool sawNull = false;
+        for (const logic::LogicToken &token : tokenized.tokens) {
+            if (token.type == logic::LogicTokenType::EndOfInput) break;
+            QVERIFY(token.position >= 0);
+            QVERIFY(!token.rawText.isNull());
+            if (token.type == logic::LogicTokenType::Keyword) {
+                if (token.keywordType == logic::LogicKeywordType::And) sawAnd = true;
+                if (token.keywordType == logic::LogicKeywordType::Is) sawIs = true;
+                if (token.keywordType == logic::LogicKeywordType::Null) sawNull = true;
+            }
+        }
+        QVERIFY(sawAnd);
+        QVERIFY(sawIs);
+        QVERIFY(sawNull);
+    }
+
+    void test_captureSubqueryWithNestedParentheses()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT (id) FROM child WHERE child.parent_id = outer.id)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
+        QVERIFY(parsed.root.subquerySql.contains(QStringLiteral("(id)")));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+    }
 };
 
 int service_tests::runLogicTests()
