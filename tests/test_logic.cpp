@@ -50,6 +50,31 @@ private:
     QueryExecuteResult m_result;
 };
 
+class FakeQueryExecutor : public service::QueryExecutor
+{
+public:
+    explicit FakeQueryExecutor(const QueryExecuteResult &res)
+        : m_res(res)
+    {
+    }
+
+    QueryExecuteResult executeSelectSql(const QString &,
+                                        const QueryExecuteContext &) override
+    {
+        return m_res;
+    }
+
+    QueryExecuteResult executeCorrelatedSelect(const QString &,
+                                               const logic::CorrelationBindings &,
+                                               const QueryExecuteContext &) override
+    {
+        return m_res;
+    }
+
+private:
+    QueryExecuteResult m_res;
+};
+
 } // namespace
 
 class LogicTest : public QObject
@@ -473,6 +498,293 @@ private slots:
         QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
         QVERIFY(parsed.root.subquerySql.contains(QStringLiteral("(id)")));
         QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+    }
+
+    void test_notInLiteralListNegation()
+    {
+        const QString expr = QStringLiteral("id NOT IN (1, 2)");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::InList);
+        QVERIFY(parsed.root.negated);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        row.cellsByName.insert(QStringLiteral("id"),
+                              logic::LogicCellValue{QStringLiteral("3"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+    }
+
+    void test_missingColumnComparison()
+    {
+        const QString expr = QStringLiteral("no_such = 1");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicRowContext row; // empty context
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY(!res.success);
+        QVERIFY(res.error.message.contains(QStringLiteral("missing column")) || res.error.message.contains(QStringLiteral("missing column 'no_such'")));
+    }
+
+    void test_inSubqueryRejectsMultiColumnResult()
+    {
+        const QString expr = QStringLiteral("id IN (SELECT a, b FROM t)");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::InSubquery);
+
+        repo::TableData multi;
+        multi.columns = {QStringLiteral("a"), QStringLiteral("b")};
+        multi.rows = {{QStringLiteral("1"), QStringLiteral("2")}};
+
+        FixedSubqueryExecutor executor(multi, {tabledef::ColumnType::Int, tabledef::ColumnType::Int});
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("id"), logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, evalContext);
+        QVERIFY(!res.success);
+        QVERIFY(res.error.message.contains(QStringLiteral("subquery must return a single column")));
+    }
+
+    void test_normalizeSelectResultToSet_handlesEmptyRowAsNull()
+    {
+        service::SelectRowsResult selectRes;
+        selectRes.success = true;
+        selectRes.resultTable.columns = {QStringLiteral("score")};
+        selectRes.resultTable.rows.append(QStringList()); // empty row
+
+        const QList<setdef::SetValue> values = logic::normalizeSelectResultToSet(selectRes);
+        QCOMPARE(values.size(), 1);
+        QCOMPARE(values.first().isNull, true);
+    }
+
+    void test_stringLiteralEscaping()
+    {
+        const QString expr = QStringLiteral("name = 'O''Reilly'");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("name"), logic::LogicCellValue{QStringLiteral("O'Reilly"), tabledef::ColumnType::Varchar, false});
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+    }
+
+    void test_parseCorrelatedReferenceErrorPosition()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY(!parsed.success);
+        QVERIFY(parsed.error.position >= 0);
+    }
+
+    void test_existsSubqueryWithoutExecutorReturnsError()
+    {
+        const QString expr = QStringLiteral("EXISTS (SELECT id FROM t)");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicEvalContext evalContext; // subqueryExecutor == nullptr
+        const auto res = logic::evaluateExistsSubqueryNode(parsed.root, makeOuterRowContext(), evalContext);
+        QVERIFY(!res.success);
+        QVERIFY(res.error.message.contains(QStringLiteral("subquery executor is not configured")));
+    }
+
+    void test_logicSubqueryExecutorAdapter_forwardsCalls()
+    {
+        QueryExecuteResult expected;
+        expected.success = true;
+        expected.selectResult.success = true;
+        expected.selectResult.resultTable.columns = {QStringLiteral("c")};
+        expected.selectResult.resultTable.rows = {{QStringLiteral("1")}};
+
+        FakeQueryExecutor executor(expected);
+        logic::LogicSubqueryExecutorAdapter adapter(&executor);
+
+        QueryExecuteContext ctx;
+        const QueryExecuteResult r1 = adapter.executeSelectSql(QStringLiteral("SELECT 1"), ctx);
+        QVERIFY2(r1.success, qPrintable(r1.errorMessage));
+        QCOMPARE(r1.selectResult.resultTable.rows.size(), 1);
+
+        logic::CorrelationBindings bindings;
+        const QueryExecuteResult r2 = adapter.executeCorrelatedSelect(QStringLiteral("SELECT 1"), bindings, ctx);
+        QVERIFY2(r2.success, qPrintable(r2.errorMessage));
+        QCOMPARE(r2.selectResult.resultTable.rows.size(), 1);
+    }
+
+    void test_logicSubqueryExecutorAdapter_nullExecutorReturnsDefault()
+    {
+        logic::LogicSubqueryExecutorAdapter adapter(nullptr);
+        QueryExecuteContext ctx;
+        const QueryExecuteResult r1 = adapter.executeSelectSql(QStringLiteral("SELECT 1"), ctx);
+        QVERIFY(!r1.success);
+        const QueryExecuteResult r2 = adapter.executeCorrelatedSelect(QStringLiteral("SELECT 1"), {}, ctx);
+        QVERIFY(!r2.success);
+    }
+
+    void test_localeUnicodeComparison_matchesQStringLocaleAwareCompare()
+    {
+        const QString s1 = QString::fromUtf8("straße");
+        const QString expr = QStringLiteral("name = 'strasse'");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("name"), logic::LogicCellValue{s1, tabledef::ColumnType::Varchar, false});
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        const int cmp = QString::localeAwareCompare(s1, QStringLiteral("strasse"));
+        const logic::LogicTruthValue expected = (cmp == 0) ? logic::LogicTruthValue::True : logic::LogicTruthValue::False;
+        QCOMPARE(res.truth, expected);
+    }
+
+    void test_extremeIntegerPrecision()
+    {
+        const QString expr = QStringLiteral("a = 9007199254740992");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"), logic::LogicCellValue{QStringLiteral("9007199254740993"), tabledef::ColumnType::Int, false});
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        bool ok1 = false, ok2 = false;
+        const double left = QStringLiteral("9007199254740993").toDouble(&ok1);
+        const double right = QStringLiteral("9007199254740992").toDouble(&ok2);
+        QVERIFY(ok1 && ok2);
+        const logic::LogicTruthValue expected = (left == right) ? logic::LogicTruthValue::True : logic::LogicTruthValue::False;
+        QCOMPARE(res.truth, expected);
+    }
+
+    void test_numericParsingFailureUnknown()
+    {
+        const QString expr = QStringLiteral("a = 123.45");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("a"), logic::LogicCellValue{QStringLiteral("not_a_number"), tabledef::ColumnType::Int, false});
+        const auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+    }
+
+    void test_errorMessagesAndPositions()
+    {
+        // Correlated prefix error
+        {
+            const QString expr = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
+            const auto tokenized = logic::tokenizeLogicExpression(expr);
+            QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+            const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+            QVERIFY(!parsed.success);
+            QCOMPARE(parsed.error.message, QStringLiteral("only outer.xxx is allowed in correlated subqueries"));
+            const int start = expr.indexOf('(');
+            const int end = expr.lastIndexOf(')');
+            const QString sub = expr.mid(start + 1, end - start - 1);
+            const int expectedPos = sub.indexOf(QStringLiteral("parent.id"));
+            QCOMPARE(parsed.error.position, expectedPos);
+        }
+
+        // EXISTS missing parentheses
+        {
+            const QString expr = QStringLiteral("EXISTS SELECT id");
+            const auto tokenized = logic::tokenizeLogicExpression(expr);
+            QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+            const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+            QVERIFY(!parsed.success);
+            QCOMPARE(parsed.error.message, QStringLiteral("EXISTS requires subquery parentheses"));
+            int expectedPos = -1;
+            for (const logic::LogicToken &t : tokenized.tokens) {
+                if (t.type == logic::LogicTokenType::Keyword && t.keywordType == logic::LogicKeywordType::Exists) { expectedPos = t.position; break; }
+            }
+            QCOMPARE(parsed.error.position, expectedPos);
+        }
+
+        // IN requires parentheses
+        {
+            const QString expr = QStringLiteral("a IN 1");
+            const auto tokenized = logic::tokenizeLogicExpression(expr);
+            QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+            const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+            QVERIFY(!parsed.success);
+            QCOMPARE(parsed.error.message, QStringLiteral("IN requires parentheses"));
+            int expectedPos = -1;
+            for (const logic::LogicToken &t : tokenized.tokens) {
+                if (t.type == logic::LogicTokenType::Keyword && t.keywordType == logic::LogicKeywordType::In) { expectedPos = t.position; break; }
+            }
+            QCOMPARE(parsed.error.position, expectedPos);
+        }
+
+        // IN inner literal expected
+        {
+            const QString expr = QStringLiteral("a IN (b)");
+            const auto tokenized = logic::tokenizeLogicExpression(expr);
+            QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+            const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+            QVERIFY(!parsed.success);
+            QCOMPARE(parsed.error.message, QStringLiteral("expected literal value"));
+            const int left = expr.indexOf('(');
+            const int right = expr.lastIndexOf(')');
+            const QString inner = expr.mid(left + 1, right - left - 1);
+            const auto innerTok = logic::tokenizeLogicExpression(inner);
+            QVERIFY2(innerTok.success, qPrintable(innerTok.error.message));
+            int expectedPos = -1;
+            for (const logic::LogicToken &t : innerTok.tokens) {
+                if (t.type == logic::LogicTokenType::Identifier) { expectedPos = t.position; break; }
+            }
+            QCOMPARE(parsed.error.position, expectedPos);
+        }
+
+        // Quantified requires parentheses
+        {
+            const QString expr = QStringLiteral("a = ANY SELECT 1");
+            const auto tokenized = logic::tokenizeLogicExpression(expr);
+            QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+            const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+            QVERIFY(!parsed.success);
+            QCOMPARE(parsed.error.message, QStringLiteral("quantified comparison requires subquery parentheses"));
+            int expectedPos = -1;
+            for (const logic::LogicToken &t : tokenized.tokens) {
+                if (t.type == logic::LogicTokenType::CompareOperator) { expectedPos = t.position; break; }
+            }
+            QCOMPARE(parsed.error.position, expectedPos);
+        }
     }
 };
 
