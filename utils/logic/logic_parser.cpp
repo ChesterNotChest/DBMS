@@ -38,6 +38,49 @@ QString sliceByTokenPositions(const QString &expressionText,
     return expressionText.mid(start, end - start);
 }
 
+bool appendOuterName(QStringList *names, const QString &name)
+{
+    if (names == nullptr || names->contains(name)) {
+        return true;
+    }
+    names->append(name);
+    return true;
+}
+
+bool collectOuterNamesFromNode(const LogicNode &node,
+                               const QString &allowedTablePrefix,
+                               QStringList *names,
+                               LogicError *error,
+                               const QString &expressionText)
+{
+    for (const QString &referencedName : node.referencedOuterNames) {
+        appendOuterName(names, referencedName);
+    }
+
+    if (node.type == LogicNodeType::ColumnRef) {
+        if (node.reference.scope == LogicReferenceScope::Outer) {
+            appendOuterName(names, node.reference.name);
+        } else if (node.reference.name.contains(QLatin1Char('.'))) {
+            if (!allowedTablePrefix.isEmpty() && node.reference.name.startsWith(allowedTablePrefix)) {
+                return true;
+            }
+            if (error != nullptr) {
+                error->message = QStringLiteral("only outer.xxx is allowed in correlated subqueries");
+                const int position = expressionText.indexOf(node.reference.name);
+                error->position = position >= 0 ? position : -1;
+            }
+            return false;
+        }
+    }
+
+    for (const LogicNode &child : node.children) {
+        if (!collectOuterNamesFromNode(child, allowedTablePrefix, names, error, expressionText)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 QString captureParenthesizedText(const QString &expressionText, LogicParserState &state)
 {
     if (isAtEnd(state) || peekToken(state).type != LogicTokenType::LeftParen) {
@@ -75,46 +118,33 @@ bool tokenBeginsSubquery(const LogicParserState &state)
 
 bool collectOuterNamesFromText(const QString &text, QStringList *names, LogicError *error)
 {
-    const LogicTokenizeResult tokenized = tokenizeLogicExpression(text);
-    if (!tokenized.success) {
+    const sqlparser::ParseResult parsedSql = sqlparser::parseSql(text);
+    if (!parsedSql.success) {
         if (error != nullptr) {
-            *error = tokenized.error;
+            error->message = parsedSql.errorMessage;
+            error->position = -1;
         }
         return false;
     }
-
-    QString allowedTablePrefix;
-    const sqlparser::ParseResult parsedSql = sqlparser::parseSql(text);
-    if (parsedSql.success && parsedSql.commandType == QStringLiteral("SELECT")) {
-        allowedTablePrefix = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed();
+    if (parsedSql.commandType != QStringLiteral("SELECT")) {
+        if (error != nullptr) {
+            error->message = QStringLiteral("subquery must be SELECT");
+            error->position = -1;
+        }
+        return false;
     }
 
     if (names != nullptr) {
         names->clear();
     }
 
-    for (const LogicToken &token : tokenized.tokens) {
-        if (token.type != LogicTokenType::Identifier) {
-            continue;
-        }
-        if (token.rawText.startsWith(QStringLiteral("outer."))) {
-            if (names != nullptr && !names->contains(token.rawText)) {
-                names->append(token.rawText);
-            }
-            continue;
-        }
+    const QString allowedTablePrefix = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed().isEmpty()
+                                           ? QString()
+                                           : parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed() + QLatin1Char('.');
 
-        if (token.rawText.contains(QLatin1Char('.'))) {
-            const QString allowedPrefix = allowedTablePrefix.isEmpty()
-                                              ? QString()
-                                              : allowedTablePrefix + QLatin1Char('.');
-            if (!allowedPrefix.isEmpty() && token.rawText.startsWith(allowedPrefix)) {
-                continue;
-            }
-            if (error != nullptr) {
-                error->message = QStringLiteral("only outer.xxx is allowed in correlated subqueries");
-                error->position = token.position;
-            }
+    if (parsedSql.payload.contains(QStringLiteral("whereAst"))) {
+        const LogicNode whereAst = parsedSql.payload.value(QStringLiteral("whereAst")).value<LogicNode>();
+        if (!collectOuterNamesFromNode(whereAst, allowedTablePrefix, names, error, text)) {
             return false;
         }
     }

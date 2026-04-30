@@ -43,7 +43,7 @@ public:
 
 private:
     QueryExecuteResult execSelect(const sqlparser::ParseResult &parsed,
-                                             const logic::CorrelationBindings *bindings = nullptr) const;
+                                             const logic::CorrelationBindings *bindings = nullptr);
 };
 
 } // namespace service

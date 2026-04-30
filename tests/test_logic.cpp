@@ -595,6 +595,30 @@ private slots:
         QCOMPARE(res.truth, logic::LogicTruthValue::True);
     }
 
+    void test_unterminatedStringLiteralReturnsError()
+    {
+        const QString expr = QStringLiteral("name = 'O");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY(!tokenized.success);
+        QCOMPARE(tokenized.error.message, QStringLiteral("unterminated string literal"));
+        QCOMPARE(tokenized.error.position, expr.indexOf(QLatin1Char('\'')));
+    }
+
+    void test_parseCorrelatedExistsAllowsSelectStarSubquery()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT * FROM child WHERE child.parent_id = outer.id)");
+
+        const auto tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
+        QCOMPARE(parsed.root.subquerySql, QStringLiteral("SELECT * FROM child WHERE child.parent_id = outer.id"));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+    }
+
     void test_parseCorrelatedReferenceErrorPosition()
     {
         const QString expression = QStringLiteral(

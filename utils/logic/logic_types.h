@@ -31,6 +31,7 @@ enum class LogicTokenType {
     RightParen,
     Comma,
     CompareOperator,
+    Asterisk,
     Keyword,
     EndOfInput
 };

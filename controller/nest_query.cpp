@@ -135,14 +135,6 @@ bool applySimpleConditions(const repo::TableData &table,
     return true;
 }
 
-SelectRowsResult makeSelectError(const QString &message)
-{
-    SelectRowsResult result;
-    result.success = false;
-    result.errorMessage = message;
-    return result;
-}
-
 QueryExecuteResult makeResultFromSelect(const SelectRowsResult &selectResult,
                                         const QString &text = QString())
 {
@@ -232,7 +224,7 @@ QueryExecuteResult QueryExecutor::executeCorrelatedSelect(const QString &sql,
 }
 
 QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parsed,
-                                             const logic::CorrelationBindings *bindings) const
+                                             const logic::CorrelationBindings *bindings)
 {
     QueryExecuteResult result;
 
@@ -273,7 +265,7 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     const repo::TableData &tableData = fullCandidateRows.resultTable;
 
     logic::LogicEvalContext evalContext;
-    evalContext.subqueryExecutor = const_cast<QueryExecutor *>(this);
+    evalContext.subqueryExecutor = this;
     evalContext.currentDatabase = currentDatabase;
     evalContext.dataRoot = getDataRoot();
     evalContext.allowSubquery = true;

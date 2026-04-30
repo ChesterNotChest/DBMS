@@ -63,6 +63,7 @@ LogicTokenizeResult tokenizeLogicExpression(const QString &expressionText)
         if (ch == QLatin1Char('\'')) {
             ++index;
             QString value;
+            bool closed = false;
             while (index < length) {
                 const QChar current = expressionText.at(index);
                 if (current == QLatin1Char('\'')) {
@@ -72,10 +73,16 @@ LogicTokenizeResult tokenizeLogicExpression(const QString &expressionText)
                         continue;
                     }
                     ++index;
+                    closed = true;
                     break;
                 }
                 value.append(current);
                 ++index;
+            }
+            if (!closed) {
+                result.error.message = QStringLiteral("unterminated string literal");
+                result.error.position = start;
+                return result;
             }
             appendToken(LogicTokenType::StringLiteral, value, start);
             continue;
@@ -143,6 +150,11 @@ LogicTokenizeResult tokenizeLogicExpression(const QString &expressionText)
         }
         if (ch == QLatin1Char(',')) {
             appendToken(LogicTokenType::Comma, QStringLiteral(","), start);
+            ++index;
+            continue;
+        }
+        if (ch == QLatin1Char('*')) {
+            appendToken(LogicTokenType::Asterisk, QStringLiteral("*"), start);
             ++index;
             continue;
         }

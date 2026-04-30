@@ -23,24 +23,6 @@ QString bindingKeyToLocalName(const QString &bindingName)
     return bindingName;
 }
 
-LogicCellValue cellValueForBinding(const CorrelatedBinding &binding)
-{
-    return LogicCellValue{binding.value, binding.type, binding.isNull};
-}
-
-bool hasOuterReference(const LogicNode &node)
-{
-    if (node.type == LogicNodeType::ColumnRef && node.reference.scope == LogicReferenceScope::Outer) {
-        return true;
-    }
-    for (const LogicNode &child : node.children) {
-        if (hasOuterReference(child)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace
 
 LogicSubqueryExecutorAdapter::LogicSubqueryExecutorAdapter(QueryExecutor *executor)
@@ -95,20 +77,6 @@ QList<setdef::SetValue> normalizeSelectResultToSet(const service::SelectRowsResu
         values.append(setdef::SetValue{row.first(), valueType, row.first().isEmpty()});
     }
     return values;
-}
-
-static LogicEvalResult evaluateSubqueryResultAsTruth(const LogicNode &node,
-                                                     const service::SelectRowsResult &result)
-{
-    if (node.type == LogicNodeType::ExistsSubquery) {
-        return {true, result.resultTable.rows.isEmpty() ? LogicTruthValue::False : LogicTruthValue::True, {}};
-    }
-    if (node.type == LogicNodeType::InSubquery || node.type == LogicNodeType::QuantifiedSubquery) {
-        if (result.resultTable.columns.size() > 1) {
-            return {false, LogicTruthValue::Unknown, {QStringLiteral("subquery must return a single column"), -1}};
-        }
-    }
-    return {true, LogicTruthValue::Unknown, {}};
 }
 
 static QueryExecuteResult executeSubquery(const LogicNode &node,
