@@ -23,7 +23,7 @@
 
 ### 0. 常量增量
 
-新增文件：[thread_perf_def.h](E:/Qt-projects/DBMS/constants/thread_perf_def.h)
+新增文件：[thread_perf_def.h](constants/thread_perf_def.h)
 
 新增常量：
 
@@ -43,12 +43,12 @@
 
 本阶段允许修改：
 
-1. [service.h](E:/Qt-projects/DBMS/service/service.h)
-2. [database_service.cpp](E:/Qt-projects/DBMS/service/database_service.cpp)
-3. [table_service.cpp](E:/Qt-projects/DBMS/service/table_service.cpp)
-4. [tuple_service.cpp](E:/Qt-projects/DBMS/service/tuple_service.cpp)
-5. [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp)
-6. [constraint_worker.cpp](E:/Qt-projects/DBMS/utils/service_common/constraint_worker.cpp)
+1. [service.h](service/service.h)
+2. [database_service.cpp](service/database_service.cpp)
+3. [table_service.cpp](service/table_service.cpp)
+4. [tuple_service.cpp](service/tuple_service.cpp)
+5. [table_dml_service.cpp](service/table_dml_service.cpp)
+6. [constraint_worker.cpp](utils/service_common/constraint_worker.cpp)
 7. 新增 `utils/thread_runtime/lock_manager.h/.cpp`
 8. 新增测试：
    - `tests/test_lock_manager.cpp`
@@ -368,7 +368,7 @@ tuple_service::updateRows/deleteRows
 
 ### 0. 常量增量
 
-继续使用 [thread_perf_def.h](E:/Qt-projects/DBMS/constants/thread_perf_def.h)
+继续使用 [thread_perf_def.h](constants/thread_perf_def.h)
 
 新增常量：
 
@@ -389,11 +389,11 @@ tuple_service::updateRows/deleteRows
 
 本阶段允许修改：
 
-1. [service_common.h](E:/Qt-projects/DBMS/utils/service_common/service_common.h)
-2. [constraint_worker.cpp](E:/Qt-projects/DBMS/utils/service_common/constraint_worker.cpp)
-3. [database_service.cpp](E:/Qt-projects/DBMS/service/database_service.cpp)
-4. [table_service.cpp](E:/Qt-projects/DBMS/service/table_service.cpp)
-5. [tuple_service.cpp](E:/Qt-projects/DBMS/service/tuple_service.cpp)
+1. [service_common.h](utils/service_common/service_common.h)
+2. [constraint_worker.cpp](utils/service_common/constraint_worker.cpp)
+3. [database_service.cpp](service/database_service.cpp)
+4. [table_service.cpp](service/table_service.cpp)
+5. [tuple_service.cpp](service/tuple_service.cpp)
 6. 新增 `utils/thread_runtime/catalog_cache.h/.cpp`
 7. 新增测试：
    - `tests/test_catalog_cache.cpp`
@@ -673,11 +673,11 @@ repo 写入成功
 
 本阶段允许修改：
 
-1. [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp)
-2. [tuple_service.cpp](E:/Qt-projects/DBMS/service/tuple_service.cpp)
-3. [constraint_worker.cpp](E:/Qt-projects/DBMS/utils/service_common/constraint_worker.cpp)
-4. [service_common.h](E:/Qt-projects/DBMS/utils/service_common/service_common.h)
-5. [sort_index_repo.cpp](E:/Qt-projects/DBMS/repo/sort_index_repo.cpp)
+1. [table_dml_service.cpp](service/table_dml_service.cpp)
+2. [tuple_service.cpp](service/tuple_service.cpp)
+3. [constraint_worker.cpp](utils/service_common/constraint_worker.cpp)
+4. [service_common.h](utils/service_common/service_common.h)
+5. [sort_index_repo.cpp](repo/sort_index_repo.cpp)
 6. 新增测试：
    - `tests/test_table_runtime_pipeline.cpp`
    - `tests/test_index_runtime_repair.cpp`
@@ -866,11 +866,11 @@ bool ensureMutationStateRuntimeArtifacts(TableMutationState *state,
 这部分是本阶段最核心的正式改动边界：
 
 1. 必须删除的“正常路径预热式 rebuild”
-   - [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L1879)
-   - [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L2022)
-   - [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L2266)
-   - [constraint_worker.cpp](E:/Qt-projects/DBMS/utils/service_common/constraint_worker.cpp#L855)
-   - [table_service.cpp](E:/Qt-projects/DBMS/service/table_service.cpp#L1092)
+   - [table_dml_service.cpp](service/table_dml_service.cpp) 中 `insertRows(...)` 入口的预热式 `rebuildTableIndexes(...)`
+   - [table_dml_service.cpp](service/table_dml_service.cpp) 中 `updateRows(...)` 入口的预热式 `rebuildTableIndexes(...)`
+   - [table_dml_service.cpp](service/table_dml_service.cpp) 中 `deleteRows(...)` 入口的预热式 `rebuildTableIndexes(...)`
+   - [constraint_worker.cpp](utils/service_common/constraint_worker.cpp) 中 `ensureConstraintBoundIndex(...)` 前置路径的预热式 `rebuildTableIndexes(...)`
+   - [table_service.cpp](service/table_service.cpp) 中 `createIndex(...)` 前置路径的预热式 `rebuildIndexesForTable(...)`
 
 必须删除的 rebuild 行为：
 
@@ -898,9 +898,9 @@ bool ensureMutationStateRuntimeArtifacts(TableMutationState *state,
 
 当前已经正确走增量的正常提交路径：
 
-1. [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L1955) `insertTableIndexes(...)`
-2. [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L2199) `updateTableIndexes(...)`
-3. [table_dml_service.cpp](E:/Qt-projects/DBMS/service/table_dml_service.cpp#L2418) `deleteTableIndexes(...)`
+1. [table_dml_service.cpp](service/table_dml_service.cpp) 的提交路径调用 `insertTableIndexes(...)`
+2. [table_dml_service.cpp](service/table_dml_service.cpp) 的提交路径调用 `updateTableIndexes(...)`
+3. [table_dml_service.cpp](service/table_dml_service.cpp) 的提交路径调用 `deleteTableIndexes(...)`
 
 #### 3.2 row-id sidecar 策略
 
