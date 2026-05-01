@@ -11,7 +11,7 @@
 
 本计划不扩张后端能力，只复用当前正式能力：
 
-- `controller/SqlDispatcher`
+- `service::SqlDispatcher`
 - `database_service`
 - `table_service`
 - `tuple_service`
@@ -76,11 +76,11 @@
 
 需要增加：
 
-- `kFrontendCardObjectTree`
+- `kFrontendPanelObjectTree`
 - `kFrontendCardDataGrid`
 - `kFrontendCardStructure`
 - `kMaxOpenOverlayCount`
-- `kFrontendDefaultBrowseLimit`
+- `kDefaultBrowseLimit`
 
 ### 1. 边界划定
 
@@ -218,14 +218,15 @@ composeMainWindowLayout()
 - `action.sqlText: QString`
 - `action.targetDatabase: QString`
 - `action.targetTable: QString`
-- `action.refreshPolicy: none | tree | grid | structure | byRule`
+- `action.refreshPolicy: none | refreshTree | refreshGrid | refreshStructure | byRule`
 
 输出：
 
 - `FrontendActionResult`
   - `success`
   - `message`
-  - `selectResult`
+  - `selectColumns`
+  - `selectRows`
   - `affectedRows`
   - `refreshActions`
   - `currentDatabase`
@@ -308,7 +309,7 @@ dispatchSqlAction(action)
 
 ```text
 normalizeActionResult(execResult)
--> map success / error / selectResult / affectedRows
+-> map success / error / selectColumns / selectRows / affectedRows
 -> map backend error text without rewriting semantics
 -> produce panel-safe result payload
 ```
@@ -330,7 +331,7 @@ normalizeActionResult(execResult)
 resolveRefreshActions(...)
 -> if action.refreshPolicy is explicit, honor explicit route
 -> else apply module-wide refresh rules
--> return tree/grid/structure/noop action list
+-> return refreshTree/refreshGrid/refreshStructure action list
 ```
 
 #### 2.6 `storeActiveCardContext(route, payload)`
@@ -827,7 +828,7 @@ executeEditorSql(sqlText)
 
 需要增加：
 
-- `kDefaultGridLimit`
+- 复用 `kDefaultBrowseLimit`
 - `kAllowInlineUpdate`
 - `kAllowInlineDelete`
 - `kAllowInlineInsert`
@@ -903,7 +904,8 @@ loadTableRows(tableName, limit)
   - `columnNames`
   - `rows`
   - `keyColumns`
-  - `draftInsertRow optional`
+  - `draftInsertRow`
+    空 `QVariantMap` 表示当前不存在插入草稿行
   - `dirtyRowIds`
   - `pendingDeleteRowIds`
 
