@@ -19,7 +19,7 @@
 前端的统一原则是：
 
 - 能收口成稳定 GUI 动作的，前端直接生成标准 SQL
-- 不适合表单化的复杂语义，统一留给 SQL 编辑器
+- 前端无法表单化表达的语义，只保留 SQL 文本输入入口；实际可执行范围以当前后端已支持语法为准
 
 ## 2. 统一确认机制
 
@@ -150,13 +150,94 @@
 `FrontendContext` 的正式结构定义固定为：
 
 ```cpp
+enum class FrontendRoute {
+    ObjectTree,
+    DataGrid,
+    Structure,
+    SqlEditor
+};
+
+enum class RefreshPolicy {
+    None,
+    RefreshTree,
+    RefreshGrid,
+    RefreshStructure,
+    ByRule
+};
+
+enum class RefreshAction {
+    RefreshTree,
+    RefreshGrid,
+    RefreshStructure
+};
+
+QString toString(FrontendRoute route);
+QString toString(RefreshPolicy policy);
+QString toString(RefreshAction action);
+
+bool parseFrontendRoute(const QString &text, FrontendRoute *route);
+bool parseRefreshPolicy(const QString &text, RefreshPolicy *policy);
+bool parseRefreshAction(const QString &text, RefreshAction *action);
+
 struct FrontendContext {
-    QString currentCardRoute;
+    FrontendRoute currentCardRoute;
     QString currentDatabase;
     QString currentTable;
     int currentLimit;
 };
 ```
+
+序列化/反序列化规则固定为：
+
+- Qt 运行时内部一律使用 `FrontendRoute / RefreshPolicy / RefreshAction` 强类型枚举
+- 只有在日志输出、配置落盘、调试文本展示时，才允许通过 `toString(...)` 转成稳定字符串
+- 从外部文本恢复时，必须统一走 `parseFrontendRoute / parseRefreshPolicy / parseRefreshAction`
+- 遇到未知字符串时，必须判定为错误，不允许静默回退到默认值
+
+### 1A. 统一职责边界
+
+本计划所有模块的职责固定为：
+
+- `MainWindow`
+  - 只负责统一调度与顶层布局
+  - 只允许发起 `dispatchSqlAction(...)`
+  - 不直接拼接 SQL，不直接操作 repo/service
+- `ObjectTreePanel`
+  - 只负责左侧对象树浏览与节点动作发起
+  - 不直接执行 SQL
+  - 节点点击只产生 `FrontendAction`
+- `ResultPanel`
+  - 只负责数据页展示与 `GridViewState` 状态迁移
+  - 不直接读 repo
+  - 不直接管理对象树
+- `StructurePanel`
+  - 只负责结构页展示与结构编辑器调度
+  - 不直接读 repo
+  - 不直接执行 `CREATE / DROP / ALTER`，只发起 `FrontendAction`
+- `EditorPanel`
+  - 只负责 SQL 文本输入、历史与执行按钮
+  - 不解释复杂语义
+- `OverlayHost`
+  - 只负责承载对话框/浮层
+  - 不参与 SQL 生成与结果刷新决策
+
+### 1B. 统一状态机
+
+- 数据页状态固定为：
+  - `Idle`
+  - `DraftInsert`
+  - `DirtyUpdate`
+  - `PendingDelete`
+- 结构页状态固定为：
+  - `Idle`
+  - `EditingColumn`
+  - `EditingConstraint`
+  - `EditingIndex`
+  - `PendingDelete`
+- 任一时刻只允许一个主卡片处于激活态。
+- 任一时刻最多只允许一个编辑弹窗或编辑面板处于前景态。
+- 成功执行后，必须按 `FrontendActionResult.refreshActions` 刷新指定模块并回写 `FrontendContext`。
+- 失败时不得清空当前卡片状态，不得把失败结果静默吞掉。
 
 首轮不允许：
 
@@ -214,11 +295,11 @@ composeMainWindowLayout()
 
 输入：
 
-- `action.route: objectTree | dataGrid | structure | sqlEditor`
+- `action.route: FrontendRoute::ObjectTree | FrontendRoute::DataGrid | FrontendRoute::Structure | FrontendRoute::SqlEditor`
 - `action.sqlText: QString`
 - `action.targetDatabase: QString`
 - `action.targetTable: QString`
-- `action.refreshPolicy: none | refreshTree | refreshGrid | refreshStructure | byRule`
+- `action.refreshPolicy: RefreshPolicy::None | RefreshPolicy::RefreshTree | RefreshPolicy::RefreshGrid | RefreshPolicy::RefreshStructure | RefreshPolicy::ByRule`
 
 输出：
 
@@ -246,11 +327,11 @@ refreshPolicy
 
 ```cpp
 struct FrontendAction {
-    QString route;
+    FrontendRoute route;
     QString sqlText;
     QString targetDatabase;
     QString targetTable;
-    QString refreshPolicy;
+    RefreshPolicy refreshPolicy;
 };
 ```
 
@@ -278,7 +359,7 @@ struct FrontendActionResult {
     QStringList selectColumns;
     QList<QVariantMap> selectRows;
     int affectedRows;
-    QStringList refreshActions;
+    QList<RefreshAction> refreshActions;
     QString currentDatabase;
     QString currentTable;
 };
@@ -323,7 +404,7 @@ normalizeActionResult(execResult)
 
 输出：
 
-- `refreshActions: QStringList`
+- `refreshActions: QList<RefreshAction>`
 
 数据流：
 
@@ -335,6 +416,12 @@ resolveRefreshActions(...)
 ```
 
 #### 2.6 `storeActiveCardContext(route, payload)`
+
+输入补充约束：
+
+- `route` 必须是 `FrontendRoute`
+- 若后续需要落盘、日志输出或调试展示，统一使用 `toString(route)`
+- 若从外部文本恢复当前卡片路由，统一使用 `parseFrontendRoute(...)`，遇到未知值直接报错
 
 输入：
 
@@ -370,17 +457,15 @@ storeActiveCardContext(route, payload)
 
 #### 3.3 `dispatchSqlAction(action)`
 
+- `action.route` 必须使用 `FrontendRoute`，不允许裸 `QString` 承载路由。
+- `action.refreshPolicy` 必须使用 `RefreshPolicy`，不允许裸 `QString` 承载刷新策略。
+- `action.refreshPolicy = RefreshPolicy::ByRule` 时，必须统一走模块间刷新规则，不允许各卡片私自决定。
 - `action.sqlText` 不能为空。
-- `action.route` 必须来自固定枚举，不允许自由字符串扩展。
-- `action.refreshPolicy = byRule` 时，必须统一走模块间刷新规则，不允许各卡片私自决定。
 - 若后端执行失败，必须原样保留后端错误文本，不允许前端重写为模糊提示。
 
 #### 3.4 `resolveRefreshActions(...)`
 
-- 首轮只允许返回三类显式刷新动作：
-  - `refreshTree`
-  - `refreshGrid`
-  - `refreshStructure`
+- 首轮只允许返回 `RefreshAction::RefreshTree / RefreshAction::RefreshGrid / RefreshAction::RefreshStructure` 三类显式刷新动作。
 - 不允许返回页签级、分页级、子面板级刷新动作。
 
 #### 3.5 `storeActiveCardContext(...)`
@@ -406,6 +491,8 @@ storeActiveCardContext(route, payload)
 - `test_dispatchSqlActionRoutesThroughUnifiedExecuteSql`
 - `test_dispatchSqlActionNormalizesBackendError`
 - `test_dispatchSqlActionReturnsRefreshActions`
+- `test_dispatchSqlActionRejectsUnknownRoute`
+- `test_dispatchSqlActionRejectsUnknownRefreshPolicy`
 
 #### 4.4 `resolveRefreshActions(...)`
 
@@ -417,6 +504,14 @@ storeActiveCardContext(route, payload)
 
 - `test_storeActiveCardContextStoresCurrentDatabaseAndTable`
 - `test_storeActiveCardContextSupportsSingleActiveCardOnly`
+
+#### 4.6 模块职责边界
+
+- `test_objectTreePanelOnlyEmitsActions`
+- `test_resultPanelOwnsGridStateAndDoesNotTouchRepository`
+- `test_structurePanelUsesEditorFormsAndDoesNotExecuteSqlDirectly`
+- `test_editorPanelSubmitsSqlOnlyThroughMainWindow`
+- `test_overlayHostOnlyHostsDialogsAndDoesNotTriggerExecution`
 
 ---
 
@@ -444,6 +539,13 @@ storeActiveCardContext(route, payload)
 - `SHOW CREATE TABLE table_name;`
 - `SELECT * FROM table_name LIMIT n;`
 
+本阶段对象名规则固定为：
+
+- 自动生成 SQL 时，`databaseName / tableName / columnName` 只允许使用当前解析器稳定支持的未加引号标识符
+- 第一版合法形式固定为正则：`[A-Za-z_][A-Za-z0-9_]*`
+- 第一版不承诺 quoted identifiers，不使用反引号、双引号或其他转义形式自动生成 SQL
+- 若现有对象名不满足该规则，前端必须拒绝拼接自动 SQL，并提示用户改走手写 SQL 或先扩展后端解析器
+
 本阶段不负责：
 
 - `INSERT`
@@ -454,6 +556,27 @@ storeActiveCardContext(route, payload)
 - `DROP INDEX`
 
 ### 2. 精确到每个函数的输入输出的数据流收口计划
+
+#### 2.0 `validateSqlObjectName(name, kind)`
+
+输入：
+- `name: QString`
+- `kind: database | table | column`
+
+输出：
+- `bool`
+- 失败时返回稳定错误文案
+
+数据流：
+
+```text
+validateSqlObjectName(name, kind)
+-> trim name
+-> reject empty name
+-> match [A-Za-z_][A-Za-z0-9_]*
+-> if not match, return invalid identifier error
+-> return true
+```
 
 #### 2.1 `refreshDatabaseTree()`
 
@@ -492,6 +615,7 @@ refreshDatabaseTree()
 
 ```text
 openDatabaseNode(databaseName)
+-> validateSqlObjectName(databaseName, database)
 -> executeSql("USE databaseName;")
 -> 若成功
 -> executeSql("SHOW TABLES;")
@@ -514,6 +638,7 @@ openDatabaseNode(databaseName)
 
 ```text
 refreshTableList(databaseName)
+-> validateSqlObjectName(databaseName, database)
 -> 若当前数据库不是 databaseName，先 executeSql("USE databaseName;")
 -> executeSql("SHOW TABLES;")
 -> SqlExecResult.selectResult
@@ -535,6 +660,7 @@ refreshTableList(databaseName)
 
 ```text
 openTableData(tableName, limit)
+-> validateSqlObjectName(tableName, table)
 -> executeSql("SELECT * FROM tableName LIMIT limit;")
 -> SqlExecResult.selectResult
 -> 打开或刷新 Data Grid 页面
@@ -555,6 +681,7 @@ openTableData(tableName, limit)
 
 ```text
 refreshCurrentTableData(tableName, limit)
+-> validateSqlObjectName(tableName, table)
 -> executeSql("SELECT * FROM tableName LIMIT limit;")
 -> SqlExecResult.selectResult
 -> 刷新当前 Data Grid 卡片
@@ -574,6 +701,7 @@ refreshCurrentTableData(tableName, limit)
 
 ```text
 openTableStructure(tableName)
+-> validateSqlObjectName(tableName, table)
 -> executeSql("DESC tableName;")
 -> executeSql("SHOW CREATE TABLE tableName;")
 -> 合并结果
@@ -594,6 +722,7 @@ openTableStructure(tableName)
 
 ```text
 refreshCurrentTableStructure(tableName)
+-> validateSqlObjectName(tableName, table)
 -> executeSql("DESC tableName;")
 -> executeSql("SHOW CREATE TABLE tableName;")
 -> 合并结果
@@ -608,20 +737,25 @@ refreshCurrentTableStructure(tableName)
 - 应保留旧树，弹出错误提示。
 - 不得在失败时清空全部节点。
 - 对象树首轮只保留一个显式 `Refresh` 按钮，不再为数据库节点单独增加第二套刷新按钮。
+- 对象树展示到的数据库名若不满足 `[A-Za-z_][A-Za-z0-9_]*`，允许显示，但必须标记为“不可自动操作”状态。
 
 #### 3.2 `openDatabaseNode(databaseName)`
 
 - `USE` 失败时不得继续执行 `SHOW TABLES`。
 - `SHOW TABLES` 失败时，当前数据库切换结果保留，但表节点不更新。
 - 若重复点击当前已激活数据库，可直接刷新表列表，不重复弹提示。
+- 若 `validateSqlObjectName(databaseName, database)` 失败，必须在执行前直接拒绝，不得向后端发送拼接 SQL。
 
 #### 3.3 `openTableData(tableName, limit)`
 
 - `limit` 必须由前端配置给出，首轮不允许空值。
 - 首轮默认值固定为 `100`。
 - 表节点点击行为固定为“打开数据页”，不是打开结构页。
+- 若 `validateSqlObjectName(tableName, table)` 失败，必须直接拒绝自动浏览，并提示用户改走 SQL 编辑器。
 
 #### 3.3A `refreshCurrentTableData(tableName, limit)`
+
+- 若当前表名不满足合法标识符规则，`Refresh` 必须进入拒绝执行路径。
 
 - 数据页卡片必须提供显式 `Refresh` 按钮。
 - 该按钮只重跑当前表的浏览 SQL，不改变当前卡片所指向的表。
@@ -630,11 +764,15 @@ refreshCurrentTableStructure(tableName)
 
 #### 3.4 `openTableStructure(tableName)`
 
+- 若 `validateSqlObjectName(tableName, table)` 失败，必须拒绝自动打开结构页。
+
 - `DESC` 成功但 `SHOW CREATE TABLE` 失败时，仍允许展示部分结构。
 - `SHOW CREATE TABLE` 成功但 `DESC` 失败时，也允许展示源码视图。
 - 不允许因为一个接口失败而全部空白。
 
 #### 3.4A `refreshCurrentTableStructure(tableName)`
+
+- 若当前表名不满足合法标识符规则，结构页 `Refresh` 必须拒绝执行。
 
 - 结构页卡片必须提供显式 `Refresh` 按钮。
 - 该按钮统一刷新当前结构卡片，不再为 `Column / Foreign Key / Index / Check` 分别增加独立刷新按钮。
@@ -671,12 +809,21 @@ DROP TABLE table_name;
 - `test_refreshDatabaseTreeLoadsDatabases`
 - `test_refreshDatabaseTreePreservesOldTreeOnFailure`
 - `test_refreshDatabaseTreeIsBoundToTreeRefreshButton`
+- `test_refreshDatabaseTreeMarksInvalidDatabaseNamesAsNonExecutable`
+
+#### 4.1A `validateSqlObjectName(name, kind)`
+
+- `test_validateSqlObjectNameAcceptsAsciiIdentifier`
+- `test_validateSqlObjectNameRejectsEmptyName`
+- `test_validateSqlObjectNameRejectsDashSpaceAndQuotedName`
+- `test_validateSqlObjectNameRejectsLeadingDigit`
 
 #### 4.2 `openDatabaseNode(databaseName)`
 
 - `test_openDatabaseNodeExecutesUseThenShowTables`
 - `test_openDatabaseNodeStopsWhenUseFails`
 - `test_openDatabaseNodeRefreshesOnlySelectedDatabase`
+- `test_openDatabaseNodeRejectsInvalidDatabaseNameBeforeSql`
 
 #### 4.3 `refreshTableList(databaseName)`
 
@@ -687,23 +834,27 @@ DROP TABLE table_name;
 
 - `test_openTableDataBuildsSelectStarLimitSql`
 - `test_openTableDataPassesSelectResultToGrid`
+- `test_openTableDataRejectsInvalidTableNameBeforeSql`
 
 #### 4.4A `refreshCurrentTableData(tableName, limit)`
 
 - `test_refreshCurrentTableDataReusesCurrentLimit`
 - `test_refreshCurrentTableDataKeepsCurrentTableContext`
 - `test_refreshCurrentTableDataKeepsOldGridOnFailure`
+- `test_refreshCurrentTableDataRejectsInvalidTableNameBeforeSql`
 
 #### 4.5 `openTableStructure(tableName)`
 
 - `test_openTableStructureCallsDescAndShowCreateTable`
 - `test_openTableStructureAllowsPartialSuccess`
+- `test_openTableStructureRejectsInvalidTableNameBeforeSql`
 
 #### 4.5A `refreshCurrentTableStructure(tableName)`
 
 - `test_refreshCurrentTableStructureCallsDescAndShowCreateTable`
 - `test_refreshCurrentTableStructureKeepsOldCardOnFailure`
 - `test_refreshCurrentTableStructureDoesNotIntroducePerTabRefresh`
+- `test_refreshCurrentTableStructureRejectsInvalidTableNameBeforeSql`
 
 ---
 
@@ -728,15 +879,13 @@ DROP TABLE table_name;
 - `display/frontend_context.cpp`
 - SQL 执行日志区域
 
-本阶段允许调取：
+本阶段只作为 SQL 文本输入入口，不承诺扩张当前后端能力。
 
-- 当前后端支持的全部 SQL
-- 多条 SQL 顺序执行
+本阶段不额外承诺：
 
-本阶段是所有复杂语义的兜底入口，包括：
-
-- 复杂 `WHERE`
-- 子查询
+- 子查询外部执行
+- 复杂谓词图形化编辑
+- 超出当前 parser / `service::SqlDispatcher` 已支持范围的 SQL 语法
 - `MODIFY CONSTRAINT`
 - 批量初始化脚本
 
@@ -780,11 +929,11 @@ executeEditorSql(sqlText)
 - 浏览表数据：
   - `SELECT * FROM table_name LIMIT 100;`
 - 删除模板：
-  - `DELETE FROM table_name WHERE key = value;`
+  - `DELETE FROM table_name WHERE key = '<value>';`
 - 更新模板：
-  - `UPDATE table_name SET col = value WHERE key = value;`
+  - `UPDATE table_name SET col = '<new_value>' WHERE key = '<key_value>';`
 - 插入模板：
-  - `INSERT INTO table_name (col1, col2) VALUES (...);`
+  - `INSERT INTO table_name (col1, col2) VALUES ('<value1>', '<value2>');`
 
 ### 3. 每个关键函数内部具体行为的收口计划
 
@@ -799,6 +948,7 @@ executeEditorSql(sqlText)
 
 - 只负责生成模板，不负责自动执行。
 - 模板必须和当前后端真实能力一致。
+- 模板中的 `<...>` 占位符必须要求用户手工替换；未替换模板不得一键直接执行。
 - 不允许插入未实现语法，例如：
   - `JOIN`
   - `GROUP BY`
@@ -1133,7 +1283,7 @@ markGridRowsPendingDelete(...)
 
 ```sql
 INSERT INTO table_name (col1, col2, ...)
-VALUES (...);
+VALUES ('<value1>', '<value2>', ...);
 ```
 
 - 草稿行点 `×` 时直接丢弃，不发 SQL。
@@ -1168,7 +1318,7 @@ WHERE key1 = oldValue1 AND key2 = oldValue2;
   - 再点 `√` 时才执行：
 
 ```sql
-DELETE FROM table_name WHERE key = value;
+DELETE FROM table_name WHERE key = '<value>';
 ```
 
 - 多行删除允许逐行执行多条 `DELETE`
@@ -1259,8 +1409,7 @@ DELETE FROM table_name WHERE key = value;
 本阶段不要求首轮图形化覆盖：
 
 - `MODIFY CONSTRAINT`
-- 复杂 `CHECK` 设计器
-- 复杂相关子查询约束
+- 复杂 `CHECK` 表达式图形化设计器
 
 本阶段的 UI 编辑方式固定为：
 
@@ -1858,7 +2007,7 @@ DROP INDEX index_name ON table_name;
 下面这些首轮不得承诺图形化覆盖：
 
 - 复杂 `WHERE`
-- 子查询编辑器
+- 子查询图形化编辑器
 - `MODIFY CONSTRAINT`
 - 复杂批量 `UPDATE`
 - 复杂批量 `DELETE`
@@ -1884,5 +2033,5 @@ DROP INDEX index_name ON table_name;
 按这份计划落地后：
 
 - 高频数据库浏览、表浏览、单表数据编辑、基础结构修改，都可以被 GUI 覆盖
-- 复杂语义仍然保留 SQL 编辑器兜底
+- 复杂语义不做图形化承诺；待后端能力落地后，仅保留直接输入 SQL 或表达式文本的入口
 - 前端不会越过当前后端真实能力边界
