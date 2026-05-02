@@ -192,7 +192,14 @@ bool validateCheckConstraints(const tabledef::TableSchema &schema,
             const logic::LogicEvalResult evalResult = logic::evaluateCheckConstraintForRow(parsed.root,
                                                                                           rowContext,
                                                                                           evalContext);
-            if (!evalResult.success || evalResult.truth != logic::LogicTruthValue::True) {
+            if (!evalResult.success) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1': %2")
+                                 .arg(constraint.name, evalResult.error.message);
+                }
+                return false;
+            }
+            if (evalResult.truth != logic::LogicTruthValue::True) {
                 if (error != nullptr) {
                     *error = QStringLiteral("check constraint '%1' is violated").arg(constraint.name);
                 }

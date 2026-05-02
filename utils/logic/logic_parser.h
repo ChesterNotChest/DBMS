@@ -16,8 +16,6 @@ bool isAtEnd(const LogicParserState &state);
 bool matchToken(LogicParserState &state, LogicTokenType type);
 LogicToken consumeToken(LogicParserState &state, LogicTokenType type, const QString &errorMessage);
 LogicParseResult makeParseError(const QString &message, int position);
-
-QString captureSubquerySql(const QString &expressionText, LogicParserState &state);
 LogicParseResult parseLogicTokens(const QString &expressionText, const QList<LogicToken> &tokens);
 
 } // namespace logic

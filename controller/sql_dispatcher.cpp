@@ -582,13 +582,13 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
 
-    const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
-    if (!conditionError.isEmpty()) {
-        return {false, conditionError};
-    }
-
     TableDmlService dmlService;
     if (hasComplexWhere) {
+        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
+        if (!conditionError.isEmpty()) {
+            return {false, conditionError};
+        }
+
         QueryExecutor executor;
         logic::LogicEvalContext evalContext;
         evalContext.subqueryExecutor = &executor;
