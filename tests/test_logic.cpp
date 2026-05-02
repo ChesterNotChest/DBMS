@@ -50,6 +50,70 @@ private:
     QueryExecuteResult m_result;
 };
 
+class BindingAwareSubqueryExecutor : public logic::ISubqueryExecutor
+{
+public:
+    QueryExecuteResult executeSelectSql(const QString &, const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        return result;
+    }
+
+    QueryExecuteResult executeCorrelatedSelect(const QString &,
+                                               const logic::CorrelationBindings &bindings,
+                                               const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        result.selectResult.resultTable.columns = {QStringLiteral("parent_id")};
+        result.selectResult.columnTypes = {tabledef::ColumnType::Int};
+
+        if (!bindings.items.isEmpty() && bindings.items.first().value == QStringLiteral("10")) {
+            result.selectResult.resultTable.rows.append({QStringLiteral("10")});
+        }
+
+        return result;
+    }
+};
+
+class NullAwareBindingSubqueryExecutor : public logic::ISubqueryExecutor
+{
+public:
+    QueryExecuteResult executeSelectSql(const QString &, const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        return result;
+    }
+
+    QueryExecuteResult executeCorrelatedSelect(const QString &,
+                                               const logic::CorrelationBindings &bindings,
+                                               const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        result.selectResult.resultTable.columns = {QStringLiteral("parent_id")};
+        result.selectResult.columnTypes = {tabledef::ColumnType::Int};
+
+        if (!bindings.items.isEmpty()) {
+            const logic::CorrelatedBinding &binding = bindings.items.first();
+            if (binding.isNull) {
+                result.selectResult.resultTable.rows.append({QString()});
+            } else if (binding.value == QStringLiteral("10")) {
+                result.selectResult.resultTable.rows.append({QStringLiteral("10")});
+                result.selectResult.resultTable.rows.append({QString()});
+            }
+        }
+
+        return result;
+    }
+};
+
 class FakeQueryExecutor : public service::QueryExecutor
 {
 public:
@@ -253,6 +317,115 @@ private slots:
         const logic::LogicEvalResult allFalseResult = logic::evaluateLogicExpression(allParsed.root, allRowContext, evalContext);
         QVERIFY2(allFalseResult.success, qPrintable(allFalseResult.error.message));
         QCOMPARE(allFalseResult.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_correlatedQuantifiedComparisonSupportsAnyAndAll()
+    {
+        BindingAwareSubqueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        const QString anyExpression = QStringLiteral(
+            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+        const logic::LogicTokenizeResult anyTokenized = logic::tokenizeLogicExpression(anyExpression);
+        QVERIFY2(anyTokenized.success, qPrintable(anyTokenized.error.message));
+        const logic::LogicParseResult anyParsed = logic::parseLogicTokens(anyExpression, anyTokenized.tokens);
+        QVERIFY2(anyParsed.success, qPrintable(anyParsed.error.message));
+        QCOMPARE(anyParsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
+        QCOMPARE(anyParsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+
+        logic::LogicRowContext anyTrueRow;
+        anyTrueRow.tableName = QStringLiteral("parent");
+        anyTrueRow.cellsByName.insert(QStringLiteral("id"),
+                                      logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        anyTrueRow.cellsByName.insert(QStringLiteral("score"),
+                                      logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        const logic::LogicEvalResult anyTrueResult = logic::evaluateLogicExpression(anyParsed.root,
+                                                                                   anyTrueRow,
+                                                                                   evalContext);
+        QVERIFY2(anyTrueResult.success, qPrintable(anyTrueResult.error.message));
+        QCOMPARE(anyTrueResult.truth, logic::LogicTruthValue::True);
+
+        logic::LogicRowContext anyFalseRow = anyTrueRow;
+        anyFalseRow.cellsByName.insert(QStringLiteral("score"),
+                                       logic::LogicCellValue{QStringLiteral("30"), tabledef::ColumnType::Int, false});
+        const logic::LogicEvalResult anyFalseResult = logic::evaluateLogicExpression(anyParsed.root,
+                                                                                    anyFalseRow,
+                                                                                    evalContext);
+        QVERIFY2(anyFalseResult.success, qPrintable(anyFalseResult.error.message));
+        QCOMPARE(anyFalseResult.truth, logic::LogicTruthValue::False);
+
+        const QString allExpression = QStringLiteral(
+            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+        const logic::LogicTokenizeResult allTokenized = logic::tokenizeLogicExpression(allExpression);
+        QVERIFY2(allTokenized.success, qPrintable(allTokenized.error.message));
+        const logic::LogicParseResult allParsed = logic::parseLogicTokens(allExpression, allTokenized.tokens);
+        QVERIFY2(allParsed.success, qPrintable(allParsed.error.message));
+        QCOMPARE(allParsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
+        QCOMPARE(allParsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+
+        logic::LogicRowContext allTrueRow = anyTrueRow;
+        allTrueRow.cellsByName.insert(QStringLiteral("score"),
+                                      logic::LogicCellValue{QStringLiteral("20"), tabledef::ColumnType::Int, false});
+        const logic::LogicEvalResult allTrueResult = logic::evaluateLogicExpression(allParsed.root,
+                                                                                   allTrueRow,
+                                                                                   evalContext);
+        QVERIFY2(allTrueResult.success, qPrintable(allTrueResult.error.message));
+        QCOMPARE(allTrueResult.truth, logic::LogicTruthValue::True);
+
+        logic::LogicRowContext allFalseRow = anyTrueRow;
+        allFalseRow.cellsByName.insert(QStringLiteral("score"),
+                                       logic::LogicCellValue{QStringLiteral("5"), tabledef::ColumnType::Int, false});
+        const logic::LogicEvalResult allFalseResult = logic::evaluateLogicExpression(allParsed.root,
+                                                                                    allFalseRow,
+                                                                                    evalContext);
+        QVERIFY2(allFalseResult.success, qPrintable(allFalseResult.error.message));
+        QCOMPARE(allFalseResult.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_correlatedQuantifiedComparisonReturnsUnknownWhenSubqueryContainsNull()
+    {
+        NullAwareBindingSubqueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        const QString anyExpression = QStringLiteral(
+            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+        const auto anyTokenized = logic::tokenizeLogicExpression(anyExpression);
+        QVERIFY2(anyTokenized.success, qPrintable(anyTokenized.error.message));
+        const auto anyParsed = logic::parseLogicTokens(anyExpression, anyTokenized.tokens);
+        QVERIFY2(anyParsed.success, qPrintable(anyParsed.error.message));
+
+        logic::LogicRowContext anyRow;
+        anyRow.tableName = QStringLiteral("parent");
+        anyRow.cellsByName.insert(QStringLiteral("id"),
+                                  logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        anyRow.cellsByName.insert(QStringLiteral("score"),
+                                  logic::LogicCellValue{QStringLiteral("30"), tabledef::ColumnType::Int, false});
+
+        const auto anyResult = logic::evaluateLogicExpression(anyParsed.root, anyRow, evalContext);
+        QVERIFY2(anyResult.success, qPrintable(anyResult.error.message));
+        QCOMPARE(anyResult.truth, logic::LogicTruthValue::Unknown);
+
+        const QString allExpression = QStringLiteral(
+            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+        const auto allTokenized = logic::tokenizeLogicExpression(allExpression);
+        QVERIFY2(allTokenized.success, qPrintable(allTokenized.error.message));
+        const auto allParsed = logic::parseLogicTokens(allExpression, allTokenized.tokens);
+        QVERIFY2(allParsed.success, qPrintable(allParsed.error.message));
+
+        logic::LogicRowContext allRow;
+        allRow.tableName = QStringLiteral("parent");
+        allRow.cellsByName.insert(QStringLiteral("id"),
+                                  logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        allRow.cellsByName.insert(QStringLiteral("score"),
+                                  logic::LogicCellValue{QStringLiteral("20"), tabledef::ColumnType::Int, false});
+
+        const auto allResult = logic::evaluateLogicExpression(allParsed.root, allRow, evalContext);
+        QVERIFY2(allResult.success, qPrintable(allResult.error.message));
+        QCOMPARE(allResult.truth, logic::LogicTruthValue::Unknown);
     }
 
     void test_parseAndNotEvaluation()
@@ -644,6 +817,51 @@ private slots:
         const auto res = logic::evaluateExistsSubqueryNode(parsed.root, makeOuterRowContext(), evalContext);
         QVERIFY(!res.success);
         QVERIFY(res.error.message.contains(QStringLiteral("subquery executor is not configured")));
+    }
+
+    void test_existsSubqueryIgnoresColumnCount()
+    {
+        repo::TableData tableData;
+        tableData.columns = {QStringLiteral("a"), QStringLiteral("b")};
+        tableData.rows = {{QStringLiteral("1"), QStringLiteral("2")}};
+
+        FixedSubqueryExecutor executor(tableData,
+                                       {tabledef::ColumnType::Int, tabledef::ColumnType::Int});
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        const QString expr = QStringLiteral("EXISTS (SELECT a, b FROM t)");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        const auto res = logic::evaluateLogicExpression(parsed.root, makeOuterRowContext(), evalContext);
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+    }
+
+    void test_existsSubqueryIgnoresNullValues()
+    {
+        repo::TableData tableData;
+        tableData.columns = {QStringLiteral("a")};
+        tableData.rows = {{QString()}};
+
+        FixedSubqueryExecutor executor(tableData, {tabledef::ColumnType::Varchar});
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        const QString expr = QStringLiteral("EXISTS (SELECT a FROM t)");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        const auto res = logic::evaluateLogicExpression(parsed.root, makeOuterRowContext(), evalContext);
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
     }
 
     void test_logicSubqueryExecutorAdapter_forwardsCalls()

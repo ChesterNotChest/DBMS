@@ -246,7 +246,7 @@ private slots:
         QueryExecutor executor;
         const service::QueryExecuteContext context{databaseName, m_dataRoot};
         const QueryExecuteResult result = executor.executeSelectSql(
-            QStringLiteral("SELECT id FROM child WHERE parent_id = 10"),
+            QStringLiteral("SELECT id FROM child WHERE parent_id = 10 OR id = 999"),
             context);
 
         QVERIFY2(result.success, qPrintable(result.errorMessage));
@@ -255,6 +255,71 @@ private slots:
         QCOMPARE(result.selectResult.columnTypes.first(), tabledef::ColumnType::Int);
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
+    }
+
+    void test_executeSelectSqlFiltersUnknownWhereRows()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_unknown_where_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("20")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM child WHERE parent_id = NULL OR id = 999"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 0);
+    }
+
+    void test_executeSelectSqlAllowsWhereOnUnprojectedColumns()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_unprojected_where_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("20")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM child WHERE parent_id = 20 OR id = 999"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("2"));
+    }
+
+    void test_executeSelectSqlAppliesWhereAstBeforeProjectionAndLimit()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_select_limit_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("30")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("3"), QStringLiteral("20")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM child WHERE parent_id = 10 OR parent_id = 20 LIMIT 1"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.columnTypes.size(), 1);
+        QCOMPARE(result.selectResult.columnTypes.first(), tabledef::ColumnType::Int);
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("2"));
     }
 
     void test_evaluateCorrelatedExistsRejectsMissingBinding()
@@ -338,6 +403,35 @@ private slots:
                                                                                             m_dataRoot));
         QVERIFY(!result.success);
         QVERIFY(result.error.message.contains(QStringLiteral("missing correlated binding")));
+    }
+
+    void test_evaluateCorrelatedExistsWithNullOuterBindingReturnsFalse()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_exists_null_binding_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        logic::LogicRowContext outerRow;
+        outerRow.tableName = QStringLiteral("parent");
+        outerRow.cellsByName.insert(QStringLiteral("id"),
+                                    logic::LogicCellValue{QString(), tabledef::ColumnType::Int, true});
+
+        const logic::LogicEvalResult result = logic::evaluateLogicExpression(parsed.root,
+                                                                            outerRow,
+                                                                            makeEvalContext(&executor,
+                                                                                            databaseName,
+                                                                                            m_dataRoot));
+        QVERIFY2(result.success, qPrintable(result.error.message));
+        QCOMPARE(result.truth, logic::LogicTruthValue::False);
     }
 
     void test_correlatedSubqueryExecutesPerRowWithoutCache()
