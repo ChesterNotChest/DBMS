@@ -49,9 +49,12 @@ CorrelationBindings buildCorrelationBindings(const LogicRowContext &outerRowCont
     CorrelationBindings bindings;
     for (const QString &outerName : referencedOuterNames) {
         const QString localName = bindingKeyToLocalName(outerName);
-        const auto it = outerRowContext.cellsByName.constFind(localName);
+        auto it = outerRowContext.cellsByName.constFind(outerName);
         if (it == outerRowContext.cellsByName.constEnd()) {
-            continue;
+            it = outerRowContext.cellsByName.constFind(localName);
+            if (it == outerRowContext.cellsByName.constEnd()) {
+                continue;
+            }
         }
         bindings.items.append(CorrelatedBinding{outerName, it.value().value, it.value().type, it.value().isNull});
     }

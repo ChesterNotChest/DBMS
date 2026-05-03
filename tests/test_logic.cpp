@@ -75,6 +75,34 @@ private:
     QueryExecuteResult m_res;
 };
 
+class BindingAwareSubqueryExecutor : public logic::ISubqueryExecutor
+{
+public:
+    QueryExecuteResult executeSelectSql(const QString &, const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        return result;
+    }
+
+    QueryExecuteResult executeCorrelatedSelect(const QString &,
+                                               const logic::CorrelationBindings &bindings,
+                                               const QueryExecuteContext &) override
+    {
+        QueryExecuteResult result;
+        result.success = true;
+        result.selectResult.success = true;
+        if (!bindings.items.isEmpty() && bindings.items.first().value == QStringLiteral("10")) {
+            result.selectResult.resultTable.rows.append({QStringLiteral("1")});
+        }
+        observedBindings = bindings;
+        return result;
+    }
+
+    logic::CorrelationBindings observedBindings;
+};
+
 } // namespace
 
 class LogicTest : public QObject
@@ -149,6 +177,50 @@ private slots:
         QCOMPARE(bindings.items.first().value, QStringLiteral("10"));
         QCOMPARE(bindings.items.first().type, tabledef::ColumnType::Int);
         QCOMPARE(bindings.items.first().isNull, false);
+    }
+
+    void test_correlatedSubqueryPrefersExactOuterBindingName()
+    {
+        logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        outerRowContext.cellsByName.insert(QStringLiteral("outer.id"),
+                                           logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        outerRowContext.cellsByName.insert(QStringLiteral("id"),
+                                           logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+
+        const logic::CorrelationBindings bindings = logic::buildCorrelationBindings(outerRowContext,
+                                                                                   {QStringLiteral("outer.id")});
+
+        QCOMPARE(bindings.items.size(), 1);
+        QCOMPARE(bindings.items.first().name, QStringLiteral("outer.id"));
+        QCOMPARE(bindings.items.first().value, QStringLiteral("10"));
+    }
+
+    void test_correlatedSubqueryUsesExactOuterBindingDuringEvaluation()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+
+        BindingAwareSubqueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        outerRowContext.cellsByName.insert(QStringLiteral("outer.id"),
+                                           logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        outerRowContext.cellsByName.insert(QStringLiteral("id"),
+                                           logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
+
+        const logic::LogicEvalResult result = logic::evaluateLogicExpression(parsed.root, outerRowContext, evalContext);
+        QVERIFY2(result.success, qPrintable(result.error.message));
+        QCOMPARE(result.truth, logic::LogicTruthValue::True);
+        QCOMPARE(executor.observedBindings.items.size(), 1);
+        QCOMPARE(executor.observedBindings.items.first().name, QStringLiteral("outer.id"));
+        QCOMPARE(executor.observedBindings.items.first().value, QStringLiteral("10"));
     }
 
     void test_parseInLiteralListRejectsColumnReference()

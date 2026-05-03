@@ -110,6 +110,9 @@ static bool isSimpleWhereNode(const logic::LogicNode &node, QVariantList *condit
         || lhs.reference.scope != logic::LogicReferenceScope::Local) {
         return false;
     }
+    if (lhs.reference.name.contains(QLatin1Char('.'))) {
+        return false;
+    }
     if (rhs.type != logic::LogicNodeType::Literal || rhs.literalIsNull) {
         return false;
     }

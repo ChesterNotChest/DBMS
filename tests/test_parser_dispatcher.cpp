@@ -228,6 +228,12 @@ private slots:
         QCOMPARE(conditions.at(1).toMap().value(QStringLiteral("columnName")).toString(), QStringLiteral("name"));
         QCOMPARE(conditions.at(1).toMap().value(QStringLiteral("value")).toString(), QStringLiteral("alice"));
 
+        const sqlparser::ParseResult qualified = sqlparser::parseSql(
+            QStringLiteral("SELECT id FROM student WHERE student.id = 1"));
+        QVERIFY2(qualified.success, qPrintable(qualified.errorMessage));
+        QCOMPARE(qualified.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
+        QVERIFY(!qualified.payload.contains(QStringLiteral("conditions")));
+
         const sqlparser::ParseResult ordered = sqlparser::parseSql(QStringLiteral("SELECT * FROM student ORDER BY id"));
         QVERIFY(!ordered.success);
         QVERIFY(ordered.errorMessage.contains(QStringLiteral("unsupported clause")));
@@ -309,6 +315,31 @@ private slots:
         QVERIFY2(remainingRows.success, qPrintable(remainingRows.errorMessage));
         QCOMPARE(remainingRows.resultTable.rows.size(), 1);
         QCOMPARE(remainingRows.resultTable.rows.first(), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
+    }
+
+    void test_dispatchSelectKeepsQualifiedWhereOnAstPath()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_qualified_select_db");
+        const QString tableName = QStringLiteral("student_qualified");
+
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT id FROM student_qualified WHERE student_qualified.id = 1"));
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
     }
 
     void test_parseWhereSupportsLogicOperators()

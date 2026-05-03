@@ -43,6 +43,17 @@ tabledef::TableSchema childSchema(const QString &tableName)
     return schema;
 }
 
+tabledef::TableSchema relationSchema(const QString &tableName, const QString &foreignKeyColumn)
+{
+    tabledef::TableSchema schema;
+    schema.tableName = tableName;
+    schema.columns = {
+        makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+        makeColumn(foreignKeyColumn, tabledef::ColumnType::Int, 0, false),
+    };
+    return schema;
+}
+
 void ensureDatabase(const QString &databaseName)
 {
     TaskResult result = database_service::createDatabase(databaseName);
@@ -303,6 +314,36 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
+    }
+
+    void test_executeNestedCorrelatedSelectPreservesOuterBindingName()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_nested_correlated_db");
+        const QString parentTable = QStringLiteral("parent");
+        const QString childTable = QStringLiteral("child");
+        const QString grandchildTable = QStringLiteral("grandchild");
+
+        ensureDatabase(databaseName);
+        ensureTable(parentTable, relationSchema(parentTable, QStringLiteral("parent_id")));
+        ensureTable(childTable, relationSchema(childTable, QStringLiteral("parent_id")));
+        ensureTable(grandchildTable, relationSchema(grandchildTable, QStringLiteral("child_id")));
+
+        seedRow(databaseName, parentTable, {QStringLiteral("10"), QStringLiteral("0")}, m_dataRoot);
+        seedRow(databaseName, childTable, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, grandchildTable, {QStringLiteral("100"), QStringLiteral("10")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSql(
+            QStringLiteral(
+                "SELECT id FROM parent WHERE EXISTS ("
+                "SELECT id FROM child WHERE EXISTS ("
+                "SELECT id FROM grandchild WHERE grandchild.child_id = outer.id))"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("10"));
     }
 
     void test_executeSqlRejectsNonSelect()
