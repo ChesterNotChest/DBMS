@@ -75,8 +75,12 @@ public:
             result.selectResult.resultTable.rows.append({QStringLiteral("10")});
         }
 
+        observedBindings = bindings;
+
         return result;
     }
+
+    logic::CorrelationBindings observedBindings;
 };
 
 class NullAwareBindingSubqueryExecutor : public logic::ISubqueryExecutor
@@ -137,34 +141,6 @@ public:
 
 private:
     QueryExecuteResult m_res;
-};
-
-class BindingAwareSubqueryExecutor : public logic::ISubqueryExecutor
-{
-public:
-    QueryExecuteResult executeSelectSql(const QString &, const QueryExecuteContext &) override
-    {
-        QueryExecuteResult result;
-        result.success = true;
-        result.selectResult.success = true;
-        return result;
-    }
-
-    QueryExecuteResult executeCorrelatedSelect(const QString &,
-                                               const logic::CorrelationBindings &bindings,
-                                               const QueryExecuteContext &) override
-    {
-        QueryExecuteResult result;
-        result.success = true;
-        result.selectResult.success = true;
-        if (!bindings.items.isEmpty() && bindings.items.first().value == QStringLiteral("10")) {
-            result.selectResult.resultTable.rows.append({QStringLiteral("1")});
-        }
-        observedBindings = bindings;
-        return result;
-    }
-
-    logic::CorrelationBindings observedBindings;
 };
 
 } // namespace

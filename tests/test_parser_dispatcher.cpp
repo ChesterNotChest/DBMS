@@ -262,6 +262,18 @@ private slots:
         QVERIFY2(complexWhere.success, qPrintable(complexWhere.errorMessage));
         QCOMPARE(complexWhere.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
         QVERIFY(!complexWhere.payload.contains(QStringLiteral("conditions")));
+
+        const sqlparser::ParseResult qualifiedUpdate = sqlparser::parseSql(
+            QStringLiteral("UPDATE student SET name = 'alice' WHERE student.id = 1"));
+        QVERIFY2(qualifiedUpdate.success, qPrintable(qualifiedUpdate.errorMessage));
+        QCOMPARE(qualifiedUpdate.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
+        QVERIFY(!qualifiedUpdate.payload.contains(QStringLiteral("conditions")));
+
+        const sqlparser::ParseResult qualifiedDelete = sqlparser::parseSql(
+            QStringLiteral("DELETE FROM student WHERE student.id = 1"));
+        QVERIFY2(qualifiedDelete.success, qPrintable(qualifiedDelete.errorMessage));
+        QCOMPARE(qualifiedDelete.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
+        QVERIFY(!qualifiedDelete.payload.contains(QStringLiteral("conditions")));
     }
 
     void test_dispatcherUpdateAndDeleteApplyComplexWhere()
@@ -340,6 +352,60 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
+    }
+
+    void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_qualified_dml_db");
+        const QString updateTable = QStringLiteral("student_update_qualified");
+        const QString deleteTable = QStringLiteral("student_delete_qualified");
+
+        ensureDatabase(databaseName);
+        ensureTable(updateTable, baseSchema(updateTable));
+        ensureTable(deleteTable, baseSchema(deleteTable));
+
+        seedRows(updateTable,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
+        seedRows(deleteTable,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+
+        const SqlExecResult updateResult = dispatcher.execute(
+            QStringLiteral("UPDATE student_update_qualified SET name = 'updated' "
+                           "WHERE student_update_qualified.id = 1"));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult updatedRows = selectAllRows(updateTable);
+        QVERIFY2(updatedRows.success, qPrintable(updatedRows.errorMessage));
+        QCOMPARE(updatedRows.resultTable.rows.size(), 2);
+        QCOMPARE(updatedRows.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("updated")}));
+        QCOMPARE(updatedRows.resultTable.rows.at(1),
+                 QStringList({QStringLiteral("2"), QStringLiteral("bob")}));
+
+        const SqlExecResult deleteResult = dispatcher.execute(
+            QStringLiteral("DELETE FROM student_delete_qualified "
+                           "WHERE student_delete_qualified.id = 1"));
+        QVERIFY2(deleteResult.success, qPrintable(deleteResult.errorMessage));
+        QCOMPARE(deleteResult.affectedRows, 1);
+
+        const SelectRowsResult remainingRows = selectAllRows(deleteTable);
+        QVERIFY2(remainingRows.success, qPrintable(remainingRows.errorMessage));
+        QCOMPARE(remainingRows.resultTable.rows.size(), 1);
+        QCOMPARE(remainingRows.resultTable.rows.first(),
+                 QStringList({QStringLiteral("2"), QStringLiteral("bob")}));
     }
 
     void test_parseWhereSupportsLogicOperators()
