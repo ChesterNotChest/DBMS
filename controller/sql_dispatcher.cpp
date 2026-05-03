@@ -4,6 +4,7 @@
  * 所有业务操作都走 service 层，不直接操作 repo 或文件。
  */
 #include "sql_dispatcher.h"
+#include "nest_query.h"
 #include "../utils/service_common/service_common.h"
 #include <QDebug>
 
@@ -477,6 +478,29 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected. Use USE database_name;"};
 
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+        QueryExecutor executor;
+        const QueryExecuteResult queryResult = executor.executeParsed(p,
+                                                                     QueryExecuteContext{currentDatabase,
+                                                                                         getDataRoot()});
+        if (queryResult.success) {
+            return {true,
+                    {},
+                    formatSelectResult(queryResult.selectResult),
+                    queryResult.affectedRows,
+                    queryResult.selectResult,
+                    p.commandType,
+                    p.payload};
+        }
+        return {false,
+                queryResult.errorMessage,
+                queryResult.errorMessage,
+                queryResult.affectedRows,
+                queryResult.selectResult,
+                p.commandType,
+                p.payload};
+    }
+
     QString table = p.payload["tableName"].toString();
     QStringList projection = p.payload["projection"].toStringList();
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
@@ -545,16 +569,48 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
-    // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
-    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
-        return {false, conditionError};
+    const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
+    if (!hasComplexWhere) {
+        if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+            return {false, conditionError};
+        }
     }
 
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
+
+    TableDmlService dmlService;
+    if (hasComplexWhere) {
+        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
+        if (!conditionError.isEmpty()) {
+            return {false, conditionError};
+        }
+
+        QueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.currentDatabase = currentDatabase;
+        evalContext.dataRoot = getDataRoot();
+        evalContext.allowSubquery = true;
+
+        const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+        const TableDmlResult r = dmlService.updateRows(currentDatabase,
+                                                       table,
+                                                       TargetTableKind::TableDat,
+                                                       schema,
+                                                       assignMap,
+                                                       conditions,
+                                                       ValidationMode::UserData,
+                                                       &whereAst,
+                                                       &evalContext);
+        if (r.success)
+            return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
+                    r.affectedRowCount};
+        return {false, r.errorMessage};
+    }
 
     auto r = tuple_service::updateRows(table, assignMap, conditions);
     if (r.success)
@@ -568,11 +624,42 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
         return {false, "No database selected"};
 
     QString table = p.payload["tableName"].toString();
-    // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
-    if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
-        return {false, conditionError};
+    const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
+    if (!hasComplexWhere) {
+        if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
+            return {false, conditionError};
+        }
+    }
+
+    if (hasComplexWhere) {
+        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
+        if (!conditionError.isEmpty()) {
+            return {false, conditionError};
+        }
+
+        QueryExecutor executor;
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.currentDatabase = currentDatabase;
+        evalContext.dataRoot = getDataRoot();
+        evalContext.allowSubquery = true;
+
+        const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+        TableDmlService dmlService;
+        const TableDmlResult r = dmlService.deleteRows(currentDatabase,
+                                                       table,
+                                                       TargetTableKind::TableDat,
+                                                       schema,
+                                                       conditions,
+                                                       ValidationMode::UserData,
+                                                       &whereAst,
+                                                       &evalContext);
+        if (r.success)
+            return {true, {}, QString("%1 row(s) deleted from '%2'").arg(r.affectedRowCount).arg(table),
+                    r.affectedRowCount};
+        return {false, r.errorMessage};
     }
 
     auto r = tuple_service::deleteRows(table, conditions);

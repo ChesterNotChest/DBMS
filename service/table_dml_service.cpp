@@ -1,4 +1,5 @@
 #include "service.h"
+#include "../utils/logic/logic.h"
 
 #include <algorithm>
 #include <QSet>
@@ -77,6 +78,133 @@ bool rowMatchesConditions(const repo::TableRow &row,
         }
         if (row.value(columnIndex) != condition.value) {
             return false;
+        }
+    }
+
+    return true;
+}
+
+logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
+                                       const repo::TableData &table,
+                                       int rowIndex);
+
+bool rowMatchesComplexWhere(const tabledef::TableSchema &schema,
+                            const repo::TableData &table,
+                            int rowIndex,
+                            const logic::LogicNode &whereAst,
+                            const logic::LogicEvalContext &evalContext,
+                            QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (rowIndex < 0 || rowIndex >= table.rows.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("row index is out of range");
+        }
+        return false;
+    }
+
+    const logic::LogicRowContext rowContext = buildRowContext(schema, table, rowIndex);
+    const logic::LogicEvalResult evalResult = logic::evaluateLogicExpression(whereAst, rowContext, evalContext);
+    if (!evalResult.success) {
+        if (error != nullptr) {
+            *error = evalResult.error.message;
+        }
+        return false;
+    }
+
+    return evalResult.truth == logic::LogicTruthValue::True;
+}
+
+tabledef::ColumnType columnTypeForName(const tabledef::TableSchema &schema, const QString &columnName)
+{
+    for (const tabledef::Column &column : schema.columns) {
+        if (column.name == columnName) {
+            return column.type;
+        }
+    }
+    return tabledef::ColumnType::Varchar;
+}
+
+logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
+                                      const repo::TableData &table,
+                                      int rowIndex)
+{
+    logic::LogicRowContext rowContext;
+    rowContext.tableName = schema.tableName;
+    if (rowIndex < 0 || rowIndex >= table.rows.size()) {
+        return rowContext;
+    }
+
+    const repo::TableRow &row = table.rows.at(rowIndex);
+    for (int columnIndex = 0; columnIndex < schema.columns.size(); ++columnIndex) {
+        const tabledef::Column &column = schema.columns.at(columnIndex);
+        const QString value = columnIndex < row.size() ? row.at(columnIndex) : QString();
+        rowContext.cellsByName.insert(column.name,
+                                      logic::LogicCellValue{value,
+                                                            column.type,
+                                                            value.isEmpty()});
+    }
+    return rowContext;
+}
+
+bool validateCheckConstraints(const tabledef::TableSchema &schema,
+                              const repo::TableData &table,
+                              QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    logic::LogicEvalContext evalContext;
+    evalContext.allowSubquery = false;
+
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (!tabledef::isCheckConstraint(constraint)) {
+            continue;
+        }
+        if (constraint.checkClause.trimmed().isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("check constraint '%1' is incomplete").arg(constraint.name);
+            }
+            return false;
+        }
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(constraint.checkClause);
+        if (!tokenized.success) {
+            if (error != nullptr) {
+                *error = QStringLiteral("check constraint '%1': %2").arg(constraint.name, tokenized.error.message);
+            }
+            return false;
+        }
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(constraint.checkClause, tokenized.tokens);
+        if (!parsed.success) {
+            if (error != nullptr) {
+                *error = QStringLiteral("check constraint '%1': %2").arg(constraint.name, parsed.error.message);
+            }
+            return false;
+        }
+
+        for (int rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex) {
+            const logic::LogicRowContext rowContext = buildRowContext(schema, table, rowIndex);
+            const logic::LogicEvalResult evalResult = logic::evaluateCheckConstraintForRow(parsed.root,
+                                                                                          rowContext,
+                                                                                          evalContext);
+            if (!evalResult.success) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1': %2")
+                                 .arg(constraint.name, evalResult.error.message);
+                }
+                return false;
+            }
+            if (evalResult.truth != logic::LogicTruthValue::True) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1' is violated").arg(constraint.name);
+                }
+                return false;
+            }
         }
     }
 
@@ -1903,6 +2031,14 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         return indexes;
     }();
 
+    if (validationMode == ValidationMode::UserData
+        && targetTableKind == TargetTableKind::TableDat) {
+        if (!validateCheckConstraints(targetSchema, candidateTable, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
+    }
+
     if (validationMode == ValidationMode::UserData) {
         if (targetTableKind == TargetTableKind::TableDat) {
             QString indexError;
@@ -1983,7 +2119,9 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                            const tabledef::TableSchema &targetSchema,
                                            const QMap<QString, QString> &assignmentMap,
                                            const QList<SimpleCondition> &simpleConditions,
-                                           ValidationMode validationMode) const
+                                           ValidationMode validationMode,
+                                           const logic::LogicNode *complexWhereAst,
+                                           const logic::LogicEvalContext *evalContext) const
 {
     TableDmlResult result;
 
@@ -2035,7 +2173,22 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     QList<int> matchedRowIndexes;
     for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
         QString matchError;
-        if (!rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError)) {
+        bool includeRow = false;
+        if (complexWhereAst != nullptr) {
+            if (evalContext == nullptr) {
+                result.errorMessage = QStringLiteral("complex WHERE evaluation context is missing");
+                return result;
+            }
+            includeRow = rowMatchesComplexWhere(targetSchema,
+                                                currentTable,
+                                                rowIndex,
+                                                *complexWhereAst,
+                                                *evalContext,
+                                                &matchError);
+        } else {
+            includeRow = rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError);
+        }
+        if (!includeRow) {
             if (!matchError.isEmpty()) {
                 result.errorMessage = matchError;
                 return result;
@@ -2075,6 +2228,14 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
             updatedRow[columnIndex] = newValue;
         }
         candidateTable.rows[rowIndex] = updatedRow;
+    }
+
+    if (validationMode == ValidationMode::UserData
+        && targetTableKind == TargetTableKind::TableDat) {
+        if (!validateCheckConstraints(targetSchema, candidateTable, &error)) {
+            result.errorMessage = error;
+            return result;
+        }
     }
 
     if (validationMode == ValidationMode::UserData
@@ -2227,7 +2388,9 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
                                            TargetTableKind targetTableKind,
                                            const tabledef::TableSchema &targetSchema,
                                            const QList<SimpleCondition> &simpleConditions,
-                                           ValidationMode validationMode) const
+                                           ValidationMode validationMode,
+                                           const logic::LogicNode *complexWhereAst,
+                                           const logic::LogicEvalContext *evalContext) const
 {
     TableDmlResult result;
 
@@ -2272,7 +2435,22 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
     QList<int> matchedRowIndexes;
     for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
         QString matchError;
-        if (!rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError)) {
+        bool includeRow = false;
+        if (complexWhereAst != nullptr) {
+            if (evalContext == nullptr) {
+                result.errorMessage = QStringLiteral("complex WHERE evaluation context is missing");
+                return result;
+            }
+            includeRow = rowMatchesComplexWhere(targetSchema,
+                                                currentTable,
+                                                rowIndex,
+                                                *complexWhereAst,
+                                                *evalContext,
+                                                &matchError);
+        } else {
+            includeRow = rowMatchesConditions(currentTable.rows.at(rowIndex), currentTable, simpleConditions, &matchError);
+        }
+        if (!includeRow) {
             if (!matchError.isEmpty()) {
                 result.errorMessage = matchError;
                 return result;

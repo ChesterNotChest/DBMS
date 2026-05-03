@@ -3,6 +3,7 @@
 
 #include "../service/service.h"
 #include "../utils/sql_parser/sql_parser.h"
+#include "../utils/logic/subquery_logic.h"
 
 namespace service {
 
@@ -17,28 +18,32 @@ struct QueryExecuteResult
     bool success = false;
     QString errorMessage;
     QString text;
-    QString commandType;
     int affectedRows = -1;
     SelectRowsResult selectResult;
-    QVariantMap payload;
 };
 
 class QueryExecutor
+    : public logic::ISubqueryExecutor
 {
 public:
     // Accepts SQL text, but only SELECT is allowed.
     QueryExecuteResult executeSql(const QString &sql,
-                                  const QueryExecuteContext &context = {}) const;
+                                             const QueryExecuteContext &context = {});
 
     // Accepts parsed SQL, but only SELECT is allowed.
     QueryExecuteResult executeParsed(const sqlparser::ParseResult &parsed,
-                                     const QueryExecuteContext &context = {}) const;
+                                                 const QueryExecuteContext &context = {});
 
     QueryExecuteResult executeSelectSql(const QString &sql,
-                                        const QueryExecuteContext &context = {}) const;
+                                                     const QueryExecuteContext &context = {});
+
+    QueryExecuteResult executeCorrelatedSelect(const QString &sql,
+                                               const logic::CorrelationBindings &bindings,
+                                                              const QueryExecuteContext &context = {}) override;
 
 private:
-    QueryExecuteResult execSelect(const sqlparser::ParseResult &parsed) const;
+    QueryExecuteResult execSelect(const sqlparser::ParseResult &parsed,
+                                             const logic::CorrelationBindings *bindings = nullptr);
 };
 
 } // namespace service

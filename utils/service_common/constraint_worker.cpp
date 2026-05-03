@@ -5,6 +5,7 @@
  */
 
 #include "service_common.h"
+#include "../logic/logic.h"
 
 #include <QDebug>
 #include <QSet>
@@ -79,6 +80,35 @@ QString rowLocatorForIndex(const QStringList &rowIds, int rowIndex, QString *err
     }
 
     return rowIds.at(rowIndex);
+}
+
+tabledef::ColumnType columnTypeForName(const tabledef::TableSchema &schema, const QString &columnName)
+{
+    for (const tabledef::Column &column : schema.columns) {
+        if (column.name == columnName) {
+            return column.type;
+        }
+    }
+    return tabledef::ColumnType::Varchar;
+}
+
+logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
+                                      const QStringList &tableColumns,
+                                      const QStringList &rowValues)
+{
+    logic::LogicRowContext rowContext;
+    rowContext.tableName = schema.tableName;
+
+    for (int columnIndex = 0; columnIndex < tableColumns.size(); ++columnIndex) {
+        const QString &columnName = tableColumns.at(columnIndex);
+        const QString value = columnIndex < rowValues.size() ? rowValues.at(columnIndex) : QString();
+        rowContext.cellsByName.insert(columnName,
+                                      logic::LogicCellValue{value,
+                                                            columnTypeForName(schema, columnName),
+                                                            value.isEmpty()});
+    }
+
+    return rowContext;
 }
 
 void logIndexMaintenance(const QString &message)
@@ -247,6 +277,53 @@ bool validateConstraintRows(const QString &databaseName,
     }
 
     for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (tabledef::isCheckConstraint(constraint)) {
+            if (constraint.checkClause.trimmed().isEmpty()) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1' is incomplete").arg(constraint.name);
+                }
+                return false;
+            }
+
+            const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(constraint.checkClause);
+            if (!tokenized.success) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1': %2").arg(constraint.name, tokenized.error.message);
+                }
+                return false;
+            }
+
+            const logic::LogicParseResult parsed = logic::parseLogicTokens(constraint.checkClause, tokenized.tokens);
+            if (!parsed.success) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("check constraint '%1': %2").arg(constraint.name, parsed.error.message);
+                }
+                return false;
+            }
+
+            const logic::LogicEvalContext evalContext;
+            for (const QStringList &row : tableRows) {
+                const logic::LogicRowContext rowContext = buildRowContext(schema, tableColumns, row);
+                const logic::LogicEvalResult evalResult = logic::evaluateCheckConstraintForRow(parsed.root,
+                                                                                            rowContext,
+                                                                                            evalContext);
+                if (!evalResult.success) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("check constraint '%1': %2")
+                                     .arg(constraint.name, evalResult.error.message);
+                    }
+                    return false;
+                }
+                if (evalResult.truth != logic::LogicTruthValue::True) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("check constraint '%1' is violated").arg(constraint.name);
+                    }
+                    return false;
+                }
+            }
+            continue;
+        }
+
         if (tabledef::isPrimaryKeyConstraint(constraint) || tabledef::isUniqueConstraint(constraint)) {
             QSet<QString> seenKeys;
             for (const QStringList &row : tableRows) {

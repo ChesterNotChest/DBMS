@@ -82,7 +82,7 @@ QVector<SqlToken> SqlTokenizer::tokenize(const QString& sql) {
         }
     }
 
-    tokens.append(SqlToken{TokenType::END_OF_INPUT, "", line, col});
+    tokens.append(SqlToken{TokenType::END_OF_INPUT, "", pos, 0, line, col});
     return tokens;
 }
 
@@ -126,11 +126,12 @@ void SqlTokenizer::skipWhitespaceAndComments(const QString& sql, int& pos, int& 
 SqlToken SqlTokenizer::scanToken(const QString& sql, int& pos, int& line, int& col) {
     QChar ch = sql[pos];
     int startLine = line, startCol = col;
+    const int startPos = pos;
 
     // ——— 字符串字面量 ———
     if (ch == '\'' || ch == '"') {
         QString val = scanString(sql, pos, line, col);
-        return SqlToken{TokenType::STRING_LIT, val, startLine, startCol};
+        return SqlToken{TokenType::STRING_LIT, val, startPos, pos - startPos, startLine, startCol};
     }
 
     // ——— 数字 ———
@@ -147,42 +148,42 @@ SqlToken SqlTokenizer::scanToken(const QString& sql, int& pos, int& line, int& c
     ++pos; ++col;
 
     switch (ch.unicode()) {
-    case '(':  return {TokenType::LPAREN, "(", startLine, startCol};
-    case ')':  return {TokenType::RPAREN, ")", startLine, startCol};
-    case ',':  return {TokenType::COMMA,  ",", startLine, startCol};
-    case ';':  return {TokenType::SEMICOLON, ";", startLine, startCol};
-    case '.':  return {TokenType::DOT,   ".", startLine, startCol};
-    case '*':  return {TokenType::STAR,   "*", startLine, startCol};
-    case '+':  return {TokenType::PLUS,  "+", startLine, startCol};
-    case '-':  return {TokenType::MINUS, "-", startLine, startCol};
-    case '/':  return {TokenType::SLASH,  "/", startLine, startCol};
-    case '=':  return {TokenType::EQ,    "=", startLine, startCol};
+    case '(':  return {TokenType::LPAREN, "(", startPos, 1, startLine, startCol};
+    case ')':  return {TokenType::RPAREN, ")", startPos, 1, startLine, startCol};
+    case ',':  return {TokenType::COMMA,  ",", startPos, 1, startLine, startCol};
+    case ';':  return {TokenType::SEMICOLON, ";", startPos, 1, startLine, startCol};
+    case '.':  return {TokenType::DOT,   ".", startPos, 1, startLine, startCol};
+    case '*':  return {TokenType::STAR,   "*", startPos, 1, startLine, startCol};
+    case '+':  return {TokenType::PLUS,  "+", startPos, 1, startLine, startCol};
+    case '-':  return {TokenType::MINUS, "-", startPos, 1, startLine, startCol};
+    case '/':  return {TokenType::SLASH,  "/", startPos, 1, startLine, startCol};
+    case '=':  return {TokenType::EQ,    "=", startPos, 1, startLine, startCol};
 
     case '<':
         if (pos < sql.length()) {
             QChar next = sql[pos];
-            if (next == '=') { ++pos; ++col; return {TokenType::LE, "<=", startLine, startCol}; }
-            if (next == '>') { ++pos; ++col; return {TokenType::NE, "<>", startLine, startCol}; }
+            if (next == '=') { ++pos; ++col; return {TokenType::LE, "<=", startPos, 2, startLine, startCol}; }
+            if (next == '>') { ++pos; ++col; return {TokenType::NE, "<>", startPos, 2, startLine, startCol}; }
         }
-        return {TokenType::LT, "<", startLine, startCol};
+        return {TokenType::LT, "<", startPos, 1, startLine, startCol};
 
     case '>':
-        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::GE, ">=", startLine, startCol}; }
-        return {TokenType::GT, ">", startLine, startCol};
+        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::GE, ">=", startPos, 2, startLine, startCol}; }
+        return {TokenType::GT, ">", startPos, 1, startLine, startCol};
 
     case '!':
-        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::NE, "!=", startLine, startCol}; }
+        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::NE, "!=", startPos, 2, startLine, startCol}; }
         break;
 
     case ':':
-        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::ASSIGN, ":=", startLine, startCol}; }
+        if (pos < sql.length() && sql[pos] == '=') { ++pos; ++col; return {TokenType::ASSIGN, ":=", startPos, 2, startLine, startCol}; }
         break;
 
     default:
         break;
     }
 
-    return SqlToken{TokenType::UNKNOWN, QString(1, ch), startLine, startCol};
+    return SqlToken{TokenType::UNKNOWN, QString(1, ch), startPos, 1, startLine, startCol};
 }
 
 // ============================================================
@@ -226,6 +227,7 @@ QString SqlTokenizer::scanString(const QString& sql, int& pos, int& line, int& c
 // ============================================================
 SqlToken SqlTokenizer::scanNumber(const QString& sql, int& pos, int& line, int& col) {
     int startLine = line, startCol = col;
+    const int startPos = pos;
     QString num;
 
     while (pos < sql.length() && (sql[pos].isDigit() || sql[pos] == '.')) {
@@ -247,7 +249,7 @@ SqlToken SqlTokenizer::scanNumber(const QString& sql, int& pos, int& line, int& 
 
     bool isFloat = num.contains('.') || num.contains('e') || num.contains('E');
     return SqlToken{isFloat ? TokenType::FLOAT_LIT : TokenType::INTEGER_LIT,
-                     num, startLine, startCol};
+                     num, startPos, pos - startPos, startLine, startCol};
 }
 
 // ============================================================
@@ -255,6 +257,7 @@ SqlToken SqlTokenizer::scanNumber(const QString& sql, int& pos, int& line, int& 
 // ============================================================
 SqlToken SqlTokenizer::scanWord(const QString& sql, int& pos, int& line, int& col) {
     int startLine = line, startCol = col;
+    const int startPos = pos;
     QString word;
 
     while (pos < sql.length() && (sql[pos].isLetterOrNumber() || sql[pos] == '_')) {
@@ -262,7 +265,7 @@ SqlToken SqlTokenizer::scanWord(const QString& sql, int& pos, int& line, int& co
         ++pos; ++col;
     }
 
-    return SqlToken{keywordLookup(word), word, startLine, startCol};
+    return SqlToken{keywordLookup(word), word, startPos, pos - startPos, startLine, startCol};
 }
 
 } // namespace sqlparser

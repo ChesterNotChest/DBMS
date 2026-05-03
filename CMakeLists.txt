@@ -26,6 +26,21 @@ set(PROJECT_SOURCES
         utils/service_common/name_normalize.cpp
         utils/service_common/constraint_worker.cpp
         utils/service_common/sql_stringifier.cpp
+        utils/logic/logic.h
+        utils/logic/logic_types.h
+        utils/logic/logic_ast.h
+        utils/logic/logic_tokenizer.h
+        utils/logic/logic_tokenizer.cpp
+        utils/logic/logic_parser.h
+        utils/logic/logic_parser.cpp
+        utils/logic/simple_logic.h
+        utils/logic/simple_logic.cpp
+        utils/logic/set_logic.h
+        utils/logic/set_logic.cpp
+        utils/logic/subquery_logic.h
+        utils/logic/subquery_logic.cpp
+        utils/logic/logic_evaluator.h
+        utils/logic/logic_evaluator.cpp
         service/service.h
         service/database_service.cpp
         service/table_service.cpp
@@ -42,6 +57,8 @@ set(PROJECT_SOURCES
         tests/test_entry.h
         tests/test_parser_dispatcher.cpp
         tests/test_database_service.cpp
+        tests/test_logic.cpp
+        tests/test_query_executor.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp
         # ── SQL Parser 层（纯解析，不碰文件系统）──
@@ -91,6 +108,7 @@ endif()
 target_include_directories(DBMS PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/utils/sql_parser
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
         ${CMAKE_CURRENT_SOURCE_DIR}/display
 )
 
