@@ -8,6 +8,7 @@
 #include "../logic/logic.h"
 
 #include <QDebug>
+#include <QFile>
 #include <QSet>
 #include <QUuid>
 
@@ -1068,6 +1069,71 @@ bool removeConstraintBoundIndex(const QString &tableName,
         *error = QStringLiteral("constraint '%1' does not exist").arg(constraintName);
     }
     return false;
+}
+
+QStringList collectMutationRelatedTables(const QString &databaseName,
+                                         const QString &tableName,
+                                         QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    QSet<QString> relatedTables;
+    relatedTables.insert(tableName.trimmed());
+
+    repo::TabRepo tabRepo(databaseName, currentDataRoot);
+    QString tabError;
+    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
+    if (!tabError.isEmpty()) {
+        if (error != nullptr) {
+            *error = tabError;
+        }
+        return {};
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const repo::TableEntry &tableEntry : tableEntries) {
+            QString constraintError;
+            const QList<tabledef::Constraint> constraints =
+                loadUserTableConstraints(tableEntry.name, &constraintError);
+            if (!constraintError.isEmpty()) {
+                if (error != nullptr) {
+                    *error = constraintError;
+                }
+                return {};
+            }
+
+            for (const tabledef::Constraint &constraint : constraints) {
+                if (!tabledef::isForeignKeyConstraint(constraint)) {
+                    continue;
+                }
+                if (!tabledef::isForeignKeyReferenceComplete(constraint)) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("foreign key '%1' is incomplete").arg(constraint.name);
+                    }
+                    return {};
+                }
+
+                const bool parentKnown = relatedTables.contains(constraint.referencedTable);
+                const bool childKnown = relatedTables.contains(tableEntry.name);
+                if ((parentKnown || childKnown) && !relatedTables.contains(tableEntry.name)) {
+                    relatedTables.insert(tableEntry.name);
+                    changed = true;
+                }
+                if ((parentKnown || childKnown) && !relatedTables.contains(constraint.referencedTable)) {
+                    relatedTables.insert(constraint.referencedTable);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    QStringList tables = relatedTables.values();
+    std::sort(tables.begin(), tables.end());
+    return tables;
 }
 
 } // namespace service

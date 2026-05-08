@@ -90,6 +90,9 @@ bool ensureConstraintBoundIndex(const QString &tableName,
 bool removeConstraintBoundIndex(const QString &tableName,
                                const QString &constraintName,
                                QString *error);
+QStringList collectMutationRelatedTables(const QString &databaseName,
+                                         const QString &tableName,
+                                         QString *error);
 
 } // namespace service
 

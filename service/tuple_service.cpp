@@ -1,6 +1,37 @@
 #include "service.h"
 #include "../constants/thread_perf_def.h"
 
+namespace {
+
+QList<thread_runtime::RuntimeLockKey> mutationLockKeys(const QString &databaseName,
+                                                       const QStringList &tableNames)
+{
+    QList<thread_runtime::RuntimeLockKey> keys;
+    keys.reserve(tableNames.size());
+    for (const QString &tableName : tableNames) {
+        keys.append(thread_runtime::tableLockKey(service::currentDataRoot, databaseName, tableName));
+    }
+    return keys;
+}
+
+QList<thread_runtime::ScopedRuntimeLock> acquireMutationLocks(const QString &databaseName,
+                                                              const QString &tableName,
+                                                              QString *error)
+{
+    const QStringList relatedTables = service::collectMutationRelatedTables(databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+
+    return thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
+        mutationLockKeys(databaseName, relatedTables),
+        thread_runtime::RuntimeLockMode::Exclusive,
+        threadperf::kTableLockAcquireTimeoutMs,
+        error);
+}
+
+} // namespace
+
 namespace service::tuple_service {
 
 SelectRowsResult selectRows(const QString &tableName,
@@ -46,13 +77,8 @@ TaskResult insertRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    thread_runtime::ScopedRuntimeLock runtimeLock =
-        thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName),
-            thread_runtime::RuntimeLockMode::Exclusive,
-            threadperf::kTableLockAcquireTimeoutMs,
-            &error);
-    if (!runtimeLock.isValid()) {
+    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -82,13 +108,8 @@ TaskResult deleteRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    thread_runtime::ScopedRuntimeLock runtimeLock =
-        thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName),
-            thread_runtime::RuntimeLockMode::Exclusive,
-            threadperf::kTableLockAcquireTimeoutMs,
-            &error);
-    if (!runtimeLock.isValid()) {
+    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -119,13 +140,8 @@ TaskResult updateRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    thread_runtime::ScopedRuntimeLock runtimeLock =
-        thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName),
-            thread_runtime::RuntimeLockMode::Exclusive,
-            threadperf::kTableLockAcquireTimeoutMs,
-            &error);
-    if (!runtimeLock.isValid()) {
+    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
