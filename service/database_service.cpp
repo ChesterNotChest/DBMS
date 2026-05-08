@@ -3,6 +3,11 @@
 
 namespace {
 
+thread_runtime::RuntimeLockKey rootDatabaseListLockKey()
+{
+    return thread_runtime::databaseLockKey(service::currentDataRoot, QString());
+}
+
 bool databaseExists(const QString &databaseName, QString *error)
 {
     service::TableDmlService dmlService;
@@ -38,7 +43,7 @@ TaskResult createDatabase(const QString &databaseName)
     QString error;
     thread_runtime::ScopedRuntimeLock runtimeLock =
         thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::databaseLockKey(currentDataRoot, normalizedDatabaseName),
+            rootDatabaseListLockKey(),
             thread_runtime::RuntimeLockMode::Exclusive,
             threadperf::kDatabaseLockAcquireTimeoutMs,
             &error);
@@ -108,7 +113,7 @@ TaskResult dropDatabase(const QString &databaseName)
     QString error;
     thread_runtime::ScopedRuntimeLock runtimeLock =
         thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::databaseLockKey(currentDataRoot, normalizedDatabaseName),
+            rootDatabaseListLockKey(),
             thread_runtime::RuntimeLockMode::Exclusive,
             threadperf::kDatabaseLockAcquireTimeoutMs,
             &error);
@@ -187,7 +192,7 @@ SelectRowsResult showDatabases()
     QString error;
     thread_runtime::ScopedRuntimeLock runtimeLock =
         thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::databaseLockKey(currentDataRoot, QString()),
+            rootDatabaseListLockKey(),
             thread_runtime::RuntimeLockMode::Shared,
             threadperf::kDatabaseLockAcquireTimeoutMs,
             &error);

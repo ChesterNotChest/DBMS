@@ -533,11 +533,7 @@ TaskResult deleteColumn(const QString &tableName,
     if (!result.errorMessage.isEmpty()) {
         return result;
     }
-    repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&result.errorMessage);
-    if (!result.errorMessage.isEmpty()) {
-        return result;
-    }
+    const QList<tabledef::Constraint> constraints = schema.constraints;
 
     const int columnIndex = tabledef::findColumnIndex(schema, columnName);
     if (columnIndex < 0) {

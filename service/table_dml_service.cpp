@@ -539,38 +539,6 @@ QString tableMutationKey(const QString &databaseName, const QString &tableName)
     return databaseName + QStringLiteral("::") + tableName;
 }
 
-tabledef::TableSchema loadTableSchemaForMutation(const QString &databaseName,
-                                                 const QString &tableName,
-                                                 QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-
-    tabledef::TableSchema schema;
-    schema.tableName = tableName;
-
-    repo::MetaRepo metaRepo(databaseName, tableName, currentDataRoot);
-    schema.columns = metaRepo.listColumns(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    repo::ConstraintRepo constraintRepo(databaseName, tableName, currentDataRoot);
-    schema.constraints = constraintRepo.listConstraints(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
-    schema.indexes = indexRepo.listIndexes(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    return schema;
-}
-
 TableMutationState *ensureTableMutationState(const QString &databaseName,
                                             const QString &tableName,
                                             QMap<QString, TableMutationState> *states,
@@ -1038,6 +1006,102 @@ void appendRollbackError(QString *error, const QString &rollbackError)
     *error += QStringLiteral("; rollback failed: %1").arg(rollbackError);
 }
 
+struct IncrementalIndexPlan
+{
+    QList<int> insertedRowIndexes;
+    QList<int> updatedOriginalRowIndexes;
+    QList<int> updatedCandidateRowIndexes;
+    QList<int> deletedOriginalRowIndexes;
+};
+
+IncrementalIndexPlan buildIncrementalIndexPlan(const TableMutationState &state)
+{
+    IncrementalIndexPlan plan;
+    QSet<QString> originalIds;
+    QSet<QString> candidateIds;
+    const int originalCount = qMin(state.originalTable.rows.size(), state.originalRowIds.size());
+    const int candidateCount = qMin(state.candidateTable.rows.size(), state.candidateRowIds.size());
+
+    for (int index = 0; index < originalCount; ++index) {
+        originalIds.insert(state.originalRowIds.at(index));
+    }
+    for (int index = 0; index < candidateCount; ++index) {
+        candidateIds.insert(state.candidateRowIds.at(index));
+    }
+
+    for (int index = 0; index < candidateCount; ++index) {
+        const QString rowId = state.candidateRowIds.at(index);
+        if (!originalIds.contains(rowId)) {
+            plan.insertedRowIndexes.append(index);
+            continue;
+        }
+        const int originalIndex = state.originalRowIds.indexOf(rowId);
+        if (originalIndex >= 0
+            && originalIndex < state.originalTable.rows.size()
+            && index < state.candidateTable.rows.size()
+            && state.originalTable.rows.at(originalIndex) != state.candidateTable.rows.at(index)) {
+            plan.updatedOriginalRowIndexes.append(originalIndex);
+            plan.updatedCandidateRowIndexes.append(index);
+        }
+    }
+
+    for (int index = 0; index < originalCount; ++index) {
+        if (!candidateIds.contains(state.originalRowIds.at(index))) {
+            plan.deletedOriginalRowIndexes.append(index);
+        }
+    }
+
+    std::sort(plan.deletedOriginalRowIndexes.begin(), plan.deletedOriginalRowIndexes.end());
+    return plan;
+}
+
+bool applyIncrementalIndexPlan(const TableMutationState &state, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const IncrementalIndexPlan plan = buildIncrementalIndexPlan(state);
+    CurrentDatabaseGuard databaseGuard(state.databaseName);
+    if (!plan.deletedOriginalRowIndexes.isEmpty()
+        && !service::deleteTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.originalTable,
+                                        state.originalRowIds,
+                                        plan.deletedOriginalRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.updatedOriginalRowIndexes.isEmpty()
+        && !service::deleteTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.originalTable,
+                                        state.originalRowIds,
+                                        plan.updatedOriginalRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.updatedCandidateRowIndexes.isEmpty()
+        && !service::insertTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.candidateTable,
+                                        state.candidateRowIds,
+                                        plan.updatedCandidateRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.insertedRowIndexes.isEmpty()
+        && !service::insertTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.candidateTable,
+                                        state.candidateRowIds,
+                                        plan.insertedRowIndexes,
+                                        error)) {
+        return false;
+    }
+    return true;
+}
+
 bool restoreTableArtifacts(const QString &databaseName,
                            const QString &tableName,
                            const tabledef::TableSchema &schema,
@@ -1083,7 +1147,9 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
     QStringList keys = states.keys();
     std::sort(keys.begin(), keys.end());
 
-    QList<QString> appliedKeys;
+    QList<QString> tableWrittenKeys;
+    QList<QString> rowIdWrittenKeys;
+    QList<QString> indexUpdatedKeys;
     repo::FlatFileTableStore store(currentDataRoot);
     for (const QString &key : keys) {
         const TableMutationState &state = states.value(key);
@@ -1103,6 +1169,7 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
             }
             break;
         }
+        tableWrittenKeys.append(key);
 
         CurrentDatabaseGuard databaseGuard(state.databaseName);
         QString commitError;
@@ -1112,16 +1179,36 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
             }
             break;
         }
+        rowIdWrittenKeys.append(key);
 
-        appliedKeys.append(key);
+        if (!applyIncrementalIndexPlan(state, &commitError)) {
+            if (error != nullptr) {
+                *error = commitError;
+            }
+            break;
+        }
+        indexUpdatedKeys.append(key);
     }
 
     if (error == nullptr || error->isEmpty()) {
         return true;
     }
 
-    for (int index = appliedKeys.size() - 1; index >= 0; --index) {
-        const TableMutationState &state = states.value(appliedKeys.at(index));
+    QSet<QString> rollbackKeys;
+    for (const QString &key : tableWrittenKeys) {
+        rollbackKeys.insert(key);
+    }
+    for (const QString &key : rowIdWrittenKeys) {
+        rollbackKeys.insert(key);
+    }
+    for (const QString &key : indexUpdatedKeys) {
+        rollbackKeys.insert(key);
+    }
+
+    QStringList rollbackOrder = rollbackKeys.values();
+    std::sort(rollbackOrder.begin(), rollbackOrder.end());
+    for (int index = rollbackOrder.size() - 1; index >= 0; --index) {
+        const TableMutationState &state = states.value(rollbackOrder.at(index));
         QString rollbackError;
         if (!restoreTableArtifacts(state.databaseName,
                                    state.tableName,
@@ -1477,6 +1564,7 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
     }
 
     ForeignKeyCascadePlan plan;
+    CurrentDatabaseGuard databaseGuard(databaseName);
     repo::TabRepo tabRepo(databaseName, currentDataRoot);
     QString tabError;
     const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
@@ -1488,8 +1576,7 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
     }
 
     for (const repo::TableEntry &tableEntry : tableEntries) {
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(error);
+        const QList<tabledef::Constraint> constraints = loadUserTableConstraints(tableEntry.name, error);
         if (error != nullptr && !error->isEmpty()) {
             return {};
         }

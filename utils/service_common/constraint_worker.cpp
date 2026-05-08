@@ -680,13 +680,10 @@ QStringList loadUserTableRowIds(const QString &tableName,
     }
 
     const QStringList rowIds = generateRowIds(tableData.rows.size());
-    if (!saveUserTableRowIds(tableName, rowIds, error)) {
-        return {};
-    }
     if (initialized != nullptr) {
         *initialized = true;
     }
-    logIndexMaintenance(QStringLiteral("row id sidecar initialized for %1 (%2 rows)")
+    logIndexMaintenance(QStringLiteral("row id sidecar repaired transiently for %1 (%2 rows)")
                             .arg(tableName)
                             .arg(rowIds.size()));
     return rowIds;
