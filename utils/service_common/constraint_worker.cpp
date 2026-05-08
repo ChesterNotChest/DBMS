@@ -924,17 +924,9 @@ bool ensureConstraintBoundIndex(const QString &tableName,
     const QString databaseName = normalizeDatabaseName(QString());
     bool rowIdsInitialized = false;
     const QStringList rowIds = loadUserTableRowIds(tableName, tableData, &rowIdsInitialized, error);
+    Q_UNUSED(rowIdsInitialized);
     if (error != nullptr && !error->isEmpty()) {
         return false;
-    }
-    if (rowIdsInitialized) {
-        const tabledef::TableSchema schema = loadUserTableSchema(tableName, error);
-        if (error != nullptr && !error->isEmpty()) {
-            return false;
-        }
-        if (!rebuildTableIndexes(tableName, schema, tableData, rowIds, error)) {
-            return false;
-        }
     }
 
     logIndexMaintenance(QStringLiteral("ensure bound index for %1")
