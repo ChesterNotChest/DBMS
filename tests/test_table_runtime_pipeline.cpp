@@ -1,4 +1,6 @@
 #include "../service/service.h"
+#include "../constants/thread_perf_def.h"
+#include "../utils/thread_runtime/lock_manager.h"
 
 #include <QDir>
 #include <QtTest>
@@ -143,6 +145,36 @@ private slots:
         QVERIFY2(selected.success, qPrintable(selected.errorMessage));
         QCOMPARE(selected.resultTable.rows.size(), 1);
         QCOMPARE(selected.resultTable.rows.first().first(), QStringLiteral("2"));
+    }
+
+    void test_fkCascadeMutationLocksAllDependentTablesAndReleasesOnFailure()
+    {
+        const QString databaseName = QStringLiteral("pipeline_lock_order_db");
+        const QString parentTableName = QStringLiteral("pipeline_lock_order_parent");
+        const QString childTableName = QStringLiteral("pipeline_lock_order_child");
+        prepareCascadeTables(databaseName, parentTableName, childTableName);
+
+        QString error;
+        thread_runtime::ScopedRuntimeLock childLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
+            thread_runtime::tableLockKey(currentDataRoot, databaseName, childTableName),
+            thread_runtime::RuntimeLockMode::Exclusive,
+            1,
+            &error);
+        QVERIFY2(childLock.isValid(), qPrintable(error));
+
+        TaskResult updated = tuple_service::updateRows(parentTableName,
+                                                       {{QStringLiteral("id"), QStringLiteral("2")}},
+                                                       {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY(!updated.success);
+        QVERIFY(updated.errorMessage.contains(QStringLiteral("runtime lock")));
+
+        childLock.unlock();
+        thread_runtime::ScopedRuntimeLock parentLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
+            thread_runtime::tableLockKey(currentDataRoot, databaseName, parentTableName),
+            thread_runtime::RuntimeLockMode::Exclusive,
+            threadperf::kTableLockAcquireTimeoutMs,
+            &error);
+        QVERIFY2(parentLock.isValid(), qPrintable(error));
     }
 
 private:

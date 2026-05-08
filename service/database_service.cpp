@@ -172,6 +172,17 @@ TaskResult useDatabase(const QString &databaseName)
     }
 
     QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            rootDatabaseListLockKey(),
+            thread_runtime::RuntimeLockMode::Shared,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (!databaseExists(normalizedDatabaseName, &error)) {
         if (!error.isEmpty()) {
             result.errorMessage = error;

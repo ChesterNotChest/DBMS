@@ -17,7 +17,7 @@ struct LogicEvalContext;
 
 namespace service {
 
-inline QString currentDatabase;
+extern thread_local QString currentDatabase;
 inline QString currentDataRoot = repo::FlatFileTableStore::defaultDataRoot();
 
 inline void setDataRoot(const QString &dataRoot)
