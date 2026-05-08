@@ -34,12 +34,22 @@ int main(int argc, char *argv[])
     qDebug() << "Tuple service tests:" << (tupleTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tupleTestResult << ")";
 
+    const int clientSessionTestResult = service_tests::runClientSessionTests();
+    qDebug() << "Client session tests:" << (clientSessionTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << clientSessionTestResult << ")";
+
+    const int cliClientTestResult = service_tests::runCliClientTests();
+    qDebug() << "CLI client tests:" << (cliClientTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << cliClientTestResult << ")";
+
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
                                   + (parserDispatcherTestResult == 0 ? 0 : 1)
                                   + (logicTestResult == 0 ? 0 : 1)
                                   + (queryExecutorTestResult == 0 ? 0 : 1)
                                   + (tableTestResult == 0 ? 0 : 1)
-                                  + (tupleTestResult == 0 ? 0 : 1);
+                                  + (tupleTestResult == 0 ? 0 : 1)
+                                  + (clientSessionTestResult == 0 ? 0 : 1)
+                                  + (cliClientTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";

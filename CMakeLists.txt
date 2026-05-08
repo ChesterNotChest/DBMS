@@ -9,15 +9,12 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Test)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Core)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Core Test)
 
-set(PROJECT_SOURCES
-        main.cpp
-        mainwindow.cpp
-        mainwindow.h
-        mainwindow.ui
+set(DBMS_CORE_SOURCES
         constants/table_def.h
+        constants/cli_client_def.h
         utils/table_manu/table_manu.h
         utils/table_manu/type_utils.cpp
         utils/table_manu/schema_maint.cpp
@@ -54,26 +51,28 @@ set(PROJECT_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
-        tests/test_entry.h
-        tests/test_parser_dispatcher.cpp
-        tests/test_database_service.cpp
-        tests/test_logic.cpp
-        tests/test_query_executor.cpp
-        tests/test_table_service.cpp
-        tests/test_tuple_service.cpp
-        # ── SQL Parser 层（纯解析，不碰文件系统）──
         utils/sql_parser/sql_tokenizer.h
         utils/sql_parser/sql_tokenizer.cpp
         utils/sql_parser/sql_parser.h
         utils/sql_parser/database_parser.cpp
         utils/sql_parser/table_parser.cpp
         utils/sql_parser/tuple_parser.cpp
-        # ── SQL Dispatcher（桥接 parser → service）──
         controller/sql_dispatcher.h
         controller/sql_dispatcher.cpp
         controller/nest_query.h
         controller/nest_query.cpp
-        # ── Display 层（Qt 界面，不碰 repo）──
+        client/client_session.h
+        client/client_session_pool.h
+        client/client_session_pool.cpp
+        client/sql_client_engine.h
+        client/sql_client_engine.cpp
+)
+
+set(DBMS_GUI_SOURCES
+        main.cpp
+        mainwindow.cpp
+        mainwindow.h
+        mainwindow.ui
         display/editor_panel.h
         display/editor_panel.cpp
         display/result_panel.h
@@ -82,25 +81,54 @@ set(PROJECT_SOURCES
         display/structure_panel.cpp
 )
 
+set(DBMS_TEST_SOURCES
+        tests/test_entry.h
+        cli/cli_app.h
+        cli/cli_app.cpp
+        tests/test_parser_dispatcher.cpp
+        tests/test_database_service.cpp
+        tests/test_logic.cpp
+        tests/test_query_executor.cpp
+        tests/test_table_service.cpp
+        tests/test_tuple_service.cpp
+        tests/test_client_session.cpp
+        tests/test_cli_client.cpp
+)
+
+set(DBMS_CLI_SOURCES
+        cli/main_cli.cpp
+        cli/cli_app.h
+        cli/cli_app.cpp
+)
+
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(DBMS
         MANUAL_FINALIZATION
-        ${PROJECT_SOURCES}
+        ${DBMS_CORE_SOURCES}
+        ${DBMS_GUI_SOURCES}
+        ${DBMS_TEST_SOURCES}
     )
-# Define target properties for Android with Qt 6 as:
-#    set_property(TARGET BDMS APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
-#                 ${CMAKE_CURRENT_SOURCE_DIR}/android)
-# For more information, see https://doc.qt.io/qt-6/qt-add-executable.html#target-creation
+    qt_add_executable(DBMS_CLI
+        MANUAL_FINALIZATION
+        ${DBMS_CORE_SOURCES}
+        ${DBMS_CLI_SOURCES}
+    )
 else()
     if(ANDROID)
         add_library(DBMS SHARED
-            ${PROJECT_SOURCES}
+            ${DBMS_CORE_SOURCES}
+            ${DBMS_GUI_SOURCES}
+            ${DBMS_TEST_SOURCES}
         )
-# Define properties for Android with Qt 5 after find_package() calls as:
-#    set(ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
     else()
         add_executable(DBMS
-            ${PROJECT_SOURCES}
+            ${DBMS_CORE_SOURCES}
+            ${DBMS_GUI_SOURCES}
+            ${DBMS_TEST_SOURCES}
+        )
+        add_executable(DBMS_CLI
+            ${DBMS_CORE_SOURCES}
+            ${DBMS_CLI_SOURCES}
         )
     endif()
 endif()
@@ -108,15 +136,19 @@ endif()
 target_include_directories(DBMS PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/utils/sql_parser
-    ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
         ${CMAKE_CURRENT_SOURCE_DIR}/display
 )
 
-target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Test)
+target_include_directories(DBMS_CLI PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/sql_parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
+)
 
-# Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
-# If you are developing for iOS or macOS you should consider setting an
-# explicit, fixed bundle identifier manually though.
+target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Test)
+target_link_libraries(DBMS_CLI PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+
 if(${QT_VERSION} VERSION_LESS 6.1.0)
     set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.DBMS)
 endif()
@@ -125,11 +157,10 @@ set_target_properties(DBMS PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     MACOSX_BUNDLE TRUE
-    # WIN32_EXECUTABLE TRUE  # temporarily disabled to see console output
 )
 
 include(GNUInstallDirs)
-install(TARGETS DBMS
+install(TARGETS DBMS DBMS_CLI
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -137,4 +168,5 @@ install(TARGETS DBMS
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(DBMS)
+    qt_finalize_executable(DBMS_CLI)
 endif()
