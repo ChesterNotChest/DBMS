@@ -591,7 +591,9 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
     TableMutationState state;
     state.databaseName = databaseName;
     state.tableName = tableName;
-    state.schema = loadTableSchemaForMutation(databaseName, tableName, error);
+    state.schema = thread_runtime::CatalogCache::instance()
+                       .getTableCatalog(currentDataRoot, databaseName, tableName, error)
+                       .schema;
     if (error != nullptr && !error->isEmpty()) {
         return nullptr;
     }
@@ -602,10 +604,14 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
     }
     state.candidateTable = state.originalTable;
 
-    state.originalRowIds = loadRowIdsWithoutSideEffects(databaseName,
-                                                        tableName,
-                                                        state.originalTable,
-                                                        error);
+    bool rowIdsInitialized = false;
+    state.originalRowIds = loadRowIdsForTargetTable(databaseName,
+                                                    service::TargetTableKind::TableDat,
+                                                    tableName,
+                                                    state.originalTable,
+                                                    &rowIdsInitialized,
+                                                    error);
+    Q_UNUSED(rowIdsInitialized);
     if (error != nullptr && !error->isEmpty()) {
         return nullptr;
     }
@@ -1010,12 +1016,7 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
 
         CurrentDatabaseGuard databaseGuard(state.databaseName);
         QString commitError;
-        if (!service::saveUserTableRowIds(state.tableName, state.candidateRowIds, &commitError)
-            || !service::rebuildTableIndexes(state.tableName,
-                                             state.schema,
-                                             state.candidateTable,
-                                             state.candidateRowIds,
-                                             &commitError)) {
+        if (!service::saveUserTableRowIds(state.tableName, state.candidateRowIds, &commitError)) {
             if (error != nullptr) {
                 *error = commitError;
             }
@@ -1998,16 +1999,10 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
                                                          currentTable,
                                                          &rowIdsInitialized,
                                                          &error);
+    Q_UNUSED(rowIdsInitialized);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
-    }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     repo::TableData candidateTable = currentTable;
@@ -2151,16 +2146,10 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                                          currentTable,
                                                          &rowIdsInitialized,
                                                          &error);
+    Q_UNUSED(rowIdsInitialized);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
-    }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     for (auto it = assignmentMap.constBegin(); it != assignmentMap.constEnd(); ++it) {
@@ -2420,16 +2409,10 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
                                                          currentTable,
                                                          &rowIdsInitialized,
                                                          &error);
+    Q_UNUSED(rowIdsInitialized);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
-    }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     QList<int> matchedRowIndexes;

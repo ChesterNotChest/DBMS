@@ -18,11 +18,16 @@ set(PROJECT_SOURCES
         mainwindow.h
         mainwindow.ui
         constants/table_def.h
+        constants/thread_perf_def.h
         utils/table_manu/table_manu.h
         utils/table_manu/type_utils.cpp
         utils/table_manu/schema_maint.cpp
         utils/table_manu/schema_builder.cpp
         utils/service_common/service_common.h
+        utils/thread_runtime/lock_manager.h
+        utils/thread_runtime/lock_manager.cpp
+        utils/thread_runtime/catalog_cache.h
+        utils/thread_runtime/catalog_cache.cpp
         utils/service_common/name_normalize.cpp
         utils/service_common/constraint_worker.cpp
         utils/service_common/sql_stringifier.cpp

@@ -593,8 +593,27 @@ QList<tabledef::IndexMeta> loadUserTableIndexes(const QString &tableName, QStrin
     }
 
     const QString databaseName = normalizeDatabaseName(QString());
-    repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
-    return indexRepo.listIndexes(error);
+    const thread_runtime::TableCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.schema.indexes;
+}
+
+QList<tabledef::Constraint> loadUserTableConstraints(const QString &tableName, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QString databaseName = normalizeDatabaseName(QString());
+    const thread_runtime::TableCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.schema.constraints;
 }
 
 tabledef::TableSchema loadUserTableSchema(const QString &tableName, QString *error)
@@ -603,29 +622,13 @@ tabledef::TableSchema loadUserTableSchema(const QString &tableName, QString *err
         error->clear();
     }
 
-    tabledef::TableSchema schema;
-    schema.tableName = tableName;
-
     const QString databaseName = normalizeDatabaseName(QString());
-    repo::MetaRepo metaRepo(databaseName, tableName, currentDataRoot);
-    schema.columns = metaRepo.listColumns(error);
+    const thread_runtime::TableCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, error);
     if (error != nullptr && !error->isEmpty()) {
         return {};
     }
-
-    repo::ConstraintRepo constraintRepo(databaseName, tableName, currentDataRoot);
-    schema.constraints = constraintRepo.listConstraints(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
-    schema.indexes = indexRepo.listIndexes(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    return schema;
+    return snapshot.schema;
 }
 
 repo::TableData loadUserTableData(const QString &tableName, QString *error)
