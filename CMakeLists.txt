@@ -66,6 +66,12 @@ set(PROJECT_SOURCES
         tests/test_query_executor.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp
+        tests/test_lock_manager.cpp
+        tests/test_threaded_service.cpp
+        tests/test_catalog_cache.cpp
+        tests/test_service_common_cache.cpp
+        tests/test_table_runtime_pipeline.cpp
+        tests/test_index_runtime_repair.cpp
         # ── SQL Parser 层（纯解析，不碰文件系统）──
         utils/sql_parser/sql_tokenizer.h
         utils/sql_parser/sql_tokenizer.cpp
