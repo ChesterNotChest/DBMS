@@ -8,5 +8,9 @@ int runLogicTests();
 int runQueryExecutorTests();
 int runTableServiceTests();
 int runTupleServiceTests();
+int runClientSessionTests();
+int runCliClientTests();
+int runAuthClientTests();
+int runGuiClientRuntimeTests();
 
 } // namespace service_tests

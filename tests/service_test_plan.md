@@ -107,3 +107,46 @@
 - `test_uniqueConstraintRejectsDuplicateDml`：覆盖 DML 写入违反唯一约束时的拒绝。
 - `test_uniqueConstraintStillRejectsDuplicatesWithoutIndexMetadata`：覆盖缺少索引元数据时唯一约束仍然生效。
 - `test_incrementalIndexMaintenance`：覆盖增量写入下索引维护的一致性。
+
+## Client runtime / CLI / GUI tests
+
+### [test_client_session.cpp](test_client_session.cpp)
+
+- `test_createSessionHasIndependentCurrentDatabase`: verifies two client sessions can switch to different databases without overwriting each other.
+- `test_executeSqlRestoresPreviousServiceContext`: verifies `SqlClientEngine` restores legacy service globals after each execution.
+- `test_closeSessionRemovesClient`: verifies closed sessions are rejected with an explicit error.
+
+### [test_cli_client.cpp](test_cli_client.cpp)
+
+- `test_executeOneShotSql`: covers `DBMS_CLI --execute` one-shot execution.
+- `test_multilineSqlBufferExecutesOnlyAfterSemicolon`: covers REPL SQL buffering and continuation prompt behavior.
+- `test_quitCommandExitsWithoutExecutingSql`: covers quit handling without dispatching SQL.
+- `test_startupPromptsForCredentials`: covers startup `Username:` / `Password:` prompting.
+- `test_passwordValueDoesNotPrompt`: covers `-u user -p value` login without password prompt.
+- `test_displayStatementsUseCliTableFormatting`: covers boxed output for `SHOW DATABASES`, `SHOW TABLES`, `SELECT`, `DESC`, and `SHOW CREATE TABLE`.
+
+### [test_auth_client.cpp](test_auth_client.cpp)
+
+- `test_parseAuthSql`: covers parser output for `LOGIN` and `GRANT ALL`.
+- `test_unauthenticatedSqlIsRejected`: verifies unauthenticated sessions cannot execute normal SQL.
+- `test_rootCanCreateUserAndGrantDatabasePrivilege`: covers root user management and granted database access.
+- `test_revokeRemovesDatabasePrivilege`: verifies revoked users can no longer `USE` the database.
+- `test_dropUserRemovesLogin`: verifies dropped users cannot authenticate.
+- `test_nonRootCannotCreateUsers`: verifies non-root users cannot execute user-management DDL.
+
+### [test_gui_client_runtime.cpp](test_gui_client_runtime.cpp)
+
+- `test_mainWindowCreatesGuiClient`: verifies GUI startup creates an authenticated root client session.
+- `test_guiAutoRootCanRunDdl`: verifies GUI auto-root can execute DDL through `SqlClientEngine`.
+- `test_guiExecuteSqlUsesOwnSession`: verifies GUI and CLI-style sessions keep independent `currentDatabase`.
+- `test_structureRefreshUsesGuiClientContext`: verifies structure refresh queries use GUI client context.
+- `test_guiExecuteSqlRestoresPreviousServiceContext`: verifies GUI execution does not leak service globals.
+- `test_guiExecuteSqlReportsPermissionFailure`: verifies permission failures still surface through the shared client runtime.
+
+Run the full in-process regression suite with:
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+$env:PATH='E:\Qt\6.9.2\msvc2022_64\bin;' + $env:PATH
+.\build\Desktop_Qt_6_9_2_MSVC2022_64bit-Debug\DBMS.exe --run-tests
+```
