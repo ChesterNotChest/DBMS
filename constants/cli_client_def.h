@@ -11,6 +11,8 @@ inline constexpr const char *kRootInitialPassword = "";
 inline constexpr const char *kAuthDatabaseName = "__dbms_auth";
 inline constexpr const char *kUserTableName = "sys_users";
 inline constexpr const char *kPrivilegeTableName = "sys_database_privileges";
+inline constexpr const char *kGuiDefaultClientName = "gui-root-client";
+inline constexpr bool kEnableGuiAutoRootLogin = true;
 
 } // namespace cliclient
 

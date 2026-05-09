@@ -19,6 +19,8 @@
 #include "display/structure_panel.h"
 #include "display/editor_panel.h"
 #include "display/result_panel.h"
+#include "client/client_session_pool.h"
+#include "client/sql_client_engine.h"
 #include "controller/sql_dispatcher.h"
 
 class MainWindow : public QMainWindow
@@ -28,6 +30,10 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+    QString guiClientId() const;
+    const client::ClientSession *guiClientSession() const;
+    service::SqlExecResult executeSqlForGui(const QString &sql);
 
 private slots:
     void onNewDatabase();
@@ -59,6 +65,9 @@ private:
     void setupToolBar();
     void setupLayout();
     QString dataRoot() const;
+    bool initializeClientSession();
+    QStringList databaseNamesForDialog();
+    bool applySqlResult(const service::SqlExecResult &r);
     void updateStatusDbLabel();
 
 protected:
@@ -79,6 +88,9 @@ protected:
 
     QString m_currentDatabase;
     QString m_currentTable;
+    client::ClientSessionPool m_clientSessionPool;
+    client::SqlClientEngine m_clientEngine;
+    QString m_guiClientId;
 };
 
 #endif // MAINWINDOW_H

@@ -149,6 +149,46 @@ private slots:
         QVERIFY(outputText.contains(QStringLiteral("Logged in as 'root'")));
     }
 
+    void test_passwordValueDoesNotPrompt()
+    {
+        client::ClientSessionPool setupPool;
+        client::SqlClientEngine setupEngine(&setupPool);
+        const QString setupClient = setupPool.createSession(m_dataRoot);
+        service::SqlExecResult setupResult =
+            setupEngine.login(setupClient, QStringLiteral("root"), QString());
+        QVERIFY2(setupResult.success, qPrintable(setupResult.errorMessage));
+        setupResult = setupEngine.executeSql(setupClient,
+                                             QStringLiteral("CREATE USER cli_user IDENTIFIED BY secret;"));
+        QVERIFY2(setupResult.success, qPrintable(setupResult.errorMessage));
+
+        QString inputText;
+        QString outputText;
+        QString errorText;
+        QTextStream input(&inputText, QIODevice::ReadOnly);
+        QTextStream output(&outputText, QIODevice::WriteOnly);
+        QTextStream errors(&errorText, QIODevice::WriteOnly);
+
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+
+        const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
+                                      QStringLiteral("--data-root"),
+                                      m_dataRoot,
+                                      QStringLiteral("-u"),
+                                      QStringLiteral("cli_user"),
+                                      QStringLiteral("-p"),
+                                      QStringLiteral("secret"),
+                                      QStringLiteral("--execute"),
+                                      QStringLiteral("SHOW DATABASES;")});
+
+        QCOMPARE(exitCode, 0);
+        QVERIFY2(errorText.isEmpty(), qPrintable(errorText));
+        QVERIFY(!outputText.contains(QStringLiteral("Password: ")));
+        QVERIFY(outputText.contains(QStringLiteral("Logged in as 'cli_user'")));
+        QVERIFY(outputText.contains(QStringLiteral("database_name")));
+    }
+
     void test_displayStatementsUseCliTableFormatting()
     {
         QString inputText =

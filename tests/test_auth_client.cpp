@@ -102,6 +102,48 @@ private slots:
         QCOMPARE(pool.session(aliceClient)->currentDatabase, QStringLiteral("app_db"));
     }
 
+    void test_revokeRemovesDatabasePrivilege()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+        const QString aliceClient = pool.createSession(m_dataRoot);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE DATABASE revoked_db;"
+                                                  "CREATE USER alice IDENTIFIED BY secret;"
+                                                  "GRANT ALL ON revoked_db.* TO alice;"
+                                                  "REVOKE ALL ON revoked_db.* FROM alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(aliceClient, QStringLiteral("USE revoked_db;"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("permission denied")));
+    }
+
+    void test_dropUserRemovesLogin()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+        const QString aliceClient = pool.createSession(m_dataRoot);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE USER alice IDENTIFIED BY secret;"
+                                                  "DROP USER alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("does not exist")));
+    }
+
     void test_nonRootCannotCreateUsers()
     {
         client::ClientSessionPool pool;
