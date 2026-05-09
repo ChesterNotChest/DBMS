@@ -153,6 +153,26 @@ target_include_directories(DBMS_CLI PRIVATE
 target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Test)
 target_link_libraries(DBMS_CLI PRIVATE Qt${QT_VERSION_MAJOR}::Core)
 
+set_target_properties(DBMS_CLI PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"
+)
+
+if(WIN32 AND QT_VERSION_MAJOR EQUAL 6)
+    get_target_property(QMAKE_EXECUTABLE Qt${QT_VERSION_MAJOR}::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_BIN_DIR "${QMAKE_EXECUTABLE}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}")
+    if(WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET DBMS_CLI POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    --no-opengl-sw
+                    "$<TARGET_FILE:DBMS_CLI>"
+            COMMENT "Deploying Qt runtime dependencies for DBMS_CLI"
+        )
+    endif()
+endif()
+
 if(${QT_VERSION} VERSION_LESS 6.1.0)
     set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.DBMS)
 endif()

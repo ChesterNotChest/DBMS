@@ -36,18 +36,20 @@ private slots:
         removeTestDataRoot(m_dataRoot);
         service::setDataRoot(m_dataRoot);
         service::currentDatabase.clear();
+        service::currentUser.clear();
     }
 
     void cleanup()
     {
         service::currentDatabase.clear();
+        service::currentUser.clear();
         service::setDataRoot(QString());
         removeTestDataRoot(m_dataRoot);
     }
 
     void test_executeOneShotSql()
     {
-        QString inputText;
+        QString inputText = QStringLiteral("\n");
         QString outputText;
         QString errorText;
         QTextStream input(&inputText, QIODevice::ReadOnly);
@@ -61,8 +63,11 @@ private slots:
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
                                       m_dataRoot,
+                                      QStringLiteral("-u"),
+                                      QStringLiteral("root"),
+                                      QStringLiteral("-p"),
                                       QStringLiteral("--execute"),
-                                      QStringLiteral("LOGIN root IDENTIFIED BY ''; CREATE DATABASE cli_exec_db;")});
+                                      QStringLiteral("CREATE DATABASE cli_exec_db;")});
 
         QCOMPARE(exitCode, 0);
         QVERIFY(errorText.isEmpty());
@@ -71,7 +76,7 @@ private slots:
 
     void test_multilineSqlBufferExecutesOnlyAfterSemicolon()
     {
-        QString inputText = QStringLiteral("LOGIN root IDENTIFIED BY '';\nCREATE DATABASE cli_multi_db\n;\nexit\n");
+        QString inputText = QStringLiteral("\nCREATE DATABASE cli_multi_db\n;\nexit\n");
         QString outputText;
         QString errorText;
         QTextStream input(&inputText, QIODevice::ReadOnly);
@@ -84,7 +89,10 @@ private slots:
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
-                                      m_dataRoot});
+                                      m_dataRoot,
+                                      QStringLiteral("-u"),
+                                      QStringLiteral("root"),
+                                      QStringLiteral("-p")});
 
         QCOMPARE(exitCode, 0);
         QVERIFY(errorText.isEmpty());
@@ -94,7 +102,32 @@ private slots:
 
     void test_quitCommandExitsWithoutExecutingSql()
     {
-        QString inputText = QStringLiteral("quit\n");
+        QString inputText = QStringLiteral("\nquit\n");
+        QString outputText;
+        QString errorText;
+        QTextStream input(&inputText, QIODevice::ReadOnly);
+        QTextStream output(&outputText, QIODevice::WriteOnly);
+        QTextStream errors(&errorText, QIODevice::WriteOnly);
+
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+
+        const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
+                                      QStringLiteral("--data-root"),
+                                      m_dataRoot,
+                                      QStringLiteral("-u"),
+                                      QStringLiteral("root"),
+                                      QStringLiteral("-p")});
+
+        QCOMPARE(exitCode, 0);
+        QCOMPARE(pool.sessionCount(), 1);
+        QVERIFY(errorText.isEmpty());
+    }
+
+    void test_startupPromptsForCredentials()
+    {
+        QString inputText = QStringLiteral("root\n\nSHOW DATABASES;\nexit\n");
         QString outputText;
         QString errorText;
         QTextStream input(&inputText, QIODevice::ReadOnly);
@@ -110,8 +143,55 @@ private slots:
                                       m_dataRoot});
 
         QCOMPARE(exitCode, 0);
-        QCOMPARE(pool.sessionCount(), 1);
-        QVERIFY(errorText.isEmpty());
+        QVERIFY2(errorText.isEmpty(), qPrintable(errorText));
+        QVERIFY(outputText.contains(QStringLiteral("Username: ")));
+        QVERIFY(outputText.contains(QStringLiteral("Password: ")));
+        QVERIFY(outputText.contains(QStringLiteral("Logged in as 'root'")));
+    }
+
+    void test_displayStatementsUseCliTableFormatting()
+    {
+        QString inputText =
+            QStringLiteral("\n"
+                           "CREATE DATABASE cli_display_db;\n"
+                           "USE cli_display_db;\n"
+                           "CREATE TABLE people (id INT PRIMARY KEY, name VARCHAR(20));\n"
+                           "INSERT INTO people (id, name) VALUES (1, 'Ada');\n"
+                           "SHOW DATABASES;\n"
+                           "SHOW TABLES;\n"
+                           "SELECT * FROM people;\n"
+                           "DESC people;\n"
+                           "SHOW CREATE TABLE people;\n"
+                           "exit\n");
+        QString outputText;
+        QString errorText;
+        QTextStream input(&inputText, QIODevice::ReadOnly);
+        QTextStream output(&outputText, QIODevice::WriteOnly);
+        QTextStream errors(&errorText, QIODevice::WriteOnly);
+
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+
+        const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
+                                      QStringLiteral("--data-root"),
+                                      m_dataRoot,
+                                      QStringLiteral("-u"),
+                                      QStringLiteral("root"),
+                                      QStringLiteral("-p")});
+
+        QCOMPARE(exitCode, 0);
+        QVERIFY2(errorText.isEmpty(), qPrintable(errorText));
+        QVERIFY2(outputText.contains(QStringLiteral("+-")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("database_name")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("cli_display_db")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| table_name |")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| people     |")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| id | name |")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| 1  | Ada  |")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| Definition")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("| Table  | Create Table")), qPrintable(outputText));
+        QVERIFY2(outputText.contains(QStringLiteral("1 row in set")), qPrintable(outputText));
     }
 
 private:

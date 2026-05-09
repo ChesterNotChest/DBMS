@@ -85,16 +85,18 @@ private slots:
         const QString aliceClient = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result =
-            engine.executeSql(rootClient,
-                              QStringLiteral("LOGIN root IDENTIFIED BY '';"
-                                             "CREATE DATABASE app_db;"
+            engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                              QStringLiteral("CREATE DATABASE app_db;"
                                              "CREATE USER alice IDENTIFIED BY secret;"
                                              "GRANT ALL ON app_db.* TO alice;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
 
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
         result = engine.executeSql(aliceClient,
-                                   QStringLiteral("LOGIN alice IDENTIFIED BY secret;"
-                                                  "USE app_db;"
+                                   QStringLiteral("USE app_db;"
                                                   "SHOW TABLES;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         QCOMPARE(pool.session(aliceClient)->currentDatabase, QStringLiteral("app_db"));
@@ -108,14 +110,16 @@ private slots:
         const QString aliceClient = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result =
-            engine.executeSql(rootClient,
-                              QStringLiteral("LOGIN root IDENTIFIED BY '';"
-                                             "CREATE USER alice IDENTIFIED BY secret;"));
+            engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                              QStringLiteral("CREATE USER alice IDENTIFIED BY secret;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
 
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
         result = engine.executeSql(aliceClient,
-                                   QStringLiteral("LOGIN alice IDENTIFIED BY secret;"
-                                                  "CREATE USER bob IDENTIFIED BY secret;"));
+                                   QStringLiteral("CREATE USER bob IDENTIFIED BY secret;"));
         QVERIFY(!result.success);
         QVERIFY(result.errorMessage.contains(QStringLiteral("root user required")));
     }

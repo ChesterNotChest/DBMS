@@ -26,18 +26,27 @@ private:
     {
         QString dataRoot;
         QString userName;
+        QString password;
         QString executeSql;
         bool hasExecuteSql = false;
+        bool promptPassword = false;
         bool showHelp = false;
     };
 
     Options parseOptions(const QStringList &arguments, QString *error) const;
+    bool ensureAuthenticated(const QString &clientId, const Options &options);
+    QString promptValue(const QString &label, bool *ok);
     int runExecuteMode(const QString &clientId, const QString &sql);
     int runRepl(const QString &clientId);
     bool isExitCommand(const QString &line) const;
     bool isHelpCommand(const QString &line) const;
     void printHelp();
     void printResult(const service::SqlExecResult &result);
+    QString formatTable(const QStringList &headers, const QList<QStringList> &rows) const;
+    QString formatSelectResult(const service::SelectRowsResult &result) const;
+    QString formatDescResult(const QString &text) const;
+    QString formatShowCreateTableResult(const service::SqlExecResult &result) const;
+    QString rowCountText(int rowCount) const;
 
     client::ClientSessionPool *m_sessionPool = nullptr;
     client::SqlClientEngine *m_clientEngine = nullptr;

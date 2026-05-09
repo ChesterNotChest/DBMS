@@ -30,6 +30,9 @@ class SqlClientEngine
 public:
     explicit SqlClientEngine(ClientSessionPool *sessionPool);
 
+    service::SqlExecResult login(const QString &clientId,
+                                 const QString &userName,
+                                 const QString &password);
     service::SqlExecResult executeSql(const QString &clientId, const QString &sql);
 
 private:

@@ -38,6 +38,38 @@ SqlClientEngine::SqlClientEngine(ClientSessionPool *sessionPool)
 {
 }
 
+service::SqlExecResult SqlClientEngine::login(const QString &clientId,
+                                              const QString &userName,
+                                              const QString &password)
+{
+    if (m_sessionPool == nullptr) {
+        return {false, QStringLiteral("client session pool is not available")};
+    }
+
+    QString error;
+    ClientSession *clientSession = m_sessionPool->session(clientId, &error);
+    if (clientSession == nullptr) {
+        return {false, error};
+    }
+
+    ScopedServiceContext context(clientSession);
+    const service::TaskResult initResult = service::auth_service::initializeAuthStore(clientSession->dataRoot);
+    if (!initResult.success) {
+        return {false, initResult.errorMessage, initResult.errorMessage};
+    }
+
+    const service::auth_service::AuthResult result =
+        service::auth_service::authenticate(userName, password, clientSession->dataRoot);
+    if (!result.success) {
+        return {false, result.errorMessage, result.errorMessage};
+    }
+
+    clientSession->userName = result.userName;
+    clientSession->authenticated = true;
+    service::currentUser = result.userName;
+    return {true, {}, QStringLiteral("Logged in as '%1'").arg(result.userName), 0};
+}
+
 service::SqlExecResult SqlClientEngine::executeSql(const QString &clientId, const QString &sql)
 {
     if (m_sessionPool == nullptr) {

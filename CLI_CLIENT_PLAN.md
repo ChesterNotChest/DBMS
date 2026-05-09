@@ -298,7 +298,7 @@ struct ClientSession {
 
 ```text
 
-解析 --data-root / --user / --execute 等参数
+解析 --data-root / -u / --execute / -e 等参数
 -> 创建 ClientSession
 -> 如果存在 --execute，则执行单条 SQL 后退出
 -> 否则进入 REPL
@@ -388,7 +388,7 @@ struct ClientSession {
 
 ## 阶段二：基础身份验证与权限控制
 
-目标：为 CLI 多客户端引入最小可用的认证与权限系统。每个客户端先登录，再执行 SQL；DDL/DML 进入 service 前完成权限检查。阶段二只做用户、数据库级权限、基础 DCL，不做角色与列级权限。新增的认证 DDL/DCL 都按普通 SQL 处理：必须经过 tokenizer/parser/dispatcher，不作为 CLI 内置命令绕过 SQL 层。
+目标：为 CLI 多客户端引入最小可用的认证与权限系统。每个客户端先登录，再执行 SQL；DDL/DML 进入 service 前完成权限检查。阶段二只做用户、数据库级权限、基础 DCL，不做角色与列级权限。CLI 登录采用常见 DBMS 客户端范式：支持 `DBMS_CLI -u root -p`，或启动后提示 `Username:` / `Password:`。新增的用户与权限 DDL/DCL 按普通 SQL 处理：必须经过 tokenizer/parser/dispatcher，不作为 CLI 内置命令绕过 SQL 层。`LOGIN user IDENTIFIED BY password` 可保留为兼容/调试 SQL，但不作为 CLI 用户的主要登录入口。
 
 ### 0. 常量增量
 
@@ -446,8 +446,8 @@ struct ClientSession {
 新增 SQL 语法收口：
 
 1. `LOGIN user IDENTIFIED BY password`
-   - 作为认证 SQL 命令进入 parser。
-   - 用于客户端登录。
+   - 作为兼容/调试认证 SQL 命令进入 parser。
+   - CLI 默认不要求用户显式输入该语句。
 
 2. `CREATE USER user IDENTIFIED BY password`
    - 作为 DDL 进入 parser。
@@ -481,11 +481,9 @@ struct ClientSession {
 
 ```text
 
-CLI 输入 LOGIN user IDENTIFIED BY password
--> CliApp 将整条 SQL 交给 SqlClientEngine::executeSql
--> SqlDispatcher 调用 parser
--> parser 识别 AuthCommand::Login
--> dispatcher 调用 SqlClientEngine/AuthService 登录路径
+CLI 启动参数 -u root -p
+或 CLI 启动后提示 Username: / Password:
+-> CliApp 调用 SqlClientEngine::login(clientId, userName, password)
 -> AuthService::authenticate(userName, password)
 -> 读取 __dbms_auth.sys_users
 -> 校验用户存在、密码匹配、enabled=true
@@ -501,7 +499,7 @@ CLI 输入 LOGIN user IDENTIFIED BY password
 SqlClientEngine::executeSql(clientId, sql)
 -> 获取 session
 -> SqlDispatcher parse SQL
--> 若 SQL 不是 AuthCommand::Login 且不是 CLI 元命令，要求 authenticated=true
+-> 若 session.authenticated=false，拒绝普通 SQL 并提示先登录
 -> AuthService::authorize(session.userName, parsedCommand, targetDatabase)
 -> root 直接放行
 -> 非 root 查询 sys_database_privileges
