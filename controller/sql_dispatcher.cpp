@@ -87,6 +87,118 @@ ColumnDefinition columnDefinitionFromPayload(const QVariantMap &columnMap)
     return definition;
 }
 
+bool columnDefinitionFromExistingSchema(const tabledef::TableSchema &schema,
+                                        const QString &columnName,
+                                        ColumnDefinition *definition,
+                                        QString *error)
+{
+    if (definition == nullptr) {
+        if (error != nullptr) *error = QStringLiteral("column definition output pointer cannot be null");
+        return false;
+    }
+
+    const int columnIndex = tabledef::findColumnIndex(schema, columnName);
+    if (columnIndex < 0) {
+        if (error != nullptr) *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+        return false;
+    }
+
+    ColumnDefinition result;
+    result.column = schema.columns.at(columnIndex);
+    result.checkClause = result.column.check;
+
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (!tabledef::constraintTouchesColumn(constraint, columnName)) {
+            continue;
+        }
+
+        if (constraint.columns.size() != 1 || constraint.columns.value(0) != columnName) {
+            if (error != nullptr) {
+                *error = QStringLiteral("partial ALTER COLUMN cannot preserve multi-column constraint '%1'")
+                             .arg(constraint.name);
+            }
+            return false;
+        }
+
+        if (tabledef::isPrimaryKeyConstraint(constraint)) {
+            result.primaryKey = true;
+        } else if (tabledef::isUniqueConstraint(constraint)) {
+            result.unique = true;
+        } else if (tabledef::isForeignKeyConstraint(constraint)) {
+            result.referencedTable = constraint.referencedTable;
+            result.referencedColumns = constraint.referencedColumns;
+            result.onDeleteAction = constraint.onDeleteAction;
+            result.onUpdateAction = constraint.onUpdateAction;
+        } else if (constraint.type == tabledef::ConstraintType::Check) {
+            result.checkClause = constraint.checkClause;
+            result.column.check = constraint.checkClause;
+        }
+    }
+
+    *definition = result;
+    return true;
+}
+
+SqlExecResult execPartialAlterColumn(const QString &tableName,
+                                     const sqlparser::ParseResult &p,
+                                     const QString &action)
+{
+    const QString columnName = p.payload.value(QStringLiteral("columnName")).toString().trimmed();
+    if (columnName.isEmpty()) {
+        return {false, QStringLiteral("ALTER TABLE ALTER COLUMN requires columnName")};
+    }
+
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        return {false, error};
+    }
+
+    ColumnDefinition definition;
+    if (!columnDefinitionFromExistingSchema(schema, columnName, &definition, &error)) {
+        return {false, error};
+    }
+
+    QString oldColumnName = columnName;
+    if (action == QStringLiteral("ALTER_COLUMN_SET_DEFAULT")) {
+        definition.column.defaultValue = p.payload.value(QStringLiteral("defaultValue")).toString();
+    } else if (action == QStringLiteral("ALTER_COLUMN_DROP_DEFAULT")) {
+        definition.column.defaultValue.clear();
+    } else if (action == QStringLiteral("ALTER_COLUMN_SET_NOT_NULL")) {
+        definition.column.notNull = true;
+    } else if (action == QStringLiteral("ALTER_COLUMN_DROP_NOT_NULL")) {
+        definition.column.notNull = false;
+    } else if (action == QStringLiteral("ALTER_COLUMN_SET_TYPE")) {
+        const QString typeName = p.payload.value(QStringLiteral("type")).toString().trimmed();
+        if (typeName.isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN TYPE requires type")};
+        }
+        definition.column.type = columnTypeFromSql(typeName);
+        if (definition.column.type == tabledef::ColumnType::Varchar) {
+            definition.column.length = p.payload.contains(QStringLiteral("length"))
+                                           ? p.payload.value(QStringLiteral("length")).toInt()
+                                           : 255;
+        } else {
+            definition.column.length = 0;
+        }
+    } else if (action == QStringLiteral("RENAME_COLUMN")) {
+        const QString newColumnName = p.payload.value(QStringLiteral("newColumnName")).toString().trimmed();
+        if (newColumnName.isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE RENAME COLUMN requires newColumnName")};
+        }
+        definition.column.name = newColumnName;
+    } else {
+        return {false, QStringLiteral("ALTER TABLE: unsupported partial column action %1").arg(action)};
+    }
+
+    TaskResult result = table_service::modifyColumn(tableName, oldColumnName, definition);
+    if (result.success) {
+        return {true, {}, action == QStringLiteral("RENAME_COLUMN") ? QStringLiteral("Column renamed")
+                                                                    : QStringLiteral("Column altered")};
+    }
+    return {false, result.errorMessage};
+}
+
 tabledef::Constraint constraintFromPayload(const QVariantMap &constraintMap,
                                            const QString &tableName,
                                            int ordinal)
@@ -384,6 +496,14 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
         auto r = table_service::modifyColumn(tableName, colDef.column.name, colDef);
         if (r.success) return {true, {}, "Column modified"};
         return {false, r.errorMessage};
+    }
+    if (action == "ALTER_COLUMN_SET_DEFAULT"
+        || action == "ALTER_COLUMN_DROP_DEFAULT"
+        || action == "ALTER_COLUMN_SET_NOT_NULL"
+        || action == "ALTER_COLUMN_DROP_NOT_NULL"
+        || action == "ALTER_COLUMN_SET_TYPE"
+        || action == "RENAME_COLUMN") {
+        return execPartialAlterColumn(tableName, p, action);
     }
     if (action == "ADD_CONSTRAINT") {
         if (!payloadHasMap(p, QStringLiteral("constraint"))) {

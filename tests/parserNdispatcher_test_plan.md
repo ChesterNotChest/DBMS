@@ -5,7 +5,6 @@
 本文件记录当前已经落地的 parser / dispatcher 回归范围，直接对应 [test_parser_dispatcher.cpp](E:/Qt-projects/DBMS/tests/test_parser_dispatcher.cpp)。
 
 当前覆盖目标分成两层：
-
 - parser 是否按协议输出正确的 `commandType + payload`
 - dispatcher 是否把 payload 正确下推到现有 service，并拒绝不完整输入
 
@@ -22,7 +21,7 @@
 - `test_parseInsertWithoutColumnListProducesSingleRowPayload`
   验证无列名 `INSERT` 仍会产出单行 `rows` payload。
 - `test_parseAlterAndIndexProduceCompletePayload`
-  验证 `ALTER TABLE ADD/MODIFY COLUMN`、`ADD/MODIFY CONSTRAINT`、`CREATE/DROP INDEX` 会输出完整 payload。
+  验证 `ALTER TABLE ADD/MODIFY COLUMN`、`ADD/MODIFY CONSTRAINT`、`ALTER COLUMN SET/DROP DEFAULT`、`ALTER COLUMN SET/DROP NOT NULL`、`ALTER COLUMN TYPE`、`RENAME COLUMN`、`CREATE/DROP INDEX` 会输出完整 payload。
 - `test_parseAlterForeignKeyAndMultiColumnIndexPayload`
   验证 `ALTER TABLE ... ADD CONSTRAINT FOREIGN KEY ...` 和多列索引的 payload 收口。
 
@@ -43,6 +42,12 @@
   验证 `SHOW CREATE TABLE` 贯通到 service。
 - `test_dispatcherAlterSqlPathsCallService`
   验证 `ALTER TABLE ADD/MODIFY COLUMN/CONSTRAINT` 的 SQL 会真正改动 schema。
+- `test_dispatcherPartialAlterColumnPreservesAttributes`
+  验证 partial `ALTER COLUMN` 只修改指定属性，并保留旧列的类型、长度、默认值、nullable 等未指定属性。
+- `test_dispatcherPartialAlterSetNotNullRejectsExistingEmptyValues`
+  验证 `ALTER COLUMN ... SET NOT NULL` 会复用底层约束校验，拒绝已有空值的数据表。
+- `test_dispatcherRenameColumnPreservesDataAndIndexMetadata`
+  验证 `RENAME COLUMN` 会保留行数据，并同步更新索引元数据中的列名。
 - `test_dispatcherWhereAndLimitFlowToService`
   验证 `SELECT / UPDATE / DELETE` 的简单 `WHERE` 和 `LIMIT` 会真正下推到 `tuple_service`。
 - `test_dispatcherIndexSqlUsesService`
@@ -60,7 +65,6 @@
 ## 当前结论
 
 当前 parser / dispatcher 测试已经覆盖：
-
 - `CREATE TABLE`
 - `SELECT ... WHERE ... AND ... LIMIT ...`
 - `UPDATE ... WHERE ...`
@@ -68,7 +72,11 @@
 - `INSERT`
 - `ALTER TABLE ADD/MODIFY COLUMN`
 - `ALTER TABLE ADD/MODIFY CONSTRAINT`
+- `ALTER TABLE ALTER COLUMN SET/DROP DEFAULT`
+- `ALTER TABLE ALTER COLUMN SET/DROP NOT NULL`
+- `ALTER TABLE ALTER COLUMN TYPE`
+- `ALTER TABLE RENAME COLUMN`
 - `CREATE INDEX / DROP INDEX`
-- 关键的失败边界与 payload 不完整拒绝策略
+- 关键失败边界与 payload 不完整拒绝策略
 
 仍未追求的是“所有语法变体穷举”，而不是主协议缺失。
