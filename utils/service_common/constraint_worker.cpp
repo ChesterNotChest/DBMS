@@ -14,6 +14,31 @@
 
 namespace {
 
+QStringList cachedTableNames(const QString &dataRoot,
+                             const QString &databaseName,
+                             QString *error)
+{
+    const thread_runtime::DatabaseCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(dataRoot, databaseName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.tableNames;
+}
+
+QList<tabledef::Constraint> cachedTableConstraints(const QString &dataRoot,
+                                                   const QString &databaseName,
+                                                   const QString &tableName,
+                                                   QString *error)
+{
+    const thread_runtime::TableCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getTableCatalog(dataRoot, databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.schema.constraints;
+}
+
 QStringList generateRowIds(int count)
 {
     QStringList rowIds;
@@ -385,36 +410,41 @@ bool validateConstraintRows(const QString &databaseName,
 
         QList<tabledef::Column> parentColumns;
         repo::TableData parentTable;
-        QString tabError;
+        QString catalogError;
         if (constraint.referencedTable == schema.tableName) {
             parentColumns = schema.columns;
             parentTable.columns = tableColumns;
             parentTable.rows = tableRows;
         } else {
-            repo::TabRepo tabRepo(databaseName, dataRoot);
-            if (!tabRepo.hasTable(constraint.referencedTable, &tabError)) {
+            const thread_runtime::DatabaseCatalogSnapshot databaseCatalog =
+                thread_runtime::CatalogCache::instance().getDatabaseCatalog(dataRoot, databaseName, &catalogError);
+            if (!catalogError.isEmpty() || !databaseCatalog.tableNames.contains(constraint.referencedTable)) {
                 if (error != nullptr) {
-                    *error = tabError.isEmpty()
+                    *error = catalogError.isEmpty()
                                  ? QStringLiteral("referenced table '%1' does not exist").arg(constraint.referencedTable)
-                                 : tabError;
+                                 : catalogError;
                 }
                 return false;
             }
 
-            repo::MetaRepo parentMeta(databaseName, constraint.referencedTable, dataRoot);
-            parentColumns = parentMeta.listColumns(&tabError);
-            if (!tabError.isEmpty()) {
+            const thread_runtime::TableCatalogSnapshot parentCatalog =
+                thread_runtime::CatalogCache::instance().getTableCatalog(dataRoot,
+                                                                         databaseName,
+                                                                         constraint.referencedTable,
+                                                                         &catalogError);
+            if (!catalogError.isEmpty()) {
                 if (error != nullptr) {
-                    *error = tabError;
+                    *error = catalogError;
                 }
                 return false;
             }
+            parentColumns = parentCatalog.schema.columns;
 
             parentTable = repo::TableRepo(databaseName, constraint.referencedTable, dataRoot)
-                              .readTable(&tabError);
-            if (!tabError.isEmpty()) {
+                              .readTable(&catalogError);
+            if (!catalogError.isEmpty()) {
                 if (error != nullptr) {
-                    *error = tabError;
+                    *error = catalogError;
                 }
                 return false;
             }
@@ -479,35 +509,38 @@ bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
         error->clear();
     }
 
-    repo::TabRepo tabRepo(databaseName, dataRoot);
-    QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
-    if (!tabError.isEmpty()) {
+    QString catalogError;
+    const thread_runtime::DatabaseCatalogSnapshot databaseCatalog =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(dataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
         if (error != nullptr) {
-            *error = tabError;
+            *error = catalogError;
         }
         return false;
     }
 
-    for (const repo::TableEntry &tableEntry : tableEntries) {
-        if (tableEntry.name == targetTableName) {
+    for (const QString &tableName : databaseCatalog.tableNames) {
+        if (tableName == targetTableName) {
             continue;
         }
 
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, dataRoot);
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&tabError);
-        if (!tabError.isEmpty()) {
+        const thread_runtime::TableCatalogSnapshot tableCatalog =
+            thread_runtime::CatalogCache::instance().getTableCatalog(dataRoot,
+                                                                     databaseName,
+                                                                     tableName,
+                                                                     &catalogError);
+        if (!catalogError.isEmpty()) {
             if (error != nullptr) {
-                *error = tabError;
+                *error = catalogError;
             }
             return false;
         }
 
-        for (const tabledef::Constraint &constraint : constraints) {
+        for (const tabledef::Constraint &constraint : tableCatalog.schema.constraints) {
             if (tabledef::isForeignKeyConstraint(constraint) && constraint.referencedTable == targetTableName) {
                 if (error != nullptr) {
                     *error = QStringLiteral("table '%1' is referenced by foreign key '%2' from table '%3'")
-                                 .arg(targetTableName, constraint.name, tableEntry.name);
+                                 .arg(targetTableName, constraint.name, tableName);
                 }
                 return false;
             }
@@ -516,7 +549,6 @@ bool validateNoIncomingForeignKeyReferences(const QString &databaseName,
 
     return true;
 }
-
 // 约束构造与派生约束生成。
 tabledef::Constraint makeConstraint(const QString &constraintName,
                                     tabledef::ConstraintType type,
@@ -1079,9 +1111,8 @@ QStringList collectMutationRelatedTables(const QString &databaseName,
     QSet<QString> relatedTables;
     relatedTables.insert(tableName.trimmed());
 
-    repo::TabRepo tabRepo(databaseName, currentDataRoot);
     QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
+    const QStringList tableNames = cachedTableNames(currentDataRoot, databaseName, &tabError);
     if (!tabError.isEmpty()) {
         if (error != nullptr) {
             *error = tabError;
@@ -1092,10 +1123,10 @@ QStringList collectMutationRelatedTables(const QString &databaseName,
     bool changed = true;
     while (changed) {
         changed = false;
-        for (const repo::TableEntry &tableEntry : tableEntries) {
+        for (const QString &candidateTableName : tableNames) {
             QString constraintError;
             const QList<tabledef::Constraint> constraints =
-                loadUserTableConstraints(tableEntry.name, &constraintError);
+                cachedTableConstraints(currentDataRoot, databaseName, candidateTableName, &constraintError);
             if (!constraintError.isEmpty()) {
                 if (error != nullptr) {
                     *error = constraintError;
@@ -1115,9 +1146,9 @@ QStringList collectMutationRelatedTables(const QString &databaseName,
                 }
 
                 const bool parentKnown = relatedTables.contains(constraint.referencedTable);
-                const bool childKnown = relatedTables.contains(tableEntry.name);
-                if ((parentKnown || childKnown) && !relatedTables.contains(tableEntry.name)) {
-                    relatedTables.insert(tableEntry.name);
+                const bool childKnown = relatedTables.contains(candidateTableName);
+                if ((parentKnown || childKnown) && !relatedTables.contains(candidateTableName)) {
+                    relatedTables.insert(candidateTableName);
                     changed = true;
                 }
                 if ((parentKnown || childKnown) && !relatedTables.contains(constraint.referencedTable)) {
@@ -1132,5 +1163,4 @@ QStringList collectMutationRelatedTables(const QString &databaseName,
     std::sort(tables.begin(), tables.end());
     return tables;
 }
-
 } // namespace service

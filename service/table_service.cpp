@@ -103,31 +103,34 @@ bool hasIncomingForeignKeyReferenceToColumn(const QString &databaseName,
         error->clear();
     }
 
-    repo::TabRepo tabRepo(databaseName, currentDataRoot);
-    QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
-    if (!tabError.isEmpty()) {
+    QString catalogError;
+    const thread_runtime::DatabaseCatalogSnapshot databaseCatalog =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
         if (error != nullptr) {
-            *error = tabError;
+            *error = catalogError;
         }
         return true;
     }
 
-    for (const repo::TableEntry &tableEntry : tableEntries) {
-        if (tableEntry.name == targetTableName) {
+    for (const QString &tableName : databaseCatalog.tableNames) {
+        if (tableName == targetTableName) {
             continue;
         }
 
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&tabError);
-        if (!tabError.isEmpty()) {
+        const thread_runtime::TableCatalogSnapshot tableCatalog =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot,
+                                                                     databaseName,
+                                                                     tableName,
+                                                                     &catalogError);
+        if (!catalogError.isEmpty()) {
             if (error != nullptr) {
-                *error = tabError;
+                *error = catalogError;
             }
             return true;
         }
 
-        for (const tabledef::Constraint &constraint : constraints) {
+        for (const tabledef::Constraint &constraint : tableCatalog.schema.constraints) {
             if (!tabledef::isForeignKeyConstraint(constraint)
                 || constraint.referencedTable != targetTableName) {
                 continue;
@@ -136,7 +139,7 @@ bool hasIncomingForeignKeyReferenceToColumn(const QString &databaseName,
             if (constraint.referencedColumns.contains(targetColumnName)) {
                 if (error != nullptr) {
                     *error = QStringLiteral("column '%1' is referenced by foreign key '%2' from table '%3'")
-                                 .arg(targetColumnName, constraint.name, tableEntry.name);
+                                 .arg(targetColumnName, constraint.name, tableName);
                 }
                 return true;
             }

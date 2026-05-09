@@ -115,6 +115,99 @@ private slots:
         QVERIFY(QFile::exists(rowIdPath));
     }
 
+    void test_loadUserTableSchemaUsesCatalogCache()
+    {
+        const QString databaseName = QStringLiteral("schema_cache_db");
+        const QString tableName = QStringLiteral("schema_cache_table");
+        prepareTable(databaseName, tableName);
+
+        QString error;
+        const tabledef::TableSchema first = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(first.columns.size(), 2);
+
+        repo::MetaRepo metaRepo(databaseName, tableName, currentDataRoot);
+        QVERIFY2(metaRepo.deleteColumn(QStringLiteral("name")).ok, "delete column directly");
+
+        const tabledef::TableSchema second = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(second.columns.size(), 2);
+        QVERIFY(tabledef::hasColumn(second, QStringLiteral("name")));
+    }
+
+    void test_loadUserTableIndexesUsesCatalogCache()
+    {
+        const QString databaseName = QStringLiteral("index_cache_db");
+        const QString tableName = QStringLiteral("index_cache_table");
+        prepareTable(databaseName, tableName);
+
+        QString error;
+        const QList<tabledef::IndexMeta> first = loadUserTableIndexes(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!first.isEmpty());
+
+        repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
+        QVERIFY2(indexRepo.deleteIndex(first.first().indexName).ok, "remove index directly");
+
+        const QList<tabledef::IndexMeta> second = loadUserTableIndexes(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(second.size(), first.size());
+    }
+
+    void test_loadUserTableConstraintsUsesCatalogCache()
+    {
+        const QString databaseName = QStringLiteral("constraint_cache_db");
+        const QString tableName = QStringLiteral("constraint_cache_table");
+        prepareTable(databaseName, tableName);
+
+        QString error;
+        const QList<tabledef::Constraint> first = loadUserTableConstraints(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!first.isEmpty());
+
+        repo::ConstraintRepo constraintRepo(databaseName, tableName, currentDataRoot);
+        QVERIFY2(constraintRepo.deleteConstraint(first.first().name).ok, "remove constraint directly");
+
+        const QList<tabledef::Constraint> second = loadUserTableConstraints(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(second.size(), first.size());
+    }
+
+    void test_showTablesUsesDatabaseCatalog()
+    {
+        const QString databaseName = QStringLiteral("show_tables_cache_db");
+        const QString tableName = QStringLiteral("show_tables_cache_table");
+        prepareTable(databaseName, tableName);
+
+        SelectRowsResult first = table_service::showTables();
+        QVERIFY2(first.success, qPrintable(first.errorMessage));
+        QCOMPARE(first.resultTable.rows.size(), 1);
+
+        repo::TabRepo tabRepo(databaseName, currentDataRoot);
+        QVERIFY2(tabRepo.createTableEntry(QStringLiteral("show_tables_direct_added")).ok, "add table directly");
+
+        SelectRowsResult second = table_service::showTables();
+        QVERIFY2(second.success, qPrintable(second.errorMessage));
+        QCOMPARE(second.resultTable.rows.size(), 1);
+    }
+
+    void test_showDatabasesUsesRootCatalog()
+    {
+        const QString databaseName = QStringLiteral("show_databases_cache_db");
+        prepareTable(databaseName, QStringLiteral("show_databases_cache_table"));
+
+        SelectRowsResult first = database_service::showDatabases();
+        QVERIFY2(first.success, qPrintable(first.errorMessage));
+        QCOMPARE(first.resultTable.rows.size(), 1);
+
+        repo::DatabaseRepo databaseRepo(currentDataRoot);
+        QVERIFY2(databaseRepo.createDatabase(QStringLiteral("show_databases_direct_added")).ok, "add database directly");
+
+        SelectRowsResult second = database_service::showDatabases();
+        QVERIFY2(second.success, qPrintable(second.errorMessage));
+        QCOMPARE(second.resultTable.rows.size(), 1);
+    }
+
 private:
     QString m_dataRoot;
 };

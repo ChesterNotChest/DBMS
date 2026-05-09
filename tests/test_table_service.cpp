@@ -180,6 +180,16 @@ QStringList listedTables(const SelectRowsResult &result)
     return names;
 }
 
+bool schemaHasConstraint(const tabledef::TableSchema &schema, const QString &constraintName)
+{
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (constraint.name == constraintName) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QStringList listedIndexes(const QString &databaseName,
                           const QString &tableName,
                           const QString &dataRoot,
@@ -1215,6 +1225,65 @@ private slots:
         QVERIFY2(parentDrop.success, qPrintable(parentDrop.errorMessage));
     }
 
+    void test_modifyConstraintFailureDoesNotPolluteTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_modify_constraint_cache_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_modify_constraint_cache_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const tabledef::Constraint originalConstraint = makeUnique(QStringLiteral("uq_test_table_service_name"),
+                                                                  {QStringLiteral("name")});
+        QVERIFY(table_service::addConstraint(tableName, originalConstraint).success);
+
+        QString error;
+        const tabledef::TableSchema before = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(schemaHasConstraint(before, QStringLiteral("uq_test_table_service_name")));
+
+        qputenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE", QByteArrayLiteral("1"));
+        tabledef::Constraint modifiedConstraint = makeUnique(QStringLiteral("uq_test_table_service_name_renamed"),
+                                                             {QStringLiteral("name")});
+        modifiedConstraint.indexName = QStringLiteral("uq_test_table_service_name_renamed_idx");
+        TaskResult modifyResult = table_service::modifyConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name"),
+                                                                  modifiedConstraint);
+        qunsetenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE");
+        QVERIFY(!modifyResult.success);
+
+        const tabledef::TableSchema after = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(schemaHasConstraint(after, QStringLiteral("uq_test_table_service_name")));
+        QVERIFY(!schemaHasConstraint(after, QStringLiteral("uq_test_table_service_name_renamed")));
+    }
+
+    void test_deleteConstraintFailureDoesNotPolluteTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_delete_constraint_cache_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_delete_constraint_cache_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        const tabledef::Constraint uniqueConstraint = makeUnique(QStringLiteral("uq_test_table_service_name"),
+                                                                 {QStringLiteral("name")});
+        QVERIFY(table_service::addConstraint(tableName, uniqueConstraint).success);
+
+        QString error;
+        const tabledef::TableSchema before = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(schemaHasConstraint(before, QStringLiteral("uq_test_table_service_name")));
+
+        qputenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE", QByteArrayLiteral("1"));
+        TaskResult deleteResult = table_service::deleteConstraint(tableName,
+                                                                  QStringLiteral("uq_test_table_service_name"));
+        qunsetenv("DBMS_TEST_FAIL_BOUND_INDEX_REMOVE");
+        QVERIFY(!deleteResult.success);
+
+        const tabledef::TableSchema after = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(schemaHasConstraint(after, QStringLiteral("uq_test_table_service_name")));
+    }
+
     void test_deleteConstraintSurfacesBoundIndexDeletionFailure()
     {
         const QString databaseName = QStringLiteral("test_table_service_delete_constraint_delete_fail_db");
@@ -1419,6 +1488,62 @@ private slots:
                  QStringList({QStringLiteral("1"), QStringLiteral("alice")}));
     }
 
+    void test_insertRowsUsesMutationStateCommitPath()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_insert_commit_db");
+        const QString tableName = QStringLiteral("test_table_service_insert_commit_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+
+        TaskResult result = tuple_service::insertRows(tableName,
+                                                      {QMap<QString, QString>{{QStringLiteral("id"), QStringLiteral("1")},
+                                                                              {QStringLiteral("name"), QStringLiteral("alice")}}});
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        const QString pkIndexName = findIndexNameByColumns(databaseName,
+                                                           tableName,
+                                                           m_dataRoot,
+                                                           {QStringLiteral("id")},
+                                                           &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!pkIndexName.isEmpty());
+        const QStringList matches = searchIndex(databaseName,
+                                                tableName,
+                                                pkIndexName,
+                                                {QStringLiteral("1")},
+                                                m_dataRoot,
+                                                &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(matches.size(), 1);
+    }
+
+    void test_addColumnFailureDoesNotPolluteTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_add_column_cache_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_add_column_cache_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("bob")}, m_dataRoot);
+
+        QString error;
+        const tabledef::TableSchema before = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(before.columns.size(), 2);
+
+        ColumnDefinition definition;
+        definition.column = makeColumn(QStringLiteral("code"), tabledef::ColumnType::Varchar, 16, false, QStringLiteral("dup"));
+        definition.unique = true;
+        TaskResult result = table_service::addColumn(tableName, definition);
+        QVERIFY(!result.success);
+
+        const tabledef::TableSchema after = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(after.columns.size(), 2);
+        QVERIFY(!tabledef::hasColumn(after, QStringLiteral("code")));
+    }
+
     void test_createIndexAndDropIndex()
     {
         const QString databaseName = QStringLiteral("test_table_service_create_index_db");
@@ -1498,6 +1623,37 @@ private slots:
 
         repo::FlatFileTableStore store(m_dataRoot);
         QVERIFY(!QFile(store.getSortIndexFilePath(databaseName, tableName, QStringLiteral("idx_test_table_service_cleanup"))).exists());
+    }
+
+    void test_createIndexFailureDoesNotPolluteOrInvalidateTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("test_table_service_create_index_cache_fail_db");
+        const QString tableName = QStringLiteral("test_table_service_create_index_cache_fail_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, baseSchema(tableName), m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("alice")}, m_dataRoot);
+
+        QString error;
+        const tabledef::TableSchema before = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const int indexCountBefore = before.indexes.size();
+
+        qputenv("DBMS_TEST_FAIL_SORT_INDEX_CREATE_AFTER_WRITE", QByteArrayLiteral("1"));
+        TaskResult createResult = table_service::createIndex(tableName,
+                                                             QStringLiteral("idx_test_table_service_cache_fail"),
+                                                             {QStringLiteral("name")},
+                                                             false);
+        qunsetenv("DBMS_TEST_FAIL_SORT_INDEX_CREATE_AFTER_WRITE");
+        QVERIFY(!createResult.success);
+
+        const tabledef::TableSchema after = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(after.indexes.size(), indexCountBefore);
+        QVERIFY(!tabledef::hasIndex(after, QStringLiteral("idx_test_table_service_cache_fail")));
+
+        const QStringList indexNames = listedIndexes(databaseName, tableName, m_dataRoot, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!indexNames.contains(QStringLiteral("idx_test_table_service_cache_fail")));
     }
 
     void test_sortIndexLeafNextChain()
