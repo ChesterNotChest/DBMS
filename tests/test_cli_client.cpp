@@ -62,7 +62,7 @@ private slots:
                                       QStringLiteral("--data-root"),
                                       m_dataRoot,
                                       QStringLiteral("--execute"),
-                                      QStringLiteral("CREATE DATABASE cli_exec_db;")});
+                                      QStringLiteral("LOGIN root IDENTIFIED BY ''; CREATE DATABASE cli_exec_db;")});
 
         QCOMPARE(exitCode, 0);
         QVERIFY(errorText.isEmpty());
@@ -71,7 +71,7 @@ private slots:
 
     void test_multilineSqlBufferExecutesOnlyAfterSemicolon()
     {
-        QString inputText = QStringLiteral("CREATE DATABASE cli_multi_db\n;\nexit\n");
+        QString inputText = QStringLiteral("LOGIN root IDENTIFIED BY '';\nCREATE DATABASE cli_multi_db\n;\nexit\n");
         QString outputText;
         QString errorText;
         QTextStream input(&inputText, QIODevice::ReadOnly);

@@ -52,7 +52,12 @@ private slots:
         const QString firstClient = pool.createSession(m_dataRoot);
         const QString secondClient = pool.createSession(m_dataRoot);
 
-        service::SqlExecResult result = engine.executeSql(firstClient, QStringLiteral("CREATE DATABASE db_a;"));
+        service::SqlExecResult result = engine.executeSql(firstClient, QStringLiteral("LOGIN root IDENTIFIED BY '';"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(secondClient, QStringLiteral("LOGIN root IDENTIFIED BY '';"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.executeSql(firstClient, QStringLiteral("CREATE DATABASE db_a;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         result = engine.executeSql(secondClient, QStringLiteral("CREATE DATABASE db_b;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
@@ -81,7 +86,9 @@ private slots:
         service::setDataRoot(QStringLiteral("previous_root"));
         service::currentDatabase = QStringLiteral("previous_db");
 
-        const service::SqlExecResult result = engine.executeSql(clientId, QStringLiteral("CREATE DATABASE isolated_db;"));
+        service::SqlExecResult result = engine.executeSql(clientId, QStringLiteral("LOGIN root IDENTIFIED BY '';"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(clientId, QStringLiteral("CREATE DATABASE isolated_db;"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
 
         QCOMPARE(service::getDataRoot(), QDir::cleanPath(QStringLiteral("previous_root")));

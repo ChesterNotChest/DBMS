@@ -22,6 +22,7 @@ private:
     ClientSession *m_session = nullptr;
     QString m_previousDataRoot;
     QString m_previousDatabase;
+    QString m_previousUser;
 };
 
 class SqlClientEngine
@@ -32,6 +33,16 @@ public:
     service::SqlExecResult executeSql(const QString &clientId, const QString &sql);
 
 private:
+    service::SqlExecResult executeParsedStatement(ClientSession *clientSession,
+                                                  service::SqlDispatcher *dispatcher,
+                                                  const sqlparser::ParseResult &parsed);
+    service::SqlExecResult executeLogin(ClientSession *clientSession,
+                                        const sqlparser::ParseResult &parsed);
+    service::SqlExecResult authorizeStatement(const ClientSession &clientSession,
+                                              const sqlparser::ParseResult &parsed) const;
+    QString targetDatabaseForStatement(const ClientSession &clientSession,
+                                       const sqlparser::ParseResult &parsed) const;
+
     ClientSessionPool *m_sessionPool = nullptr;
 };
 

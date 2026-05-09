@@ -5,6 +5,7 @@
  */
 #include "sql_dispatcher.h"
 #include "nest_query.h"
+#include "../service/auth_service.h"
 #include "../utils/service_common/service_common.h"
 #include <QDebug>
 
@@ -248,6 +249,13 @@ SqlExecResult SqlDispatcher::dispatch(const sqlparser::ParseResult& p) {
     if (cmd == "INSERT") return fillMeta(execInsert(p));
     if (cmd == "UPDATE") return fillMeta(execUpdate(p));
     if (cmd == "DELETE") return fillMeta(execDelete(p));
+
+    if (cmd == "LOGIN") return fillMeta(execLogin(p));
+    if (cmd == "CREATE_USER") return fillMeta(execCreateUser(p));
+    if (cmd == "DROP_USER") return fillMeta(execDropUser(p));
+    if (cmd == "ALTER_USER") return fillMeta(execAlterUser(p));
+    if (cmd == "GRANT_ALL") return fillMeta(execGrantAll(p));
+    if (cmd == "REVOKE_ALL") return fillMeta(execRevokeAll(p));
 
     return {false, "Unknown command: " + cmd, "", -1, {}, cmd, p.payload};
 }
@@ -672,6 +680,66 @@ SqlExecResult SqlDispatcher::execDelete(const sqlparser::ParseResult& p) {
 // ============================================================
 //  辅助
 // ============================================================
+SqlExecResult SqlDispatcher::execLogin(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const QString password = p.payload.value(QStringLiteral("password")).toString();
+    const auth_service::AuthResult result = auth_service::authenticate(userName, password, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    currentUser = result.userName;
+    return {true, {}, QStringLiteral("Logged in as '%1'").arg(result.userName)};
+}
+
+SqlExecResult SqlDispatcher::execCreateUser(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const QString password = p.payload.value(QStringLiteral("password")).toString();
+    const TaskResult result = auth_service::createUser(currentUser, userName, password, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    return {true, {}, QStringLiteral("User '%1' created").arg(userName), result.affectedRowCount};
+}
+
+SqlExecResult SqlDispatcher::execDropUser(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const TaskResult result = auth_service::dropUser(currentUser, userName, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    return {true, {}, QStringLiteral("User '%1' dropped").arg(userName), result.affectedRowCount};
+}
+
+SqlExecResult SqlDispatcher::execAlterUser(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const QString password = p.payload.value(QStringLiteral("password")).toString();
+    const TaskResult result = auth_service::alterUserPassword(currentUser, userName, password, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    return {true, {}, QStringLiteral("User '%1' altered").arg(userName), result.affectedRowCount};
+}
+
+SqlExecResult SqlDispatcher::execGrantAll(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
+    const TaskResult result = auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(databaseName, userName), result.affectedRowCount};
+}
+
+SqlExecResult SqlDispatcher::execRevokeAll(const sqlparser::ParseResult& p) {
+    const QString userName = p.payload.value(QStringLiteral("userName")).toString();
+    const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
+    const TaskResult result = auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    if (!result.success) {
+        return {false, result.errorMessage};
+    }
+    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(databaseName, userName), result.affectedRowCount};
+}
+
 QString SqlDispatcher::formatSelectResult(const SelectRowsResult& r) {
     if (!r.success) return "Error: " + r.errorMessage;
 

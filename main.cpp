@@ -42,6 +42,10 @@ int main(int argc, char *argv[])
     qDebug() << "CLI client tests:" << (cliClientTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << cliClientTestResult << ")";
 
+    const int authClientTestResult = service_tests::runAuthClientTests();
+    qDebug() << "Auth client tests:" << (authClientTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << authClientTestResult << ")";
+
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
                                   + (parserDispatcherTestResult == 0 ? 0 : 1)
                                   + (logicTestResult == 0 ? 0 : 1)
@@ -49,7 +53,8 @@ int main(int argc, char *argv[])
                                   + (tableTestResult == 0 ? 0 : 1)
                                   + (tupleTestResult == 0 ? 0 : 1)
                                   + (clientSessionTestResult == 0 ? 0 : 1)
-                                  + (cliClientTestResult == 0 ? 0 : 1);
+                                  + (cliClientTestResult == 0 ? 0 : 1)
+                                  + (authClientTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";

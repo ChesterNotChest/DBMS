@@ -40,6 +40,8 @@ set(DBMS_CORE_SOURCES
         utils/logic/logic_evaluator.cpp
         service/service.h
         service/database_service.cpp
+        service/auth_service.h
+        service/auth_service.cpp
         service/table_service.cpp
         service/tuple_service.cpp
         service/table_dml_service.cpp
@@ -54,6 +56,7 @@ set(DBMS_CORE_SOURCES
         utils/sql_parser/sql_tokenizer.h
         utils/sql_parser/sql_tokenizer.cpp
         utils/sql_parser/sql_parser.h
+        utils/sql_parser/auth_parser.cpp
         utils/sql_parser/database_parser.cpp
         utils/sql_parser/table_parser.cpp
         utils/sql_parser/tuple_parser.cpp
@@ -93,6 +96,7 @@ set(DBMS_TEST_SOURCES
         tests/test_tuple_service.cpp
         tests/test_client_session.cpp
         tests/test_cli_client.cpp
+        tests/test_auth_client.cpp
 )
 
 set(DBMS_CLI_SOURCES

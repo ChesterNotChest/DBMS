@@ -63,6 +63,14 @@ private:
     SqlExecResult execUpdate(const sqlparser::ParseResult& p);
     SqlExecResult execDelete(const sqlparser::ParseResult& p);
 
+    // Auth
+    SqlExecResult execLogin(const sqlparser::ParseResult& p);
+    SqlExecResult execCreateUser(const sqlparser::ParseResult& p);
+    SqlExecResult execDropUser(const sqlparser::ParseResult& p);
+    SqlExecResult execAlterUser(const sqlparser::ParseResult& p);
+    SqlExecResult execGrantAll(const sqlparser::ParseResult& p);
+    SqlExecResult execRevokeAll(const sqlparser::ParseResult& p);
+
     // 辅助
     QString formatSelectResult(const SelectRowsResult& r);
 };

@@ -30,6 +30,7 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
         QString next = tokens[1].lexeme.toUpper();
         if (next == "DATABASE") return {"CREATE_DATABASE", {}};
         if (next == "TABLE")    return {"CREATE_TABLE", {}};
+        if (next == "USER")     return {"CREATE_USER", {}};
         if (next == "INDEX")    return {"CREATE_INDEX", {}};
         if (next == "UNIQUE" && tokens.size() >= 3 && tokens[2].lexeme.toUpper() == "INDEX")
             return {"CREATE_INDEX", {}};
@@ -38,6 +39,7 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
         QString next = tokens[1].lexeme.toUpper();
         if (next == "DATABASE") return {"DROP_DATABASE", {}};
         if (next == "TABLE")    return {"DROP_TABLE", {}};
+        if (next == "USER")     return {"DROP_USER", {}};
         if (next == "INDEX")    return {"DROP_INDEX", {}};
     }
     if (kw == "USE" && tokens.size() >= 2 && tokens[1].type == TokenType::IDENTIFIER)
@@ -54,7 +56,14 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
     if (kw == "INSERT") return {"INSERT", {}};
     if (kw == "UPDATE") return {"UPDATE", {}};
     if (kw == "DELETE") return {"DELETE", {}};
-    if (kw == "ALTER")  return {"ALTER_TABLE", {}};
+    if (kw == "ALTER" && tokens.size() >= 2) {
+        QString next = tokens[1].lexeme.toUpper();
+        if (next == "USER") return {"ALTER_USER", {}};
+        return {"ALTER_TABLE", {}};
+    }
+    if (kw == "GRANT")  return {"GRANT_ALL", {}};
+    if (kw == "REVOKE") return {"REVOKE_ALL", {}};
+    if (kw == "LOGIN")  return {"LOGIN", {}};
 
     return {"UNKNOWN", {}};
 }

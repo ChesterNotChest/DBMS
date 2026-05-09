@@ -10,5 +10,6 @@ int runTableServiceTests();
 int runTupleServiceTests();
 int runClientSessionTests();
 int runCliClientTests();
+int runAuthClientTests();
 
 } // namespace service_tests
