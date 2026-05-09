@@ -47,8 +47,6 @@ ParseResult parseUserPasswordCommand(const QString &commandType,
 
 ParseResult parseAuthSql(const QString &sql, const QVector<SqlToken> &tokens)
 {
-    Q_UNUSED(sql);
-
     auto [cmdType, payload] = classifySql(sql, tokens);
     if (cmdType == QStringLiteral("LOGIN")) {
         return parseUserPasswordCommand(cmdType, tokens, 1, 2);

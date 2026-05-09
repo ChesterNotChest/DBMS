@@ -68,6 +68,7 @@ private:
     bool initializeClientSession();
     QStringList databaseNamesForDialog();
     bool applySqlResult(const service::SqlExecResult &r);
+    bool switchGuiDatabase(const QString &dbName);
     void updateStatusDbLabel();
 
 protected:

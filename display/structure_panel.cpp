@@ -1,17 +1,17 @@
-﻿/**
- * structure_panel.cpp 鈥?宸︿晶鏁版嵁搴撶粨鏋勬爲锛堜笁灞傚畬鏁村眰绾э級
+/**
+ * structure_panel.cpp - left-side database structure tree.
  *
- * 鑱岃矗锛氱函 UI 灞曠ず + 鐢ㄦ埛浜や簰銆? * 涓嶅仛 SQL 瑙ｆ瀽銆佷笉鐩存帴璁块棶鏂囦欢銆佷笉鐩存帴鎿嶄綔 repo銆? * 鎵€鏈夋暟鎹煡璇㈣蛋 service 灞傦紙database_service / table_service锛夈€? *
- * 涓夊眰缁撴瀯锛歞atabase 鈫?table 鈫?column
- * - database 鑺傜偣锛氬綋鍓嶅簱钃濊壊鍔犵矖楂樹寒
- * - table 鑺傜偣锛氬睍寮€鏃舵噿鍔犺浇 column
- * - column 鑺傜偣锛氿煍戜富閿?/ 馃搸鏅€氬垪锛岃嚜鍔ㄨ瘑鍒? */
+ * Responsibilities: UI rendering and user interaction only. Data lookup goes
+ * through the GUI client runtime so it shares the same auth/session behavior as
+ * the editor without directly touching repo files.
+ */
 #include "structure_panel.h"
 #include "client/sql_client_engine.h"
 #include "service/service.h"
+
+#include <QFile>
 #include <QHeaderView>
 #include <QTextStream>
-#include <QFile>
 
 namespace {
 
@@ -21,8 +21,12 @@ QStringList columnNamesFromDescribeText(const QString &text)
     const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (QString line : lines) {
         line = line.trimmed();
-        if (line.isEmpty()) continue;
-        if (line.startsWith(QStringLiteral("CONSTRAINT"), Qt::CaseInsensitive)) continue;
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.startsWith(QStringLiteral("CONSTRAINT"), Qt::CaseInsensitive)) {
+            continue;
+        }
         columnNames.append(line.section(QLatin1Char(' '), 0, 0));
     }
     return columnNames;
@@ -47,7 +51,7 @@ void StructurePanel::setupUI()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // VS Code Light 鈥?渚ц竟鏍?#F3F3F3
+    // VS Code Light sidebar background.
     setStyleSheet("QWidget { background:#F3F3F3; }");
 
     QLabel *title = new QLabel(QStringLiteral("Objects"));
@@ -63,7 +67,7 @@ void StructurePanel::setupUI()
     m_treeWidget->setIndentation(16);
     m_treeWidget->setRootIsDecorated(true);
     m_treeWidget->setUniformRowHeights(true);
-    // VS Code Light 鈥?鏍戝舰鎺т欢
+    // VS Code Light tree styling.
     m_treeWidget->setStyleSheet(
         "QTreeWidget { border:none; background:#F3F3F3; padding:4px 0; outline:none; }"
         "QTreeWidget::item { padding:3px 12px 3px 8px; color:#333333; border-radius:3px; }"
@@ -132,18 +136,16 @@ void StructurePanel::setupUI()
 
 void StructurePanel::loadStructure()
 {
-    // 闃绘淇″彿锛岄伩鍏嶅姞杞芥椂瑙﹀彂浜嬩欢
+    // Avoid selection signals while the tree is being rebuilt.
     m_treeWidget->blockSignals(true);
     m_treeWidget->clear();
 
-    // 璋冪敤 service 灞傝幏鍙栨墍鏈夋暟鎹簱鍚嶇О
     QStringList dbNames = firstColumnValuesFromSql(QStringLiteral("SHOW DATABASES;"));
     dbNames.sort();
 
     for (const QString &dbName : dbNames) {
-        // 鈹€鈹€ database 鑺傜偣 鈹€鈹€
         QTreeWidgetItem *dbItem = new QTreeWidgetItem(m_treeWidget);
-        dbItem->setText(0, "馃梽  " + dbName);
+        dbItem->setText(0, QStringLiteral("[DB] ") + dbName);
         dbItem->setData(0, Qt::UserRole, "database:" + dbName);
 
         if (dbName == m_currentDatabase) {
@@ -158,13 +160,11 @@ void StructurePanel::loadStructure()
         tblNames.sort();
 
         for (const QString &tblName : tblNames) {
-            // 鈹€鈹€ table 鑺傜偣 鈹€鈹€
             QTreeWidgetItem *tItem = new QTreeWidgetItem(dbItem);
-            tItem->setText(0, "馃搵 " + tblName);
+            tItem->setText(0, QStringLiteral("[T] ") + tblName);
             tItem->setData(0, Qt::UserRole, "table:" + dbName + ":" + tblName);
             tItem->setFont(0, QFont("Consolas", 9));
 
-            // 褰撳墠鏁版嵁搴?褰撳墠琛ㄦ椂棰勫姞杞?column 骞跺睍寮€
             if (dbName == m_currentDatabase && tblName == m_currentTable) {
                 addColumnsToTableItem(tItem, dbName, tblName);
                 tItem->setExpanded(true);
@@ -177,29 +177,32 @@ void StructurePanel::loadStructure()
 }
 
 void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
-                                             const QString &dbName,
-                                             const QString &tableName)
+                                           const QString &dbName,
+                                           const QString &tableName)
 {
-    if (tItem->childCount() > 0) return;
+    if (tItem->childCount() > 0) {
+        return;
+    }
 
-    // 璋冪敤 service 灞傝鍙栧垪淇℃伅
     QStringList columns;
     if (m_clientEngine != nullptr && !m_clientId.isEmpty() && !tableName.isEmpty()) {
         const service::SqlExecResult result =
-            m_clientEngine->executeSql(m_clientId, QStringLiteral("USE %1; DESC %2;").arg(dbName, tableName));
+            m_clientEngine->executeSqlPreservingDatabase(
+                m_clientId,
+                QStringLiteral("USE %1; DESC %2;").arg(dbName, tableName));
         if (result.success) {
             columns = columnNamesFromDescribeText(result.text);
         }
     }
 
     for (const QString &colName : columns) {
-        // 涓婚敭璇嗗埆锛歩d / pk / _id 鍚庣紑 / tableNameId
-        bool isPk = (colName.toLower() == "id" ||
-                     colName.toLower() == "pk" ||
-                     colName.toLower().endsWith("_id") ||
-                     colName.toLower() == (tableName.toLower() + "id"));
+        const QString lowerColumnName = colName.toLower();
+        const bool isPk = (lowerColumnName == "id"
+                           || lowerColumnName == "pk"
+                           || lowerColumnName.endsWith("_id")
+                           || lowerColumnName == (tableName.toLower() + "id"));
 
-        QString icon = isPk ? "馃攽" : "馃搸";
+        const QString icon = isPk ? QStringLiteral("[PK]") : QStringLiteral("[C]");
         QTreeWidgetItem *cItem = new QTreeWidgetItem(tItem);
         cItem->setText(0, icon + " " + colName);
         cItem->setData(0, Qt::UserRole, "column:" + dbName + ":" + tableName + ":" + colName);
@@ -212,7 +215,6 @@ void StructurePanel::onTreeItemExpanded(QTreeWidgetItem *item)
 {
     QString data = item->data(0, Qt::UserRole).toString();
 
-    // 灞曞紑 table 鑺傜偣鏃舵噿鍔犺浇 column
     if (data.startsWith("table:")) {
         QStringList parts = data.mid(6).split(":");
         if (parts.size() == 2) {
@@ -257,9 +259,9 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
 
 void StructurePanel::updateStatusLabel()
 {
-    QString db = m_currentDatabase.isEmpty() ? "鏈€夋嫨" : m_currentDatabase;
-    QString tbl = m_currentTable.isEmpty() ? "鏈€夋嫨" : m_currentTable;
-    m_statusLabel->setText(QString("褰撳墠鏁版嵁搴擄細%1\n褰撳墠琛細%2").arg(db, tbl));
+    QString db = m_currentDatabase.isEmpty() ? QStringLiteral("none") : m_currentDatabase;
+    QString tbl = m_currentTable.isEmpty() ? QStringLiteral("none") : m_currentTable;
+    m_statusLabel->setText(QStringLiteral("Database: %1\nTable: %2").arg(db, tbl));
 }
 
 void StructurePanel::refresh()
@@ -281,7 +283,7 @@ QStringList StructurePanel::firstColumnValuesFromSql(const QString &sql) const
         return values;
     }
 
-    const service::SqlExecResult result = m_clientEngine->executeSql(m_clientId, sql);
+    const service::SqlExecResult result = m_clientEngine->executeSqlPreservingDatabase(m_clientId, sql);
     if (!result.success || !result.selectResult.success) {
         return values;
     }

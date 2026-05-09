@@ -34,6 +34,7 @@ public:
                                  const QString &userName,
                                  const QString &password);
     service::SqlExecResult executeSql(const QString &clientId, const QString &sql);
+    service::SqlExecResult executeSqlPreservingDatabase(const QString &clientId, const QString &sql);
 
 private:
     service::SqlExecResult executeParsedStatement(ClientSession *clientSession,

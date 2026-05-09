@@ -100,6 +100,24 @@ service::SqlExecResult SqlClientEngine::executeSql(const QString &clientId, cons
     return lastResult;
 }
 
+service::SqlExecResult SqlClientEngine::executeSqlPreservingDatabase(const QString &clientId, const QString &sql)
+{
+    if (m_sessionPool == nullptr) {
+        return {false, QStringLiteral("client session pool is not available")};
+    }
+
+    QString error;
+    ClientSession *clientSession = m_sessionPool->session(clientId, &error);
+    if (clientSession == nullptr) {
+        return {false, error};
+    }
+
+    const QString previousDatabase = clientSession->currentDatabase;
+    service::SqlExecResult result = executeSql(clientId, sql);
+    clientSession->currentDatabase = previousDatabase;
+    return result;
+}
+
 service::SqlExecResult SqlClientEngine::executeParsedStatement(ClientSession *clientSession,
                                                                service::SqlDispatcher *dispatcher,
                                                                const sqlparser::ParseResult &parsed)

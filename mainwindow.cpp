@@ -366,19 +366,17 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
 
 void MainWindow::onDatabaseSelected(const QString &dbName)
 {
-    m_currentDatabase = dbName;
-    m_currentTable.clear();
-    executeSqlForGui(QStringLiteral("USE %1;").arg(dbName));
-    updateStatusDbLabel();
+    if (!switchGuiDatabase(dbName)) {
+        return;
+    }
     m_resultPanel->showLog("切换数据库: " + dbName);
     m_editorPanel->insertSql("\nUSE " + dbName + ";\n");
 }
 
 void MainWindow::onTableSelected(const QString &dbName, const QString &tableName)
 {
-    if (m_currentDatabase != dbName) {
-        m_currentDatabase = dbName;
-        executeSqlForGui(QStringLiteral("USE %1;").arg(dbName));
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
@@ -390,13 +388,27 @@ void MainWindow::onColumnSelected(const QString &dbName,
                                    const QString &tableName,
                                    const QString &columnName)
 {
-    if (m_currentDatabase != dbName) {
-        m_currentDatabase = dbName;
-        executeSqlForGui(QStringLiteral("USE %1;").arg(dbName));
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
     m_editorPanel->insertSql("\nSELECT " + columnName + " FROM " + tableName + ";\n");
+}
+
+bool MainWindow::switchGuiDatabase(const QString &dbName)
+{
+    const service::SqlExecResult result = executeSqlForGui(QStringLiteral("USE %1;").arg(dbName));
+    if (!result.success) {
+        applySqlResult(result);
+        return false;
+    }
+
+    m_currentDatabase = dbName;
+    m_currentTable.clear();
+    updateStatusDbLabel();
+    m_structurePanel->selectDatabase(dbName);
+    return true;
 }
 
 void MainWindow::updateStatusDbLabel()

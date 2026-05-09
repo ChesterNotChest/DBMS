@@ -56,9 +56,8 @@ QPair<QString, QVariantMap> classifySql(const QString& sql, const QVector<SqlTok
     if (kw == "INSERT") return {"INSERT", {}};
     if (kw == "UPDATE") return {"UPDATE", {}};
     if (kw == "DELETE") return {"DELETE", {}};
-    if (kw == "ALTER" && tokens.size() >= 2) {
-        QString next = tokens[1].lexeme.toUpper();
-        if (next == "USER") return {"ALTER_USER", {}};
+    if (kw == "ALTER") {
+        if (tokens.size() >= 2 && tokens[1].lexeme.toUpper() == "USER") return {"ALTER_USER", {}};
         return {"ALTER_TABLE", {}};
     }
     if (kw == "GRANT")  return {"GRANT_ALL", {}};
