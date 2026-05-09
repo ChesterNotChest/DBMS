@@ -1,5 +1,6 @@
 #include "../client/client_session_pool.h"
 #include "../client/sql_client_engine.h"
+#include "../constants/cli_client_def.h"
 #include "../service/auth_service.h"
 #include "../service/service.h"
 #include "../utils/sql_parser/sql_parser.h"
@@ -123,6 +124,90 @@ private slots:
         result = engine.executeSql(aliceClient, QStringLiteral("USE revoked_db;"));
         QVERIFY(!result.success);
         QVERIFY(result.errorMessage.contains(QStringLiteral("permission denied")));
+    }
+
+    void test_authDatabaseIsProtectedFromNonRootAccess()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+        const QString aliceClient = pool.createSession(m_dataRoot);
+        const QString authDatabase = QString::fromLatin1(cliclient::kAuthDatabaseName);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE USER alice IDENTIFIED BY secret;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("GRANT ALL ON %1.* TO alice;").arg(authDatabase));
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("system database")),
+                 qPrintable(result.errorMessage));
+
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(aliceClient, QStringLiteral("USE %1;").arg(authDatabase));
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("system database")),
+                 qPrintable(result.errorMessage));
+    }
+
+    void test_nonRootShowDatabasesHidesAuthDatabase()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+        const QString aliceClient = pool.createSession(m_dataRoot);
+        const QString authDatabase = QString::fromLatin1(cliclient::kAuthDatabaseName);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE DATABASE app_db;"
+                                                  "CREATE USER alice IDENTIFIED BY secret;"
+                                                  "GRANT ALL ON app_db.* TO alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(aliceClient, QStringLiteral("SHOW DATABASES;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QVERIFY2(!result.text.contains(authDatabase), qPrintable(result.text));
+        for (const QStringList &row : result.selectResult.resultTable.rows) {
+            QVERIFY(!row.contains(authDatabase));
+        }
+    }
+
+    void test_grantAndRevokeReportActualAffectedRows()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE DATABASE app_db;"
+                                                  "CREATE USER alice IDENTIFIED BY secret;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.executeSql(rootClient, QStringLiteral("GRANT ALL ON app_db.* TO alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 1);
+
+        result = engine.executeSql(rootClient, QStringLiteral("GRANT ALL ON app_db.* TO alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 0);
+
+        result = engine.executeSql(rootClient, QStringLiteral("REVOKE ALL ON app_db.* FROM alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 1);
+
+        result = engine.executeSql(rootClient, QStringLiteral("REVOKE ALL ON app_db.* FROM alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 0);
     }
 
     void test_dropUserRemovesLogin()

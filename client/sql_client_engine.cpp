@@ -1,9 +1,58 @@
 #include "sql_client_engine.h"
 
+#include "../constants/cli_client_def.h"
 #include "../service/auth_service.h"
 #include "../service/service.h"
 
 namespace client {
+
+namespace {
+
+bool isRootUser(const QString &userName)
+{
+    return userName.trimmed() == QString::fromLatin1(cliclient::kRootUserName);
+}
+
+void hideAuthDatabaseFromResult(service::SqlExecResult *result)
+{
+    if (result == nullptr || !result->selectResult.success) {
+        return;
+    }
+
+    repo::TableData &table = result->selectResult.resultTable;
+    const int databaseColumn = table.columns.indexOf(QStringLiteral("database_name"));
+    if (databaseColumn < 0) {
+        return;
+    }
+
+    const QString authDatabase = QString::fromLatin1(cliclient::kAuthDatabaseName);
+    for (int rowIndex = table.rows.size() - 1; rowIndex >= 0; --rowIndex) {
+        const QStringList &row = table.rows.at(rowIndex);
+        if (databaseColumn < row.size() && row.at(databaseColumn) == authDatabase) {
+            table.rows.removeAt(rowIndex);
+        }
+    }
+    result->selectResult.affectedRowCount = table.rows.size();
+}
+
+QString formatSelectText(const service::SelectRowsResult &result)
+{
+    QString output;
+    const repo::TableData &table = result.resultTable;
+    for (const QString &column : table.columns) {
+        output += column + QStringLiteral("\t");
+    }
+    output += QStringLiteral("\n");
+    for (const QStringList &row : table.rows) {
+        for (const QString &value : row) {
+            output += value + QStringLiteral("\t");
+        }
+        output += QStringLiteral("\n");
+    }
+    return output;
+}
+
+} // namespace
 
 ScopedServiceContext::ScopedServiceContext(ClientSession *session)
     : m_session(session)
@@ -153,7 +202,14 @@ service::SqlExecResult SqlClientEngine::executeParsedStatement(ClientSession *cl
         return authResult;
     }
 
-    return dispatcher->dispatch(parsed);
+    service::SqlExecResult result = dispatcher->dispatch(parsed);
+    if (parsed.commandType == QStringLiteral("SHOW_DATABASES") && !isRootUser(clientSession->userName)) {
+        hideAuthDatabaseFromResult(&result);
+        if (result.success && result.selectResult.success) {
+            result.text = formatSelectText(result.selectResult);
+        }
+    }
+    return result;
 }
 
 service::SqlExecResult SqlClientEngine::executeLogin(ClientSession *clientSession,

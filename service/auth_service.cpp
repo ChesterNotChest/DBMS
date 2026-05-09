@@ -132,6 +132,11 @@ bool databaseExists(const QString &databaseName, const QString &dataRoot, QStrin
     return repo::DatabaseRepo(dataRoot).hasDatabase(databaseName, error);
 }
 
+bool isAuthDatabase(const QString &databaseName)
+{
+    return databaseName.trimmed() == authDatabaseName();
+}
+
 } // namespace
 
 TaskResult initializeAuthStore(const QString &dataRoot)
@@ -367,6 +372,11 @@ TaskResult grantDatabaseAll(const QString &requestUser,
 
     const QString normalizedUser = targetUserName.trimmed();
     const QString normalizedDatabase = databaseName.trimmed();
+    if (isAuthDatabase(normalizedDatabase)) {
+        return taskFailure(QStringLiteral("permission denied: system database '%1' is protected")
+                               .arg(normalizedDatabase));
+    }
+
     repo::FlatFileTableStore store = storeFor(dataRoot);
     QString error;
     const repo::TableData users = readUsers(store, &error);
@@ -392,8 +402,9 @@ TaskResult grantDatabaseAll(const QString &requestUser,
         if (!writeResult.ok) {
             return taskFailure(writeResult.error);
         }
+        return taskSuccess(1);
     }
-    return taskSuccess(1);
+    return taskSuccess(0);
 }
 
 TaskResult revokeDatabaseAll(const QString &requestUser,
@@ -413,6 +424,11 @@ TaskResult revokeDatabaseAll(const QString &requestUser,
 
     const QString normalizedUser = targetUserName.trimmed();
     const QString normalizedDatabase = databaseName.trimmed();
+    if (isAuthDatabase(normalizedDatabase)) {
+        return taskFailure(QStringLiteral("permission denied: system database '%1' is protected")
+                               .arg(normalizedDatabase));
+    }
+
     repo::FlatFileTableStore store = storeFor(dataRoot);
     QString error;
     repo::TableData privileges = readPrivileges(store, &error);
@@ -426,8 +442,9 @@ TaskResult revokeDatabaseAll(const QString &requestUser,
         if (!writeResult.ok) {
             return taskFailure(writeResult.error);
         }
+        return taskSuccess(1);
     }
-    return taskSuccess(1);
+    return taskSuccess(0);
 }
 
 bool userHasDatabasePrivilege(const QString &userName,
@@ -487,6 +504,10 @@ TaskResult authorize(const QString &userName,
     const QString databaseName = targetDatabase.trimmed();
     if (databaseName.isEmpty()) {
         return taskSuccess();
+    }
+    if (isAuthDatabase(databaseName)) {
+        return taskFailure(QStringLiteral("permission denied: system database '%1' is protected")
+                               .arg(databaseName));
     }
 
     QString error;
