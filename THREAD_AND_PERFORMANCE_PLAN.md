@@ -22,7 +22,7 @@
 1. `RuntimeLockManager` 已实现并覆盖共享锁、排它锁、超时、排序去重、失败回滚。
 2. `database_service / table_service / tuple_service` 入口已接入数据库级/表级运行时锁。
 3. `SELECT / SHOW / DESC / SHOW CREATE TABLE` 读路径使用共享锁；DDL/DML 写路径使用排它锁。
-4. `currentDatabase` 已收口为线程局部状态，避免不同工作线程互相覆盖当前数据库上下文。
+4. `currentDatabase` 已回退为与 master 一致的 `inline` 服务层桥接状态；多客户端上下文隔离以后由 master 的 `ClientSession / ScopedServiceContext` 负责，本计划只保留运行时锁对并发读写边界的约束。
 5. FK cascade 写路径已覆盖多表锁集合与锁失败释放场景。
 6. 最终验证方式：clean build 后运行 `DBMS.exe` 服务测试入口，最近一次结果为 `Service test summary: ALL PASS (0 failed groups)`。
 

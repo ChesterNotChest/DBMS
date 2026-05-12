@@ -6,6 +6,7 @@
 #include <QReadWriteLock>
 #include <QSharedPointer>
 #include <QString>
+#include <vector>
 
 namespace thread_runtime {
 
@@ -24,6 +25,11 @@ class ScopedRuntimeLock
 {
 public:
     ScopedRuntimeLock() = default;
+    ScopedRuntimeLock(const ScopedRuntimeLock &) = delete;
+    ScopedRuntimeLock &operator=(const ScopedRuntimeLock &) = delete;
+    ScopedRuntimeLock(ScopedRuntimeLock &&) noexcept = default;
+    ScopedRuntimeLock &operator=(ScopedRuntimeLock &&) noexcept = default;
+
     bool isValid() const;
     void unlock();
 
@@ -46,10 +52,10 @@ public:
                                   int timeoutMs,
                                   QString *error);
 
-    QList<ScopedRuntimeLock> acquireOrderedLocks(const QList<RuntimeLockKey> &keys,
-                                                 RuntimeLockMode mode,
-                                                 int timeoutMs,
-                                                 QString *error);
+    std::vector<ScopedRuntimeLock> acquireOrderedLocks(const QList<RuntimeLockKey> &keys,
+                                                       RuntimeLockMode mode,
+                                                       int timeoutMs,
+                                                       QString *error);
 
     QString normalizeKeyString(const RuntimeLockKey &key) const;
 

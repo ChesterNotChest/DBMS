@@ -14,9 +14,9 @@ QList<thread_runtime::RuntimeLockKey> mutationLockKeys(const QString &databaseNa
     return keys;
 }
 
-QList<thread_runtime::ScopedRuntimeLock> acquireMutationLocks(const QString &databaseName,
-                                                              const QString &tableName,
-                                                              QString *error)
+std::vector<thread_runtime::ScopedRuntimeLock> acquireMutationLocks(const QString &databaseName,
+                                                                    const QString &tableName,
+                                                                    QString *error)
 {
     const QStringList relatedTables = service::collectMutationRelatedTables(databaseName, tableName, error);
     if (error != nullptr && !error->isEmpty()) {
@@ -77,8 +77,8 @@ TaskResult insertRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -108,8 +108,8 @@ TaskResult deleteRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -140,8 +140,8 @@ TaskResult updateRows(const QString &tableName,
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireMutationLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }

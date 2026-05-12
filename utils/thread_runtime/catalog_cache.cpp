@@ -79,10 +79,12 @@ TableCatalogSnapshot CatalogCache::getTableCatalog(const QString &dataRoot,
 
     const QString key = tableKey(dataRoot, databaseName, tableName);
     if (threadperf::kEnableCatalogCache) {
-        QReadLocker reader(&m_lock);
+        QWriteLocker writer(&m_lock);
         const auto it = m_tableCatalogs.constFind(key);
         if (it != m_tableCatalogs.constEnd()) {
-            return it.value();
+            const TableCatalogSnapshot snapshot = it.value();
+            touchKey(&m_tableLru, key);
+            return snapshot;
         }
     }
 
@@ -131,10 +133,12 @@ DatabaseCatalogSnapshot CatalogCache::getDatabaseCatalog(const QString &dataRoot
 
     const QString key = databaseKey(dataRoot, databaseName);
     if (threadperf::kEnableCatalogCache) {
-        QReadLocker reader(&m_lock);
+        QWriteLocker writer(&m_lock);
         const auto it = m_databaseCatalogs.constFind(key);
         if (it != m_databaseCatalogs.constEnd()) {
-            return it.value();
+            const DatabaseCatalogSnapshot snapshot = it.value();
+            touchKey(&m_databaseLru, key);
+            return snapshot;
         }
     }
 

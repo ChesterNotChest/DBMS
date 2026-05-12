@@ -417,7 +417,11 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
             QString searchError;
             const QStringList matches = sortIndexRepo.search(values, &searchError);
             if (!searchError.isEmpty()) {
-                continue;
+                if (error != nullptr) {
+                    *error = QStringLiteral("failed to validate constraint '%1' against unique index: %2")
+                                 .arg(constraint.name, searchError);
+                }
+                return false;
             }
 
             bool onlyChangedRows = true;
@@ -705,7 +709,6 @@ bool indexMatchesTableSnapshot(const QString &databaseName,
         return false;
     }
 
-    QSet<QString> expectedNonEmptyRowIds;
     for (int rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex) {
         QStringList keyValues;
         keyValues.reserve(index.columnNames.size());
@@ -751,7 +754,6 @@ bool indexMatchesTableSnapshot(const QString &databaseName,
                 return false;
             }
         }
-        expectedNonEmptyRowIds.insert(rowId);
     }
 
     return true;
@@ -1201,11 +1203,14 @@ IncrementalIndexPlan buildIncrementalIndexPlan(const TableMutationState &state)
     IncrementalIndexPlan plan;
     QSet<QString> originalIds;
     QSet<QString> candidateIds;
+    QMap<QString, int> originalIndexByRowId;
     const int originalCount = qMin(state.originalTable.rows.size(), state.originalRowIds.size());
     const int candidateCount = qMin(state.candidateTable.rows.size(), state.candidateRowIds.size());
 
     for (int index = 0; index < originalCount; ++index) {
-        originalIds.insert(state.originalRowIds.at(index));
+        const QString rowId = state.originalRowIds.at(index);
+        originalIds.insert(rowId);
+        originalIndexByRowId.insert(rowId, index);
     }
     for (int index = 0; index < candidateCount; ++index) {
         candidateIds.insert(state.candidateRowIds.at(index));
@@ -1217,7 +1222,7 @@ IncrementalIndexPlan buildIncrementalIndexPlan(const TableMutationState &state)
             plan.insertedRowIndexes.append(index);
             continue;
         }
-        const int originalIndex = state.originalRowIds.indexOf(rowId);
+        const int originalIndex = originalIndexByRowId.value(rowId, -1);
         if (originalIndex >= 0
             && originalIndex < state.originalTable.rows.size()
             && index < state.candidateTable.rows.size()

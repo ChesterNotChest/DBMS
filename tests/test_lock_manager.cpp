@@ -150,13 +150,13 @@ private slots:
         };
 
         QString error;
-        QList<thread_runtime::ScopedRuntimeLock> locks =
+        std::vector<thread_runtime::ScopedRuntimeLock> locks =
             thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
                 keys,
                 thread_runtime::RuntimeLockMode::Exclusive,
                 threadperf::kTableLockAcquireTimeoutMs,
                 &error);
-        QVERIFY2(!locks.isEmpty(), qPrintable(error));
+        QVERIFY2(!locks.empty(), qPrintable(error));
         QCOMPARE(locks.size(), 2);
     }
 
@@ -174,13 +174,13 @@ private slots:
             testKey(QStringLiteral("ordered_a_partial")),
             testKey(QStringLiteral("ordered_z_blocked")),
         };
-        QList<thread_runtime::ScopedRuntimeLock> locks =
+        std::vector<thread_runtime::ScopedRuntimeLock> locks =
             thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
                 keys,
                 thread_runtime::RuntimeLockMode::Exclusive,
                 1,
                 &error);
-        QVERIFY(locks.isEmpty());
+        QVERIFY(locks.empty());
         QVERIFY(error.contains(QStringLiteral("runtime lock")));
 
         thread_runtime::ScopedRuntimeLock partialKeyLock = thread_runtime::RuntimeLockManager::instance().acquireLock(

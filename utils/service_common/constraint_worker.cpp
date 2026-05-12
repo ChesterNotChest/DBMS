@@ -8,7 +8,6 @@
 #include "../logic/logic.h"
 
 #include <QDebug>
-#include <QFile>
 #include <QSet>
 #include <QUuid>
 

@@ -161,9 +161,9 @@ bool rebuildIndexesForTable(const QString &tableName,
     return service::rebuildTableIndexes(tableName, schema, tableData, rowIds, error);
 }
 
-QList<thread_runtime::ScopedRuntimeLock> acquireTableDdlLocks(const QString &databaseName,
-                                                              const QString &tableName,
-                                                              QString *error)
+std::vector<thread_runtime::ScopedRuntimeLock> acquireTableDdlLocks(const QString &databaseName,
+                                                                    const QString &tableName,
+                                                                    QString *error)
 {
     return thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
         {thread_runtime::databaseLockKey(currentDataRoot, databaseName),
@@ -173,9 +173,9 @@ QList<thread_runtime::ScopedRuntimeLock> acquireTableDdlLocks(const QString &dat
         error);
 }
 
-QList<thread_runtime::ScopedRuntimeLock> acquireTableReadLocks(const QString &databaseName,
-                                                               const QString &tableName,
-                                                               QString *error)
+std::vector<thread_runtime::ScopedRuntimeLock> acquireTableReadLocks(const QString &databaseName,
+                                                                     const QString &tableName,
+                                                                     QString *error)
 {
     return thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
         {thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName)},
@@ -213,9 +213,9 @@ TaskResult createTable(const QString &tableName,
     }
 
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -335,9 +335,9 @@ TaskResult dropTable(const QString &tableName)
     }
 
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -393,9 +393,9 @@ TaskResult addColumn(const QString &tableName,
     }
 
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -525,9 +525,9 @@ TaskResult deleteColumn(const QString &tableName,
     }
 
     QString lockError;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &lockError);
-    if (runtimeLocks.isEmpty() && !lockError.isEmpty()) {
+    if (runtimeLocks.empty() && !lockError.isEmpty()) {
         result.errorMessage = lockError;
         return result;
     }
@@ -648,9 +648,9 @@ TaskResult modifyColumn(const QString &tableName,
     }
 
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -948,9 +948,9 @@ TaskResult addConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1017,9 +1017,9 @@ TaskResult modifyConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1114,9 +1114,9 @@ TaskResult deleteConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1162,9 +1162,9 @@ TaskResult createIndex(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1258,9 +1258,9 @@ TaskResult dropIndex(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
         acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1342,8 +1342,8 @@ TextResult describeTable(const QString &tableName)
     TextResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }
@@ -1372,8 +1372,8 @@ TextResult showCreateTable(const QString &tableName)
     TextResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
-    QList<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
-    if (runtimeLocks.isEmpty() && !error.isEmpty()) {
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
         result.errorMessage = error;
         return result;
     }

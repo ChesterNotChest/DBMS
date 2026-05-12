@@ -121,10 +121,10 @@ ScopedRuntimeLock RuntimeLockManager::acquireLock(const RuntimeLockKey &key,
     return ScopedRuntimeLock(QSharedPointer<ScopedRuntimeLock::Lease>::create(lock, mode, keyString));
 }
 
-QList<ScopedRuntimeLock> RuntimeLockManager::acquireOrderedLocks(const QList<RuntimeLockKey> &keys,
-                                                                 RuntimeLockMode mode,
-                                                                 int timeoutMs,
-                                                                 QString *error)
+std::vector<ScopedRuntimeLock> RuntimeLockManager::acquireOrderedLocks(const QList<RuntimeLockKey> &keys,
+                                                                       RuntimeLockMode mode,
+                                                                       int timeoutMs,
+                                                                       QString *error)
 {
     if (error != nullptr) {
         error->clear();
@@ -138,7 +138,8 @@ QList<ScopedRuntimeLock> RuntimeLockManager::acquireOrderedLocks(const QList<Run
         uniqueKeys.insert(normalizeKeyString(key), key);
     }
 
-    QList<ScopedRuntimeLock> locks;
+    std::vector<ScopedRuntimeLock> locks;
+    locks.reserve(static_cast<size_t>(uniqueKeys.size()));
     for (auto it = uniqueKeys.constBegin(); it != uniqueKeys.constEnd(); ++it) {
         QString lockError;
         ScopedRuntimeLock lock = acquireLock(it.value(), mode, timeoutMs, &lockError);
@@ -152,7 +153,7 @@ QList<ScopedRuntimeLock> RuntimeLockManager::acquireOrderedLocks(const QList<Run
             }
             return locks;
         }
-        locks.append(lock);
+        locks.push_back(std::move(lock));
     }
 
     return locks;
