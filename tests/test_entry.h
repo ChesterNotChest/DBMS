@@ -14,5 +14,9 @@ int runCatalogCacheTests();
 int runServiceCommonCacheTests();
 int runTableRuntimePipelineTests();
 int runIndexRuntimeRepairTests();
+int runClientSessionTests();
+int runCliClientTests();
+int runAuthClientTests();
+int runGuiClientRuntimeTests();
 
 } // namespace service_tests

@@ -1,66 +1,32 @@
 /**
- * structure_panel.cpp — 左侧数据库结构树（三层完整层级）
+ * structure_panel.cpp - left-side database structure tree.
  *
- * 职责：纯 UI 展示 + 用户交互。
- * 不做 SQL 解析、不直接访问文件、不直接操作 repo。
- * 所有数据查询走 service 层（database_service / table_service）。
- *
- * 三层结构：database → table → column
- * - database 节点：当前库蓝色加粗高亮
- * - table 节点：展开时懒加载 column
- * - column 节点：🔑主键 / 📎普通列，自动识别
+ * Responsibilities: UI rendering and user interaction only. Data lookup goes
+ * through the GUI client runtime so it shares the same auth/session behavior as
+ * the editor without directly touching repo files.
  */
 #include "structure_panel.h"
+#include "client/sql_client_engine.h"
 #include "service/service.h"
+
+#include <QFile>
 #include <QHeaderView>
 #include <QTextStream>
-#include <QFile>
 
 namespace {
 
-QStringList firstColumnValues(const service::SelectRowsResult &result)
+QStringList columnNamesFromDescribeText(const QString &text)
 {
-    QStringList values;
-    if (!result.success) return values;
-    for (const auto &row : result.resultTable.rows) {
-        if (!row.isEmpty()) values.append(row.first());
-    }
-    return values;
-}
-
-QStringList listDatabaseNamesForTree()
-{
-    return firstColumnValues(service::database_service::showDatabases());
-}
-
-QStringList listTableNamesForTree(const QString &databaseName)
-{
-    if (databaseName.isEmpty()) return {};
-
-    const QString savedDatabase = service::currentDatabase;
-    service::currentDatabase = databaseName;
-    const QStringList tableNames = firstColumnValues(service::table_service::showTables());
-    service::currentDatabase = savedDatabase;
-    return tableNames;
-}
-
-QStringList listColumnNamesForTree(const QString &databaseName, const QString &tableName)
-{
-    if (tableName.isEmpty()) return {};
-
-    const QString savedDatabase = service::currentDatabase;
-    if (!databaseName.isEmpty()) service::currentDatabase = databaseName;
-    const service::TextResult result = service::table_service::describeTable(tableName);
-    service::currentDatabase = savedDatabase;
-
     QStringList columnNames;
-    if (!result.success) return columnNames;
-
-    const QStringList lines = result.text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList lines = text.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (QString line : lines) {
         line = line.trimmed();
-        if (line.isEmpty()) continue;
-        if (line.startsWith(QStringLiteral("CONSTRAINT"), Qt::CaseInsensitive)) continue;
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.startsWith(QStringLiteral("CONSTRAINT"), Qt::CaseInsensitive)) {
+            continue;
+        }
         columnNames.append(line.section(QLatin1Char(' '), 0, 0));
     }
     return columnNames;
@@ -85,23 +51,23 @@ void StructurePanel::setupUI()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // VS Code Light — 侧边栏 #F3F3F3
+    // VS Code Light sidebar background.
     setStyleSheet("QWidget { background:#F3F3F3; }");
 
-    QLabel *title = new QLabel("对象浏览器");
+    QLabel *title = new QLabel(QStringLiteral("Objects"));
     title->setFont(QFont("Microsoft YaHei", 12, QFont::Bold));
     title->setStyleSheet(
         "QLabel { color:#333333; padding:10px 14px 6px; background:#F3F3F3; font-weight:600; }");
     layout->addWidget(title);
 
     m_treeWidget = new QTreeWidget(this);
-    m_treeWidget->setHeaderLabel("对象");
+    m_treeWidget->setHeaderLabel(QStringLiteral("Object"));
     m_treeWidget->setFont(QFont("Microsoft YaHei", 12));
     m_treeWidget->setAnimated(true);
     m_treeWidget->setIndentation(16);
     m_treeWidget->setRootIsDecorated(true);
     m_treeWidget->setUniformRowHeights(true);
-    // VS Code Light — 树形控件
+    // VS Code Light tree styling.
     m_treeWidget->setStyleSheet(
         "QTreeWidget { border:none; background:#F3F3F3; padding:4px 0; outline:none; }"
         "QTreeWidget::item { padding:3px 12px 3px 8px; color:#333333; border-radius:3px; }"
@@ -122,7 +88,7 @@ void StructurePanel::setupUI()
 
     layout->addWidget(m_treeWidget, 1);
 
-    m_statusLabel = new QLabel("当前数据库：未选择\n当前表：未选择");
+    m_statusLabel = new QLabel(QStringLiteral("Database: none\nTable: none"));
     m_statusLabel->setFont(QFont("Microsoft YaHei", 11));
     m_statusLabel->setStyleSheet(
         "QLabel { color:#616161; font-size:11px; padding:6px 12px; background:#F3F3F3; border-top:1px solid #E0E0E0; }");
@@ -132,7 +98,7 @@ void StructurePanel::setupUI()
     btnLayout->setContentsMargins(8, 4, 8, 8);
     btnLayout->setSpacing(4);
 
-    QPushButton *btnNew = new QPushButton("+ 新建库");
+    QPushButton *btnNew = new QPushButton(QStringLiteral("+ New"));
     btnNew->setFont(QFont("Microsoft YaHei", 11));
     btnNew->setCursor(Qt::PointingHandCursor);
     btnNew->setFocusPolicy(Qt::NoFocus);
@@ -143,7 +109,7 @@ void StructurePanel::setupUI()
     connect(btnNew, &QPushButton::clicked, this, &StructurePanel::newDatabaseRequested);
     btnLayout->addWidget(btnNew);
 
-    QPushButton *btnOpen = new QPushButton("打开库");
+    QPushButton *btnOpen = new QPushButton(QStringLiteral("Open"));
     btnOpen->setFont(QFont("Microsoft YaHei", 11));
     btnOpen->setCursor(Qt::PointingHandCursor);
     btnOpen->setFocusPolicy(Qt::NoFocus);
@@ -154,7 +120,7 @@ void StructurePanel::setupUI()
     connect(btnOpen, &QPushButton::clicked, this, &StructurePanel::openDatabaseRequested);
     btnLayout->addWidget(btnOpen);
 
-    QPushButton *btnDelete = new QPushButton("删除库");
+    QPushButton *btnDelete = new QPushButton(QStringLiteral("Delete"));
     btnDelete->setFont(QFont("Microsoft YaHei", 11));
     btnDelete->setCursor(Qt::PointingHandCursor);
     btnDelete->setFocusPolicy(Qt::NoFocus);
@@ -170,18 +136,16 @@ void StructurePanel::setupUI()
 
 void StructurePanel::loadStructure()
 {
-    // 阻止信号，避免加载时触发事件
+    // Avoid selection signals while the tree is being rebuilt.
     m_treeWidget->blockSignals(true);
     m_treeWidget->clear();
 
-    // 调用 service 层获取所有数据库名称
-    QStringList dbNames = listDatabaseNamesForTree();
+    QStringList dbNames = firstColumnValuesFromSql(QStringLiteral("SHOW DATABASES;"));
     dbNames.sort();
 
     for (const QString &dbName : dbNames) {
-        // ── database 节点 ──
         QTreeWidgetItem *dbItem = new QTreeWidgetItem(m_treeWidget);
-        dbItem->setText(0, "🗄  " + dbName);
+        dbItem->setText(0, QStringLiteral("[DB] ") + dbName);
         dbItem->setData(0, Qt::UserRole, "database:" + dbName);
 
         if (dbName == m_currentDatabase) {
@@ -192,18 +156,15 @@ void StructurePanel::loadStructure()
             dbItem->setFont(0, QFont("Microsoft YaHei", 9));
         }
 
-        // 调用 service 层获取该库下的所有表名
-        QStringList tblNames = listTableNamesForTree(dbName);
+        QStringList tblNames = firstColumnValuesFromSql(QStringLiteral("USE %1; SHOW TABLES;").arg(dbName));
         tblNames.sort();
 
         for (const QString &tblName : tblNames) {
-            // ── table 节点 ──
             QTreeWidgetItem *tItem = new QTreeWidgetItem(dbItem);
-            tItem->setText(0, "📋 " + tblName);
+            tItem->setText(0, QStringLiteral("[T] ") + tblName);
             tItem->setData(0, Qt::UserRole, "table:" + dbName + ":" + tblName);
             tItem->setFont(0, QFont("Consolas", 9));
 
-            // 当前数据库+当前表时预加载 column 并展开
             if (dbName == m_currentDatabase && tblName == m_currentTable) {
                 addColumnsToTableItem(tItem, dbName, tblName);
                 tItem->setExpanded(true);
@@ -216,22 +177,32 @@ void StructurePanel::loadStructure()
 }
 
 void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
-                                             const QString &dbName,
-                                             const QString &tableName)
+                                           const QString &dbName,
+                                           const QString &tableName)
 {
-    if (tItem->childCount() > 0) return;
+    if (tItem->childCount() > 0) {
+        return;
+    }
 
-    // 调用 service 层读取列信息
-    QStringList columns = listColumnNamesForTree(dbName, tableName);
+    QStringList columns;
+    if (m_clientEngine != nullptr && !m_clientId.isEmpty() && !tableName.isEmpty()) {
+        const service::SqlExecResult result =
+            m_clientEngine->executeSqlPreservingDatabase(
+                m_clientId,
+                QStringLiteral("USE %1; DESC %2;").arg(dbName, tableName));
+        if (result.success) {
+            columns = columnNamesFromDescribeText(result.text);
+        }
+    }
 
     for (const QString &colName : columns) {
-        // 主键识别：id / pk / _id 后缀 / tableNameId
-        bool isPk = (colName.toLower() == "id" ||
-                     colName.toLower() == "pk" ||
-                     colName.toLower().endsWith("_id") ||
-                     colName.toLower() == (tableName.toLower() + "id"));
+        const QString lowerColumnName = colName.toLower();
+        const bool isPk = (lowerColumnName == "id"
+                           || lowerColumnName == "pk"
+                           || lowerColumnName.endsWith("_id")
+                           || lowerColumnName == (tableName.toLower() + "id"));
 
-        QString icon = isPk ? "🔑" : "📎";
+        const QString icon = isPk ? QStringLiteral("[PK]") : QStringLiteral("[C]");
         QTreeWidgetItem *cItem = new QTreeWidgetItem(tItem);
         cItem->setText(0, icon + " " + colName);
         cItem->setData(0, Qt::UserRole, "column:" + dbName + ":" + tableName + ":" + colName);
@@ -244,7 +215,6 @@ void StructurePanel::onTreeItemExpanded(QTreeWidgetItem *item)
 {
     QString data = item->data(0, Qt::UserRole).toString();
 
-    // 展开 table 节点时懒加载 column
     if (data.startsWith("table:")) {
         QStringList parts = data.mid(6).split(":");
         if (parts.size() == 2) {
@@ -289,14 +259,41 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
 
 void StructurePanel::updateStatusLabel()
 {
-    QString db = m_currentDatabase.isEmpty() ? "未选择" : m_currentDatabase;
-    QString tbl = m_currentTable.isEmpty() ? "未选择" : m_currentTable;
-    m_statusLabel->setText(QString("当前数据库：%1\n当前表：%2").arg(db, tbl));
+    QString db = m_currentDatabase.isEmpty() ? QStringLiteral("none") : m_currentDatabase;
+    QString tbl = m_currentTable.isEmpty() ? QStringLiteral("none") : m_currentTable;
+    m_statusLabel->setText(QStringLiteral("Database: %1\nTable: %2").arg(db, tbl));
 }
 
 void StructurePanel::refresh()
 {
     loadStructure();
+}
+
+void StructurePanel::setClientRuntime(client::SqlClientEngine *clientEngine, const QString &clientId)
+{
+    m_clientEngine = clientEngine;
+    m_clientId = clientId;
+    loadStructure();
+}
+
+QStringList StructurePanel::firstColumnValuesFromSql(const QString &sql) const
+{
+    QStringList values;
+    if (m_clientEngine == nullptr || m_clientId.isEmpty()) {
+        return values;
+    }
+
+    const service::SqlExecResult result = m_clientEngine->executeSqlPreservingDatabase(m_clientId, sql);
+    if (!result.success || !result.selectResult.success) {
+        return values;
+    }
+
+    for (const QStringList &row : result.selectResult.resultTable.rows) {
+        if (!row.isEmpty()) {
+            values.append(row.first());
+        }
+    }
+    return values;
 }
 
 void StructurePanel::selectDatabase(const QString &dbName)

@@ -549,6 +549,14 @@ ParseResult parseSql(const QString& sql) {
         cmdType == "UPDATE"  || cmdType == "DELETE")
         return parseTupleSql(sql, tokens);
 
+    if (cmdType == "LOGIN"
+        || cmdType == "CREATE_USER"
+        || cmdType == "DROP_USER"
+        || cmdType == "ALTER_USER"
+        || cmdType == "GRANT_ALL"
+        || cmdType == "REVOKE_ALL")
+        return parseAuthSql(sql, tokens);
+
     return {false, "Unsupported SQL statement", "UNKNOWN", {}};
 }
 
