@@ -31,6 +31,8 @@ ParseResult parseTableSql(const QString &sql, const QVector<SqlToken> &tokens);
 
 ParseResult parseTupleSql(const QString &sql, const QVector<SqlToken> &tokens);
 
+ParseResult parseAuthSql(const QString &sql, const QVector<SqlToken> &tokens);
+
 ParseResult parseSql(const QString &sql);
 
 } // namespace sqlparser

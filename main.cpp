@@ -80,6 +80,25 @@ int main(int argc, char *argv[])
     reportTestGroup(QStringLiteral("Index runtime repair tests"), indexRuntimeRepairTestResult);
     qDebug() << "Index runtime repair tests:" << (indexRuntimeRepairTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << indexRuntimeRepairTestResult << ")";
+    const int clientSessionTestResult = service_tests::runClientSessionTests();
+    reportTestGroup(QStringLiteral("Client session tests"), clientSessionTestResult);
+    qDebug() << "Client session tests:" << (clientSessionTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << clientSessionTestResult << ")";
+
+    const int cliClientTestResult = service_tests::runCliClientTests();
+    reportTestGroup(QStringLiteral("CLI client tests"), cliClientTestResult);
+    qDebug() << "CLI client tests:" << (cliClientTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << cliClientTestResult << ")";
+
+    const int authClientTestResult = service_tests::runAuthClientTests();
+    reportTestGroup(QStringLiteral("Auth client tests"), authClientTestResult);
+    qDebug() << "Auth client tests:" << (authClientTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << authClientTestResult << ")";
+
+    const int guiClientRuntimeTestResult = service_tests::runGuiClientRuntimeTests();
+    reportTestGroup(QStringLiteral("GUI client runtime tests"), guiClientRuntimeTestResult);
+    qDebug() << "GUI client runtime tests:" << (guiClientRuntimeTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << guiClientRuntimeTestResult << ")";
 
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
                                   + (parserDispatcherTestResult == 0 ? 0 : 1)
@@ -93,6 +112,10 @@ int main(int argc, char *argv[])
                                   + (serviceCommonCacheTestResult == 0 ? 0 : 1)
                                   + (tableRuntimePipelineTestResult == 0 ? 0 : 1)
                                   + (indexRuntimeRepairTestResult == 0 ? 0 : 1);
+                                  + (clientSessionTestResult == 0 ? 0 : 1)
+                                  + (cliClientTestResult == 0 ? 0 : 1)
+                                  + (authClientTestResult == 0 ? 0 : 1)
+                                  + (guiClientRuntimeTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";

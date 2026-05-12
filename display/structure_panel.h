@@ -10,6 +10,10 @@
 #include <QFont>
 #include <QColor>
 
+namespace client {
+class SqlClientEngine;
+}
+
 class StructurePanel : public QWidget
 {
     Q_OBJECT
@@ -19,6 +23,7 @@ public:
     ~StructurePanel();
 
     void refresh();
+    void setClientRuntime(client::SqlClientEngine *clientEngine, const QString &clientId);
     void selectDatabase(const QString &dbName);
     void selectTable(const QString &tableName);
     QString currentDatabase() const;
@@ -39,6 +44,7 @@ private slots:
 private:
     void setupUI();
     void loadStructure();
+    QStringList firstColumnValuesFromSql(const QString &sql) const;
     void addColumnsToTableItem(QTreeWidgetItem *tItem,
                                const QString &dbName,
                                const QString &tableName);
@@ -48,6 +54,8 @@ private:
     QLabel *m_statusLabel = nullptr;
     QString m_currentDatabase;
     QString m_currentTable;
+    client::SqlClientEngine *m_clientEngine = nullptr;
+    QString m_clientId;
 };
 
 #endif // STRUCTURE_PANEL_H
