@@ -305,6 +305,8 @@ public:
     RepositoryResult deleteRow(int rowIndex) const;
     RepositoryResult rebuild(const TableData &table, const QStringList &rowLocators) const;
     RepositoryResult insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
+    RepositoryResult insertIndexEntries(const QList<QStringList> &keyValuesList,
+                                        const QStringList &rowLocators) const;
     RepositoryResult updateIndexEntry(const QStringList &oldKeyValues,
                                       const QStringList &newKeyValues,
                                       const QString &rowLocator) const;

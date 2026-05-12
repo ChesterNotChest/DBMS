@@ -1467,6 +1467,29 @@ private slots:
         QVERIFY(duplicateUpdate.errorMessage.contains(QStringLiteral("duplicate")));
     }
 
+    void test_uniqueConstraintRejectsDuplicatesWithinSameInsertBatch()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_unique_batch_db");
+        const QString tableName = QStringLiteral("test_tuple_service_unique_batch_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, indexedSchema(tableName), m_dataRoot);
+
+        const TaskResult duplicateInsert = tuple_service::insertRows(tableName,
+                                                                     makeRows({
+                                                                         makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                                                  {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                                                         makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                                                  {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                                                     }));
+        QVERIFY2(!duplicateInsert.success, qPrintable(duplicateInsert.errorMessage));
+        QVERIFY2(duplicateInsert.errorMessage.contains(QStringLiteral("duplicate")),
+                 qPrintable(duplicateInsert.errorMessage));
+
+        const SelectRowsResult rows = tuple_service::selectRows(tableName, {QStringLiteral("*")}, {}, -1);
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.size(), 0);
+    }
+
     void test_uniqueConstraintStillRejectsDuplicatesWithoutIndexMetadata()
     {
         const QString databaseName = QStringLiteral("test_tuple_service_unique_no_index_db");

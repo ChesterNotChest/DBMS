@@ -25,6 +25,20 @@ bool checkKeyUniqueness(const QString &databaseName,
                         const tabledef::TableSchema &schema,
                         const repo::TableData &table,
                         QString *error);
+bool validateRowAgainstSchema(const repo::TableRow &row,
+                              const tabledef::TableSchema &schema,
+                              QString *error);
+QStringList cachedTableNames(const QString &dataRoot,
+                             const QString &databaseName,
+                             QString *error);
+tabledef::TableSchema cachedTableSchema(const QString &dataRoot,
+                                        const QString &databaseName,
+                                        const QString &tableName,
+                                        QString *error);
+QStringList loadRowIdsWithoutSideEffects(const QString &databaseName,
+                                         const QString &tableName,
+                                         const repo::TableData &tableData,
+                                         QString *error);
 repo::RepositoryResult writeTargetTable(repo::FlatFileTableStore &store,
                                         service::TargetTableKind kind,
                                         const QString &databaseName,
@@ -59,6 +73,89 @@ public:
 private:
     QString m_previous;
 };
+
+bool columnListsIntersect(const QStringList &left, const QStringList &right)
+{
+    for (const QString &columnName : left) {
+        if (right.contains(columnName)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QStringList assignmentColumnNames(const QMap<QString, QString> &assignmentMap)
+{
+    QStringList columns;
+    columns.reserve(assignmentMap.size());
+    for (auto it = assignmentMap.constBegin(); it != assignmentMap.constEnd(); ++it) {
+        columns.append(it.key());
+    }
+    return columns;
+}
+
+bool updateCanUseLocalFastPath(const QString &databaseName,
+                               const QString &targetTableName,
+                               const tabledef::TableSchema &schema,
+                               const QStringList &assignedColumns,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (columnListsIntersect(index.columnNames, assignedColumns)) {
+            return false;
+        }
+    }
+
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (tabledef::isCheckConstraint(constraint)) {
+            return false;
+        }
+        if ((tabledef::isPrimaryKeyConstraint(constraint)
+             || tabledef::isUniqueConstraint(constraint)
+             || tabledef::isForeignKeyConstraint(constraint))
+            && columnListsIntersect(constraint.columns, assignedColumns)) {
+            return false;
+        }
+    }
+
+    QString catalogError;
+    const QStringList tableNames = cachedTableNames(currentDataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
+        if (error != nullptr) {
+            *error = catalogError;
+        }
+        return false;
+    }
+
+    for (const QString &tableName : tableNames) {
+        const tabledef::TableSchema childSchema = cachedTableSchema(currentDataRoot,
+                                                                    databaseName,
+                                                                    tableName,
+                                                                    &catalogError);
+        if (!catalogError.isEmpty()) {
+            if (error != nullptr) {
+                *error = catalogError;
+            }
+            return false;
+        }
+
+        for (const tabledef::Constraint &constraint : childSchema.constraints) {
+            if (!tabledef::isForeignKeyConstraint(constraint)
+                || constraint.referencedTable != targetTableName) {
+                continue;
+            }
+            if (columnListsIntersect(constraint.referencedColumns, assignedColumns)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
 
 QStringList expectedColumnNames(const tabledef::TableSchema &schema)
 {
@@ -111,6 +208,119 @@ bool rowMatchesConditions(const repo::TableRow &row,
         }
     }
 
+    return true;
+}
+
+const tabledef::IndexMeta *bestIndexForConditions(const tabledef::TableSchema &schema,
+                                                  const QList<service::SimpleCondition> &conditions,
+                                                  QMap<QString, QString> *conditionValues)
+{
+    if (conditionValues != nullptr) {
+        conditionValues->clear();
+    }
+    if (conditions.isEmpty()) {
+        return nullptr;
+    }
+
+    QMap<QString, QString> values;
+    for (const service::SimpleCondition &condition : conditions) {
+        values.insert(condition.columnName, condition.value);
+    }
+
+    const tabledef::IndexMeta *bestIndex = nullptr;
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (index.columnNames.isEmpty()) {
+            continue;
+        }
+
+        bool covered = true;
+        for (const QString &columnName : index.columnNames) {
+            if (!values.contains(columnName)) {
+                covered = false;
+                break;
+            }
+        }
+        if (!covered) {
+            continue;
+        }
+
+        if (bestIndex == nullptr || index.columnNames.size() > bestIndex->columnNames.size()) {
+            bestIndex = &index;
+        }
+    }
+
+    if (bestIndex != nullptr && conditionValues != nullptr) {
+        *conditionValues = values;
+    }
+    return bestIndex;
+}
+
+bool tryBuildIndexedCandidateTable(const QString &databaseName,
+                                   const QString &tableName,
+                                   const tabledef::TableSchema &schema,
+                                   const repo::TableData &table,
+                                   const QList<service::SimpleCondition> &conditions,
+                                   repo::TableData *candidateTable,
+                                   QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (candidateTable != nullptr) {
+        candidateTable->columns = table.columns;
+        candidateTable->rows.clear();
+    }
+
+    QMap<QString, QString> conditionValues;
+    const tabledef::IndexMeta *index = bestIndexForConditions(schema, conditions, &conditionValues);
+    if (index == nullptr || candidateTable == nullptr) {
+        return false;
+    }
+
+    QStringList keyValues;
+    keyValues.reserve(index->columnNames.size());
+    for (const QString &columnName : index->columnNames) {
+        keyValues.append(conditionValues.value(columnName));
+    }
+
+    QString rowIdError;
+    const QStringList rowIds = loadRowIdsWithoutSideEffects(databaseName, tableName, table, &rowIdError);
+    if (!rowIdError.isEmpty() || rowIds.size() != table.rows.size()) {
+        return false;
+    }
+
+    QString searchError;
+    const QStringList matches =
+        repo::SortIndexRepo(databaseName, index->indexName, tableName, currentDataRoot)
+            .search(keyValues, &searchError);
+    if (!searchError.isEmpty()) {
+        return false;
+    }
+    if (matches.isEmpty()) {
+        return false;
+    }
+
+    QMap<QString, int> rowIndexById;
+    for (int rowIndex = 0; rowIndex < rowIds.size(); ++rowIndex) {
+        rowIndexById.insert(rowIds.at(rowIndex), rowIndex);
+    }
+
+    QSet<int> matchedIndexes;
+    for (const QString &rowId : matches) {
+        const int rowIndex = rowIndexById.value(rowId, -1);
+        if (rowIndex >= 0 && rowIndex < table.rows.size()) {
+            matchedIndexes.insert(rowIndex);
+        }
+    }
+
+    QList<int> orderedIndexes = matchedIndexes.values();
+    if (orderedIndexes.isEmpty()) {
+        return false;
+    }
+    std::sort(orderedIndexes.begin(), orderedIndexes.end());
+    for (int rowIndex : orderedIndexes) {
+        candidateTable->rows.append(table.rows.at(rowIndex));
+    }
     return true;
 }
 
@@ -241,6 +451,27 @@ bool validateCheckConstraints(const tabledef::TableSchema &schema,
     return true;
 }
 
+bool validateRowsAgainstSchema(const tabledef::TableSchema &schema,
+                               const repo::TableData &table,
+                               const QList<int> &rowIndexes,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    for (int rowIndex : rowIndexes) {
+        if (rowIndex < 0 || rowIndex >= table.rows.size()) {
+            continue;
+        }
+        if (!validateRowAgainstSchema(table.rows.at(rowIndex), schema, error)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 QStringList loadRowIdsForTargetTable(const QString &databaseName,
                                      service::TargetTableKind targetTableKind,
                                      const QString &targetTableName,
@@ -316,6 +547,31 @@ const tabledef::IndexMeta *matchingUniqueIndex(const tabledef::TableSchema &sche
         }
     }
     return nullptr;
+}
+
+bool allKeyConstraintsCoveredByUniqueIndexes(const tabledef::TableSchema &schema)
+{
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (!tabledef::isPrimaryKeyConstraint(constraint)
+            && !tabledef::isUniqueConstraint(constraint)) {
+            continue;
+        }
+        if (matchingUniqueIndex(schema, constraint) == nullptr) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool insertCanUseIndexedFastPath(const tabledef::TableSchema &schema)
+{
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (tabledef::isCheckConstraint(constraint)
+            || tabledef::isForeignKeyConstraint(constraint)) {
+            return false;
+        }
+    }
+    return allKeyConstraintsCoveredByUniqueIndexes(schema);
 }
 
 QStringList constraintKeyValues(const repo::TableData &table,
@@ -2335,7 +2591,24 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
         return result;
     }
 
-    result.resultTable = projectRows(table, projectionColumns, simpleConditions, limit, &error);
+    repo::TableData sourceTable = table;
+    repo::TableData indexedCandidateTable;
+    if (targetTableKind == TargetTableKind::TableDat
+        && tryBuildIndexedCandidateTable(databaseName,
+                                         targetTableName,
+                                         targetSchema,
+                                         table,
+                                         simpleConditions,
+                                         &indexedCandidateTable,
+                                         &error)) {
+        sourceTable = indexedCandidateTable;
+    }
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    result.resultTable = projectRows(sourceTable, projectionColumns, simpleConditions, limit, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
@@ -2432,16 +2705,25 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         return indexes;
     }();
 
-    if (validationMode == ValidationMode::UserData
-        && targetTableKind == TargetTableKind::TableDat) {
-        if (!validateCheckConstraints(targetSchema, candidateTable, &error)) {
-            result.errorMessage = error;
-            return result;
-        }
-    }
+    const bool tableDatTarget = targetTableKind == TargetTableKind::TableDat;
+    const bool fastIndexedInsert = validationMode == ValidationMode::UserData
+                                   && tableDatTarget
+                                   && insertCanUseIndexedFastPath(targetSchema);
 
     if (validationMode == ValidationMode::UserData) {
-        if (targetTableKind == TargetTableKind::TableDat) {
+        if (tableDatTarget) {
+            if (fastIndexedInsert) {
+                if (!validateRowsAgainstSchema(targetSchema, candidateTable, insertedRowIndexes, &error)) {
+                    result.errorMessage = error;
+                    return result;
+                }
+            } else if (!validateCheckConstraints(targetSchema, candidateTable, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+        }
+
+        if (tableDatTarget) {
             QString indexError;
             validateChangedRowsAgainstUniqueIndexes(databaseName,
                                                     targetTableName,
@@ -2456,11 +2738,12 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
             }
         }
 
-        if (!checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
+        if (!fastIndexedInsert && !checkKeyUniqueness(databaseName, targetSchema, candidateTable, &error)) {
             result.errorMessage = error;
             return result;
         }
-        if (targetTableKind == TargetTableKind::TableDat
+        if (!fastIndexedInsert
+            && targetTableKind == TargetTableKind::TableDat
             && !validateOutgoingForeignKeys(databaseName, currentDataRoot, targetSchema, candidateTable, &error)) {
             result.errorMessage = error;
             return result;
@@ -2472,7 +2755,7 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         rootState->candidateRowIds = candidateRowIds;
         rootState->dirty = true;
 
-        if (validationMode == ValidationMode::UserData) {
+        if (validationMode == ValidationMode::UserData && !fastIndexedInsert) {
             if (!validateMutationStateLocally(*rootState,
                                               insertedRowIndexes,
                                               &mutationStates,
@@ -2650,6 +2933,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         rootState->candidateTable = candidateTable;
         rootState->candidateRowIds = candidateRowIds;
         rootState->dirty = true;
+        const QStringList assignedColumns = assignmentColumnNames(assignmentMap);
 
         if (!validateMutationStateLocally(*rootState,
                                           matchedRowIndexes,
@@ -2657,6 +2941,27 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                           false,
                                           &error)) {
             result.errorMessage = error;
+            return result;
+        }
+
+        const bool localFastPath =
+            updateCanUseLocalFastPath(databaseName,
+                                      targetTableName,
+                                      targetSchema,
+                                      assignedColumns,
+                                      &error);
+        if (!error.isEmpty()) {
+            result.errorMessage = error;
+            return result;
+        }
+        if (localFastPath) {
+            if (!commitMutationStates(mutationStates, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+
+            result.success = true;
+            result.affectedRowCount = matchedRowIndexes.size();
             return result;
         }
 

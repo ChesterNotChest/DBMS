@@ -507,6 +507,78 @@ bool appendEntry(QVector<IndexEntry> *entries,
     return true;
 }
 
+bool appendEntries(QVector<IndexEntry> *entries,
+                   const QList<QStringList> &keyValuesList,
+                   const QStringList &rowLocators,
+                   bool isUnique,
+                   QString *error)
+{
+    if (entries == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("entries output pointer cannot be null");
+        }
+        return false;
+    }
+    if (keyValuesList.size() != rowLocators.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index key count does not match row locator count");
+        }
+        return false;
+    }
+
+    QSet<QString> seenUniqueKeys;
+    QSet<QString> seenLocatorKeys;
+    seenLocatorKeys.reserve(entries->size() + keyValuesList.size());
+    for (const IndexEntry &entry : *entries) {
+        const QString entryKey = keySignature(entry.keyValues);
+        for (const QString &rowLocator : entry.rowLocators) {
+            seenLocatorKeys.insert(entryKey + QLatin1Char('|') + rowLocator);
+        }
+    }
+    if (isUnique) {
+        seenUniqueKeys.reserve(entries->size() + keyValuesList.size());
+        for (const IndexEntry &entry : *entries) {
+            if (!keyContainsEmptyValue(entry.keyValues)) {
+                seenUniqueKeys.insert(keySignature(entry.keyValues));
+            }
+        }
+    }
+
+    bool changed = false;
+    for (int index = 0; index < keyValuesList.size(); ++index) {
+        const QStringList keyValues = keyValuesList.at(index);
+        const QString rowLocator = rowLocators.at(index);
+        if (isUnique && keyContainsEmptyValue(keyValues)) {
+            continue;
+        }
+
+        const QString key = keySignature(keyValues);
+        const QString locatorKey = key + QLatin1Char('|') + rowLocator;
+        if (seenLocatorKeys.contains(locatorKey)) {
+            continue;
+        }
+        seenLocatorKeys.insert(locatorKey);
+
+        if (isUnique) {
+            if (seenUniqueKeys.contains(key)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("unique index already contains duplicate key values");
+                }
+                return false;
+            }
+            seenUniqueKeys.insert(key);
+        }
+
+        entries->append(IndexEntry{keyValues, {rowLocator}});
+        changed = true;
+    }
+
+    if (changed) {
+        std::sort(entries->begin(), entries->end(), entryLessThan);
+    }
+    return true;
+}
+
 bool removeEntry(QVector<IndexEntry> *entries,
                 const QStringList &keyValues,
                 const QString &rowLocator,
@@ -832,6 +904,19 @@ RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringLis
 
 RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const
 {
+    return insertIndexEntries({keyValues}, {rowLocator});
+}
+
+RepositoryResult SortIndexRepo::insertIndexEntries(const QList<QStringList> &keyValuesList,
+                                                   const QStringList &rowLocators) const
+{
+    if (keyValuesList.size() != rowLocators.size()) {
+        return RepositoryResult::failure(QStringLiteral("index key count does not match row locator count"));
+    }
+    if (keyValuesList.isEmpty()) {
+        return RepositoryResult::success();
+    }
+
     QString error;
     QJsonObject document;
     if (!readIndexDocument(getIndexFilePath(), &document, &error)) {
@@ -841,7 +926,7 @@ RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, c
     const QJsonObject metaObject = document.value(QStringLiteral("meta")).toObject();
     const bool isUnique = metaObject.value(QStringLiteral("isUnique")).toBool(false);
     QVector<IndexEntry> entries = loadEntriesFromDocument(document);
-    if (!appendEntry(&entries, keyValues, rowLocator, isUnique, &error)) {
+    if (!appendEntries(&entries, keyValuesList, rowLocators, isUnique, &error)) {
         return RepositoryResult::failure(error);
     }
 

@@ -18,5 +18,7 @@ int runClientSessionTests();
 int runCliClientTests();
 int runAuthClientTests();
 int runGuiClientRuntimeTests();
+int runIntegrationTests();
+int runStressTests();
 
 } // namespace service_tests
