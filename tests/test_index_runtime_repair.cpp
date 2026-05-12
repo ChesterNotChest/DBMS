@@ -65,6 +65,63 @@ void prepareIndexedTable(const QString &databaseName, const QString &tableName)
     QVERIFY2(result.success, qPrintable(result.errorMessage));
 }
 
+QString firstIndexPath(const QString &databaseName, const QString &tableName)
+{
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty() || schema.indexes.isEmpty()) {
+        return {};
+    }
+    return repo::SortIndexRepo(databaseName,
+                               schema.indexes.first().indexName,
+                               tableName,
+                               currentDataRoot)
+        .getIndexFilePath();
+}
+
+tabledef::IndexMeta indexForColumn(const QString &tableName, const QString &columnName, QString *error)
+{
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (index.columnNames == QStringList{columnName}) {
+            return index;
+        }
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("index for column '%1' not found").arg(columnName);
+    }
+    return {};
+}
+
+class ScopedEnvironmentVariable
+{
+public:
+    ScopedEnvironmentVariable(const char *name, const QByteArray &value)
+        : m_name(name)
+        , m_hadValue(qEnvironmentVariableIsSet(name))
+        , m_oldValue(qgetenv(name))
+    {
+        qputenv(m_name.constData(), value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        if (m_hadValue) {
+            qputenv(m_name.constData(), m_oldValue);
+        } else {
+            qunsetenv(m_name.constData());
+        }
+    }
+
+private:
+    QByteArray m_name;
+    bool m_hadValue = false;
+    QByteArray m_oldValue;
+};
+
 } // namespace
 
 class IndexRuntimeRepairTest : public QObject
@@ -215,6 +272,140 @@ private slots:
         QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
         const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
         QVERIFY(document.isObject());
+    }
+
+    void test_updateRowsHealthyArtifactsUseIncrementalIndexMaintenance()
+    {
+        const QString databaseName = QStringLiteral("index_incremental_db");
+        const QString tableName = QStringLiteral("index_incremental_table");
+        prepareIndexedTable(databaseName, tableName);
+
+        const QString indexPath = firstIndexPath(databaseName, tableName);
+        QVERIFY(!indexPath.isEmpty());
+
+        const TaskResult result = tuple_service::updateRows(tableName,
+                                                            {{QStringLiteral("name"), QStringLiteral("beta")}},
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        const tabledef::IndexMeta nameIndex = indexForColumn(tableName, QStringLiteral("name"), &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        repo::SortIndexRepo sortIndexRepo(databaseName, nameIndex.indexName, tableName, currentDataRoot);
+        QVERIFY(sortIndexRepo.search({QStringLiteral("alpha")}, &error).isEmpty());
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(sortIndexRepo.search({QStringLiteral("beta")}, &error).size(), 1);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
+
+    void test_noopUpdateSkipsCleanTableCommit()
+    {
+        const QString databaseName = QStringLiteral("index_noop_db");
+        const QString tableName = QStringLiteral("index_noop_table");
+        prepareIndexedTable(databaseName, tableName);
+
+        QString error;
+        const tabledef::IndexMeta nameIndex = indexForColumn(tableName, QStringLiteral("name"), &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        const TaskResult result = tuple_service::updateRows(tableName,
+                                                            {{QStringLiteral("name"), QStringLiteral("beta")}},
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("404")}});
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRowCount, 0);
+
+        const SelectRowsResult selected = tuple_service::selectRows(tableName,
+                                                                    {QStringLiteral("name")},
+                                                                    {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}},
+                                                                    -1);
+        QVERIFY2(selected.success, qPrintable(selected.errorMessage));
+        QCOMPARE(selected.resultTable.rows.first().first(), QStringLiteral("alpha"));
+
+        repo::SortIndexRepo sortIndexRepo(databaseName, nameIndex.indexName, tableName, currentDataRoot);
+        QCOMPARE(sortIndexRepo.search({QStringLiteral("alpha")}, &error).size(), 1);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(sortIndexRepo.search({QStringLiteral("beta")}, &error).isEmpty());
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
+
+    void test_commitRollbackAfterRowIdWriteRestoresTableAndIndexes()
+    {
+        const QString databaseName = QStringLiteral("index_rollback_rowid_db");
+        const QString tableName = QStringLiteral("index_rollback_rowid_table");
+        prepareIndexedTable(databaseName, tableName);
+
+        const QString indexPath = firstIndexPath(databaseName, tableName);
+        QVERIFY(!indexPath.isEmpty());
+        ScopedEnvironmentVariable injectedFailure("DBMS_TEST_FAIL_COMMIT_AFTER_ROWID_WRITE", "1");
+
+        const TaskResult result = tuple_service::updateRows(tableName,
+                                                            {{QStringLiteral("name"), QStringLiteral("beta")}},
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("commit failed after row id write")),
+                 qPrintable(result.errorMessage));
+
+        const SelectRowsResult selected = tuple_service::selectRows(tableName,
+                                                                    {QStringLiteral("name")},
+                                                                    {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}},
+                                                                    -1);
+        QVERIFY2(selected.success, qPrintable(selected.errorMessage));
+        QCOMPARE(selected.resultTable.rows.first().first(), QStringLiteral("alpha"));
+
+        QString searchError;
+        const tabledef::IndexMeta nameIndex = indexForColumn(tableName, QStringLiteral("name"), &searchError);
+        QVERIFY2(searchError.isEmpty(), qPrintable(searchError));
+        const QStringList matches = repo::SortIndexRepo(databaseName,
+                                                        nameIndex.indexName,
+                                                        tableName,
+                                                        currentDataRoot)
+                                        .search({QStringLiteral("alpha")}, &searchError);
+        QVERIFY2(searchError.isEmpty(), qPrintable(searchError));
+        QCOMPARE(matches.size(), 1);
+        QVERIFY(QFile::exists(indexPath));
+    }
+
+    void test_commitRollbackAfterIndexUpdateRestoresTableAndIndexes()
+    {
+        const QString databaseName = QStringLiteral("index_rollback_index_db");
+        const QString tableName = QStringLiteral("index_rollback_index_table");
+        prepareIndexedTable(databaseName, tableName);
+
+        const QString indexPath = firstIndexPath(databaseName, tableName);
+        QVERIFY(!indexPath.isEmpty());
+        ScopedEnvironmentVariable injectedFailure("DBMS_TEST_FAIL_COMMIT_AFTER_INDEX_UPDATE", "1");
+
+        const TaskResult result = tuple_service::updateRows(tableName,
+                                                            {{QStringLiteral("name"), QStringLiteral("beta")}},
+                                                            {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("commit failed after index update")),
+                 qPrintable(result.errorMessage));
+
+        const SelectRowsResult selected = tuple_service::selectRows(tableName,
+                                                                    {QStringLiteral("name")},
+                                                                    {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}},
+                                                                    -1);
+        QVERIFY2(selected.success, qPrintable(selected.errorMessage));
+        QCOMPARE(selected.resultTable.rows.first().first(), QStringLiteral("alpha"));
+
+        QString error;
+        const tabledef::IndexMeta nameIndex = indexForColumn(tableName, QStringLiteral("name"), &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const QStringList oldMatches = repo::SortIndexRepo(databaseName,
+                                                           nameIndex.indexName,
+                                                           tableName,
+                                                           currentDataRoot)
+                                           .search({QStringLiteral("alpha")}, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(oldMatches.size(), 1);
+        const QStringList newMatches = repo::SortIndexRepo(databaseName,
+                                                           nameIndex.indexName,
+                                                           tableName,
+                                                           currentDataRoot)
+                                           .search({QStringLiteral("beta")}, &error);
+        QVERIFY(newMatches.isEmpty());
+        QVERIFY(QFile::exists(indexPath));
     }
 
 private:

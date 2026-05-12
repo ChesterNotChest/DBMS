@@ -3,58 +3,81 @@
 
 #include <QApplication>
 #include <QDebug>
+#include <QTextStream>
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    const QStringList arguments = a.arguments();
+    const bool runTestsOnly = arguments.contains(QStringLiteral("--run-tests"));
+    QTextStream testOutput(stdout);
+
+    auto reportTestGroup = [&](const QString &name, int result) {
+        if (runTestsOnly) {
+            testOutput << name << ": " << (result == 0 ? "PASS" : "FAIL")
+                       << " (code=" << result << ")" << Qt::endl;
+        }
+    };
 
     qDebug() << "=== Service Tests Start ===";
 
     const int databaseTestResult = service_tests::runDatabaseServiceTests();
+    reportTestGroup(QStringLiteral("Database service tests"), databaseTestResult);
     qDebug() << "Database service tests:" << (databaseTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << databaseTestResult << ")";
 
     const int parserDispatcherTestResult = service_tests::runParserDispatcherTests();
+    reportTestGroup(QStringLiteral("Parser/dispatcher tests"), parserDispatcherTestResult);
     qDebug() << "Parser/dispatcher tests:" << (parserDispatcherTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << parserDispatcherTestResult << ")";
 
     const int logicTestResult = service_tests::runLogicTests();
+    reportTestGroup(QStringLiteral("Logic tests"), logicTestResult);
     qDebug() << "Logic tests:" << (logicTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << logicTestResult << ")";
 
     const int queryExecutorTestResult = service_tests::runQueryExecutorTests();
+    reportTestGroup(QStringLiteral("Query executor tests"), queryExecutorTestResult);
     qDebug() << "Query executor tests:" << (queryExecutorTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << queryExecutorTestResult << ")";
 
     const int tableTestResult = service_tests::runTableServiceTests();
+    reportTestGroup(QStringLiteral("Table service tests"), tableTestResult);
     qDebug() << "Table service tests:" << (tableTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tableTestResult << ")";
 
     const int tupleTestResult = service_tests::runTupleServiceTests();
+    reportTestGroup(QStringLiteral("Tuple service tests"), tupleTestResult);
     qDebug() << "Tuple service tests:" << (tupleTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tupleTestResult << ")";
 
     const int lockManagerTestResult = service_tests::runLockManagerTests();
+    reportTestGroup(QStringLiteral("Lock manager tests"), lockManagerTestResult);
     qDebug() << "Lock manager tests:" << (lockManagerTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << lockManagerTestResult << ")";
 
     const int threadedServiceTestResult = service_tests::runThreadedServiceTests();
+    reportTestGroup(QStringLiteral("Threaded service tests"), threadedServiceTestResult);
     qDebug() << "Threaded service tests:" << (threadedServiceTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << threadedServiceTestResult << ")";
 
     const int catalogCacheTestResult = service_tests::runCatalogCacheTests();
+    reportTestGroup(QStringLiteral("Catalog cache tests"), catalogCacheTestResult);
     qDebug() << "Catalog cache tests:" << (catalogCacheTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << catalogCacheTestResult << ")";
 
     const int serviceCommonCacheTestResult = service_tests::runServiceCommonCacheTests();
+    reportTestGroup(QStringLiteral("Service common cache tests"), serviceCommonCacheTestResult);
     qDebug() << "Service common cache tests:" << (serviceCommonCacheTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << serviceCommonCacheTestResult << ")";
 
     const int tableRuntimePipelineTestResult = service_tests::runTableRuntimePipelineTests();
+    reportTestGroup(QStringLiteral("Table runtime pipeline tests"), tableRuntimePipelineTestResult);
     qDebug() << "Table runtime pipeline tests:" << (tableRuntimePipelineTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tableRuntimePipelineTestResult << ")";
 
     const int indexRuntimeRepairTestResult = service_tests::runIndexRuntimeRepairTests();
+    reportTestGroup(QStringLiteral("Index runtime repair tests"), indexRuntimeRepairTestResult);
     qDebug() << "Index runtime repair tests:" << (indexRuntimeRepairTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << indexRuntimeRepairTestResult << ")";
 
@@ -73,6 +96,10 @@ int main(int argc, char *argv[])
     qDebug() << "=== Service Tests End ===";
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";
+
+    if (runTestsOnly) {
+        return totalFailureCount == 0 ? 0 : 1;
+    }
 
     MainWindow w;
     w.show();

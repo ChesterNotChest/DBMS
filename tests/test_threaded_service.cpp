@@ -94,8 +94,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<SelectRowsResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<SelectRowsResult> future = std::async(std::launch::async, [tableName]() {
             return tuple_service::selectRows(tableName, {QStringLiteral("*")}, {}, -1);
         });
         QCOMPARE(future.wait_for(std::chrono::milliseconds(1000)), std::future_status::ready);
@@ -117,8 +116,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<SelectRowsResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<SelectRowsResult> future = std::async(std::launch::async, [tableName]() {
             return tuple_service::selectRows(tableName, {QStringLiteral("*")}, {}, -1);
         });
         const SelectRowsResult result = future.get();
@@ -141,7 +139,6 @@ private slots:
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
         std::future<TaskResult> future = std::async(std::launch::async, [tableName]() {
-            currentDatabase = QStringLiteral("threaded_db");
             return tuple_service::insertRows(tableName,
                                              {QMap<QString, QString>{{QStringLiteral("id"), QStringLiteral("1")},
                                                                      {QStringLiteral("name"), QStringLiteral("alpha")}}});
@@ -169,8 +166,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<TaskResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<TaskResult> future = std::async(std::launch::async, [tableName]() {
             return tuple_service::updateRows(tableName,
                                              {{QStringLiteral("name"), QStringLiteral("beta")}},
                                              {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
@@ -198,8 +194,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<TaskResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<TaskResult> future = std::async(std::launch::async, [tableName]() {
             return tuple_service::deleteRows(tableName, {SimpleCondition{QStringLiteral("id"), QStringLiteral("1")}});
         });
         const TaskResult result = future.get();
@@ -221,8 +216,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<TaskResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<TaskResult> future = std::async(std::launch::async, [tableName]() {
             ColumnDefinition definition;
             definition.column = column(QStringLiteral("extra"), tabledef::ColumnType::Varchar);
             return table_service::addColumn(tableName, definition);
@@ -246,8 +240,7 @@ private slots:
             &error);
         QVERIFY2(heldLock.isValid(), qPrintable(error));
 
-        std::future<TaskResult> future = std::async(std::launch::async, [databaseName, tableName]() {
-            currentDatabase = databaseName;
+        std::future<TaskResult> future = std::async(std::launch::async, [tableName]() {
             return table_service::dropTable(tableName);
         });
         const TaskResult result = future.get();
@@ -279,7 +272,7 @@ private slots:
         heldLock.unlock();
         result = future.get();
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QVERIFY(currentDatabase.isEmpty());
+        QCOMPARE(currentDatabase, databaseName);
     }
 
 private:

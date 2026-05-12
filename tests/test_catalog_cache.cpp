@@ -190,6 +190,145 @@ private slots:
         QCOMPARE(after.schema.columns.size(), 3);
     }
 
+    void test_createTableInvalidatesDatabaseCatalog()
+    {
+        const QString databaseName = QStringLiteral("cache_create_table_db");
+        const QString tableName = QStringLiteral("cache_create_table_table");
+        prepareDatabase(databaseName);
+
+        QString error;
+        const thread_runtime::DatabaseCatalogSnapshot empty =
+            thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(empty.tableNames.isEmpty());
+
+        const TaskResult result = table_service::createTable(tableName, cacheSchema(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        const thread_runtime::DatabaseCatalogSnapshot refreshed =
+            thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(refreshed.tableNames.contains(tableName));
+    }
+
+    void test_dropTableInvalidatesTableAndDatabaseCatalog()
+    {
+        const QString databaseName = QStringLiteral("cache_drop_table_db");
+        const QString tableName = QStringLiteral("cache_drop_table_table");
+        prepareDatabase(databaseName);
+        TaskResult result = table_service::createTable(tableName, cacheSchema(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        QVERIFY(thread_runtime::CatalogCache::instance()
+                    .getTableCatalog(currentDataRoot, databaseName, tableName, &error)
+                    .fullyLoaded);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(thread_runtime::CatalogCache::instance()
+                    .getDatabaseCatalog(currentDataRoot, databaseName, &error)
+                    .tableNames.contains(tableName));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        result = table_service::dropTable(tableName);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        const thread_runtime::DatabaseCatalogSnapshot databaseSnapshot =
+            thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!databaseSnapshot.tableNames.contains(tableName));
+
+        const thread_runtime::TableCatalogSnapshot tableSnapshot =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(tableSnapshot.schema.columns.isEmpty());
+    }
+
+    void test_modifyColumnInvalidatesOnlyTargetTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("cache_modify_column_db");
+        const QString firstTableName = QStringLiteral("cache_modify_column_a");
+        const QString secondTableName = QStringLiteral("cache_modify_column_b");
+        prepareDatabase(databaseName);
+        QVERIFY2(table_service::createTable(firstTableName, cacheSchema(firstTableName)).success, "create first table");
+        QVERIFY2(table_service::createTable(secondTableName, cacheSchema(secondTableName)).success, "create second table");
+
+        QString error;
+        QVERIFY(thread_runtime::CatalogCache::instance()
+                    .getTableCatalog(currentDataRoot, databaseName, firstTableName, &error)
+                    .fullyLoaded);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(thread_runtime::CatalogCache::instance()
+                    .getTableCatalog(currentDataRoot, databaseName, secondTableName, &error)
+                    .fullyLoaded);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        repo::MetaRepo secondMetaRepo(databaseName, secondTableName, currentDataRoot);
+        QVERIFY2(secondMetaRepo.deleteColumn(QStringLiteral("name")).ok, "delete second name column directly");
+
+        ColumnDefinition definition;
+        definition.column = tabledef::Column{QStringLiteral("name"), tabledef::ColumnType::Varchar, 128, false};
+        TaskResult result = table_service::modifyColumn(firstTableName, QStringLiteral("name"), definition);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        const thread_runtime::TableCatalogSnapshot first =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, firstTableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(first.schema.columns.at(1).length, 128);
+
+        const thread_runtime::TableCatalogSnapshot second =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, secondTableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(second.schema.columns.size(), 2);
+        QVERIFY(tabledef::hasColumn(second.schema, QStringLiteral("name")));
+    }
+
+    void test_createIndexInvalidatesOnlyTargetTableCatalog()
+    {
+        const QString databaseName = QStringLiteral("cache_create_index_db");
+        const QString tableName = QStringLiteral("cache_create_index_table");
+        prepareDatabase(databaseName);
+        TaskResult result = table_service::createTable(tableName, cacheSchema(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        const thread_runtime::TableCatalogSnapshot before =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(before.schema.indexes.size(), 1);
+
+        result = table_service::createIndex(tableName,
+                                            QStringLiteral("idx_cache_create_index_name"),
+                                            {QStringLiteral("name")},
+                                            false);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        const thread_runtime::TableCatalogSnapshot after =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot, databaseName, tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(after.schema.indexes.size(), 2);
+    }
+
+    void test_dropDatabaseInvalidatesRootCatalog()
+    {
+        const QString databaseName = QStringLiteral("cache_drop_database_db");
+        TaskResult result = database_service::createDatabase(databaseName);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        QVERIFY(thread_runtime::CatalogCache::instance()
+                    .getRootCatalog(currentDataRoot, &error)
+                    .databaseNames.contains(databaseName));
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        result = database_service::dropDatabase(databaseName);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        const thread_runtime::RootCatalogSnapshot root =
+            thread_runtime::CatalogCache::instance().getRootCatalog(currentDataRoot, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(!root.databaseNames.contains(databaseName));
+    }
+
     void test_tableCatalogMissPreloadsSchemaConstraintAndIndexTogether()
     {
         const QString databaseName = QStringLiteral("cache_preload_db");
