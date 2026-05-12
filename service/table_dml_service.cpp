@@ -2,6 +2,11 @@
 #include "../utils/logic/logic.h"
 
 #include <algorithm>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QSet>
 #include <QUuid>
 
@@ -58,6 +63,31 @@ private:
 QStringList expectedColumnNames(const tabledef::TableSchema &schema)
 {
     return tabledef::schemaColumnNames(schema);
+}
+
+QStringList cachedTableNames(const QString &dataRoot,
+                             const QString &databaseName,
+                             QString *error)
+{
+    const thread_runtime::DatabaseCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(dataRoot, databaseName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.tableNames;
+}
+
+tabledef::TableSchema cachedTableSchema(const QString &dataRoot,
+                                        const QString &databaseName,
+                                        const QString &tableName,
+                                        QString *error)
+{
+    const thread_runtime::TableCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getTableCatalog(dataRoot, databaseName, tableName, error);
+    if (error != nullptr && !error->isEmpty()) {
+        return {};
+    }
+    return snapshot.schema;
 }
 
 bool rowMatchesConditions(const repo::TableRow &row,
@@ -388,7 +418,8 @@ bool validateChangedRowsAgainstUniqueIndexes(const QString &databaseName,
             const QStringList matches = sortIndexRepo.search(values, &searchError);
             if (!searchError.isEmpty()) {
                 if (error != nullptr) {
-                    *error = searchError;
+                    *error = QStringLiteral("failed to validate constraint '%1' against unique index: %2")
+                                 .arg(constraint.name, searchError);
                 }
                 return false;
             }
@@ -523,6 +554,9 @@ struct TableMutationState
     repo::TableData candidateTable;
     QStringList originalRowIds;
     QStringList candidateRowIds;
+    bool rowIdsNeedRepair = false;
+    bool runtimeArtifactsChecked = false;
+    bool indexesHealthy = false;
     bool dirty = false;
 };
 
@@ -534,38 +568,6 @@ enum class ReferencedMutationKind {
 QString tableMutationKey(const QString &databaseName, const QString &tableName)
 {
     return databaseName + QStringLiteral("::") + tableName;
-}
-
-tabledef::TableSchema loadTableSchemaForMutation(const QString &databaseName,
-                                                 const QString &tableName,
-                                                 QString *error)
-{
-    if (error != nullptr) {
-        error->clear();
-    }
-
-    tabledef::TableSchema schema;
-    schema.tableName = tableName;
-
-    repo::MetaRepo metaRepo(databaseName, tableName, currentDataRoot);
-    schema.columns = metaRepo.listColumns(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    repo::ConstraintRepo constraintRepo(databaseName, tableName, currentDataRoot);
-    schema.constraints = constraintRepo.listConstraints(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    repo::IndexRepo indexRepo(databaseName, tableName, currentDataRoot);
-    schema.indexes = indexRepo.listIndexes(error);
-    if (error != nullptr && !error->isEmpty()) {
-        return {};
-    }
-
-    return schema;
 }
 
 TableMutationState *ensureTableMutationState(const QString &databaseName,
@@ -591,7 +593,9 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
     TableMutationState state;
     state.databaseName = databaseName;
     state.tableName = tableName;
-    state.schema = loadTableSchemaForMutation(databaseName, tableName, error);
+    state.schema = thread_runtime::CatalogCache::instance()
+                       .getTableCatalog(currentDataRoot, databaseName, tableName, error)
+                       .schema;
     if (error != nullptr && !error->isEmpty()) {
         return nullptr;
     }
@@ -602,10 +606,14 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
     }
     state.candidateTable = state.originalTable;
 
-    state.originalRowIds = loadRowIdsWithoutSideEffects(databaseName,
-                                                        tableName,
-                                                        state.originalTable,
-                                                        error);
+    bool rowIdsNeedRepair = false;
+    state.originalRowIds = loadRowIdsForTargetTable(databaseName,
+                                                    service::TargetTableKind::TableDat,
+                                                    tableName,
+                                                    state.originalTable,
+                                                    &rowIdsNeedRepair,
+                                                    error);
+    state.rowIdsNeedRepair = rowIdsNeedRepair;
     if (error != nullptr && !error->isEmpty()) {
         return nullptr;
     }
@@ -613,6 +621,246 @@ TableMutationState *ensureTableMutationState(const QString &databaseName,
 
     states->insert(key, state);
     return &(*states)[key];
+}
+
+bool indexFileReadable(const QString &databaseName,
+                       const QString &tableName,
+                       const tabledef::IndexMeta &index,
+                       QString *error)
+{
+    repo::SortIndexRepo sortIndexRepo(databaseName, index.indexName, tableName, currentDataRoot);
+    repo::FlatFileTableStore store(currentDataRoot);
+    if (!store.exists(sortIndexRepo.getIndexFilePath())) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' is missing").arg(index.indexName);
+        }
+        return false;
+    }
+
+    const repo::TableData indexTable = sortIndexRepo.readIndex(error);
+    if (error != nullptr && !error->isEmpty()) {
+        return false;
+    }
+    if (indexTable.columns.isEmpty() || !indexTable.isRectangular()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' is not readable").arg(index.indexName);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool indexMatchesTableSnapshot(const QString &databaseName,
+                               const QString &tableName,
+                               const tabledef::IndexMeta &index,
+                               const repo::TableData &table,
+                               const QStringList &rowIds,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (rowIds.size() != table.rows.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("row id count does not match row count");
+        }
+        return false;
+    }
+
+    repo::SortIndexRepo sortIndexRepo(databaseName, index.indexName, tableName, currentDataRoot);
+    QFile file(sortIndexRepo.getIndexFilePath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to open index '%1'").arg(index.indexName);
+        }
+        return false;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' is malformed").arg(index.indexName);
+        }
+        return false;
+    }
+
+    const QJsonObject root = document.object();
+    const QJsonObject meta = root.value(QStringLiteral("meta")).toObject();
+    if (meta.value(QStringLiteral("indexName")).toString() != index.indexName
+        || meta.value(QStringLiteral("sourceTable")).toString() != tableName
+        || meta.value(QStringLiteral("isUnique")).toBool(false) != index.isUnique) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' metadata does not match schema").arg(index.indexName);
+        }
+        return false;
+    }
+
+    QStringList storedColumns;
+    const QJsonArray columnArray = meta.value(QStringLiteral("columnNames")).toArray();
+    storedColumns.reserve(columnArray.size());
+    for (const QJsonValue &value : columnArray) {
+        storedColumns.append(value.toString());
+    }
+    if (storedColumns != index.columnNames) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index '%1' columns do not match schema").arg(index.indexName);
+        }
+        return false;
+    }
+
+    for (int rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex) {
+        QStringList keyValues;
+        keyValues.reserve(index.columnNames.size());
+        for (const QString &columnName : index.columnNames) {
+            const int columnIndex = table.columns.indexOf(columnName);
+            if (columnIndex < 0) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+                }
+                return false;
+            }
+            keyValues.append(table.rows.at(rowIndex).value(columnIndex));
+        }
+        if (index.isUnique) {
+            bool hasEmptyValue = false;
+            for (const QString &value : keyValues) {
+                if (value.isEmpty()) {
+                    hasEmptyValue = true;
+                    break;
+                }
+            }
+            if (hasEmptyValue) {
+                continue;
+            }
+        }
+
+        const QString rowId = rowIds.at(rowIndex);
+        QString searchError;
+        const QStringList matches = sortIndexRepo.search(keyValues, &searchError);
+        if (!searchError.isEmpty() || !matches.contains(rowId)) {
+            if (error != nullptr) {
+                *error = searchError.isEmpty()
+                             ? QStringLiteral("index '%1' does not contain row locator '%2'").arg(index.indexName, rowId)
+                             : searchError;
+            }
+            return false;
+        }
+        if (index.isUnique) {
+            if (matches.size() != 1) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("unique index '%1' has mismatched row locators").arg(index.indexName);
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool ensureMutationStateRuntimeArtifacts(TableMutationState *state, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (state == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("table mutation state cannot be null");
+        }
+        return false;
+    }
+    if (state->runtimeArtifactsChecked) {
+        return state->indexesHealthy;
+    }
+
+    bool needsRepair = state->rowIdsNeedRepair
+                       || state->candidateRowIds.size() != state->candidateTable.rows.size();
+
+    for (const tabledef::IndexMeta &index : state->schema.indexes) {
+        QString indexError;
+        if (!indexFileReadable(state->databaseName, state->tableName, index, &indexError)
+            || !indexMatchesTableSnapshot(state->databaseName,
+                                          state->tableName,
+                                          index,
+                                          state->candidateTable,
+                                          state->candidateRowIds,
+                                          &indexError)) {
+            needsRepair = true;
+            break;
+        }
+        if (index.isUnique) {
+            repo::SortIndexRepo sortIndexRepo(state->databaseName,
+                                              index.indexName,
+                                              state->tableName,
+                                              currentDataRoot);
+            QString uniqueError;
+            if (!sortIndexRepo.validateUniqueKeys(&uniqueError)) {
+                needsRepair = true;
+                break;
+            }
+        }
+    }
+
+    if (needsRepair) {
+        CurrentDatabaseGuard databaseGuard(state->databaseName);
+        if (state->candidateRowIds.size() != state->candidateTable.rows.size()) {
+            state->candidateRowIds = generateTransientRowIds(state->candidateTable.rows.size());
+        }
+        state->originalRowIds = state->candidateRowIds;
+        if (!service::saveUserTableRowIds(state->tableName, state->candidateRowIds, error)) {
+            return false;
+        }
+        if (!service::rebuildTableIndexes(state->tableName,
+                                          state->schema,
+                                          state->candidateTable,
+                                          state->candidateRowIds,
+                                          error)) {
+            return false;
+        }
+    }
+
+    state->runtimeArtifactsChecked = true;
+    state->indexesHealthy = true;
+    return true;
+}
+
+TableMutationState *prepareRootMutationState(const QString &databaseName,
+                                             const QString &tableName,
+                                             const tabledef::TableSchema &schema,
+                                             const repo::TableData &table,
+                                             const QStringList &rowIds,
+                                             bool rowIdsNeedRepair,
+                                             QMap<QString, TableMutationState> *states,
+                                             QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (states == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("table mutation state map cannot be null");
+        }
+        return nullptr;
+    }
+
+    TableMutationState state;
+    state.databaseName = databaseName;
+    state.tableName = tableName;
+    state.schema = schema;
+    state.originalTable = table;
+    state.candidateTable = table;
+    state.originalRowIds = rowIds;
+    state.candidateRowIds = rowIds;
+    state.rowIdsNeedRepair = rowIdsNeedRepair;
+
+    const QString key = tableMutationKey(databaseName, tableName);
+    states->insert(key, state);
+    TableMutationState *rootState = &(*states)[key];
+    if (!ensureMutationStateRuntimeArtifacts(rootState, error)) {
+        return nullptr;
+    }
+    return rootState;
 }
 
 bool validateRowAgainstSchema(const repo::TableRow &row,
@@ -942,6 +1190,105 @@ void appendRollbackError(QString *error, const QString &rollbackError)
     *error += QStringLiteral("; rollback failed: %1").arg(rollbackError);
 }
 
+struct IncrementalIndexPlan
+{
+    QList<int> insertedRowIndexes;
+    QList<int> updatedOriginalRowIndexes;
+    QList<int> updatedCandidateRowIndexes;
+    QList<int> deletedOriginalRowIndexes;
+};
+
+IncrementalIndexPlan buildIncrementalIndexPlan(const TableMutationState &state)
+{
+    IncrementalIndexPlan plan;
+    QSet<QString> originalIds;
+    QSet<QString> candidateIds;
+    QMap<QString, int> originalIndexByRowId;
+    const int originalCount = qMin(state.originalTable.rows.size(), state.originalRowIds.size());
+    const int candidateCount = qMin(state.candidateTable.rows.size(), state.candidateRowIds.size());
+
+    for (int index = 0; index < originalCount; ++index) {
+        const QString rowId = state.originalRowIds.at(index);
+        originalIds.insert(rowId);
+        originalIndexByRowId.insert(rowId, index);
+    }
+    for (int index = 0; index < candidateCount; ++index) {
+        candidateIds.insert(state.candidateRowIds.at(index));
+    }
+
+    for (int index = 0; index < candidateCount; ++index) {
+        const QString rowId = state.candidateRowIds.at(index);
+        if (!originalIds.contains(rowId)) {
+            plan.insertedRowIndexes.append(index);
+            continue;
+        }
+        const int originalIndex = originalIndexByRowId.value(rowId, -1);
+        if (originalIndex >= 0
+            && originalIndex < state.originalTable.rows.size()
+            && index < state.candidateTable.rows.size()
+            && state.originalTable.rows.at(originalIndex) != state.candidateTable.rows.at(index)) {
+            plan.updatedOriginalRowIndexes.append(originalIndex);
+            plan.updatedCandidateRowIndexes.append(index);
+        }
+    }
+
+    for (int index = 0; index < originalCount; ++index) {
+        if (!candidateIds.contains(state.originalRowIds.at(index))) {
+            plan.deletedOriginalRowIndexes.append(index);
+        }
+    }
+
+    std::sort(plan.deletedOriginalRowIndexes.begin(), plan.deletedOriginalRowIndexes.end());
+    return plan;
+}
+
+bool applyIncrementalIndexPlan(const TableMutationState &state, QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const IncrementalIndexPlan plan = buildIncrementalIndexPlan(state);
+    CurrentDatabaseGuard databaseGuard(state.databaseName);
+    if (!plan.deletedOriginalRowIndexes.isEmpty()
+        && !service::deleteTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.originalTable,
+                                        state.originalRowIds,
+                                        plan.deletedOriginalRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.updatedOriginalRowIndexes.isEmpty()
+        && !service::deleteTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.originalTable,
+                                        state.originalRowIds,
+                                        plan.updatedOriginalRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.updatedCandidateRowIndexes.isEmpty()
+        && !service::insertTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.candidateTable,
+                                        state.candidateRowIds,
+                                        plan.updatedCandidateRowIndexes,
+                                        error)) {
+        return false;
+    }
+    if (!plan.insertedRowIndexes.isEmpty()
+        && !service::insertTableIndexes(state.tableName,
+                                        state.schema,
+                                        state.candidateTable,
+                                        state.candidateRowIds,
+                                        plan.insertedRowIndexes,
+                                        error)) {
+        return false;
+    }
+    return true;
+}
+
 bool restoreTableArtifacts(const QString &databaseName,
                            const QString &tableName,
                            const tabledef::TableSchema &schema,
@@ -987,7 +1334,9 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
     QStringList keys = states.keys();
     std::sort(keys.begin(), keys.end());
 
-    QList<QString> appliedKeys;
+    QList<QString> tableWrittenKeys;
+    QList<QString> rowIdWrittenKeys;
+    QList<QString> indexUpdatedKeys;
     repo::FlatFileTableStore store(currentDataRoot);
     for (const QString &key : keys) {
         const TableMutationState &state = states.value(key);
@@ -1007,30 +1356,60 @@ bool commitMutationStates(const QMap<QString, TableMutationState> &states, QStri
             }
             break;
         }
+        tableWrittenKeys.append(key);
 
         CurrentDatabaseGuard databaseGuard(state.databaseName);
         QString commitError;
-        if (!service::saveUserTableRowIds(state.tableName, state.candidateRowIds, &commitError)
-            || !service::rebuildTableIndexes(state.tableName,
-                                             state.schema,
-                                             state.candidateTable,
-                                             state.candidateRowIds,
-                                             &commitError)) {
+        if (!service::saveUserTableRowIds(state.tableName, state.candidateRowIds, &commitError)) {
             if (error != nullptr) {
                 *error = commitError;
             }
             break;
         }
+        rowIdWrittenKeys.append(key);
 
-        appliedKeys.append(key);
+        if (qEnvironmentVariableIsSet("DBMS_TEST_FAIL_COMMIT_AFTER_ROWID_WRITE")) {
+            if (error != nullptr) {
+                *error = QStringLiteral("commit failed after row id write (test injected)");
+            }
+            break;
+        }
+
+        if (!applyIncrementalIndexPlan(state, &commitError)) {
+            if (error != nullptr) {
+                *error = commitError;
+            }
+            break;
+        }
+        indexUpdatedKeys.append(key);
+
+        if (qEnvironmentVariableIsSet("DBMS_TEST_FAIL_COMMIT_AFTER_INDEX_UPDATE")) {
+            if (error != nullptr) {
+                *error = QStringLiteral("commit failed after index update (test injected)");
+            }
+            break;
+        }
     }
 
     if (error == nullptr || error->isEmpty()) {
         return true;
     }
 
-    for (int index = appliedKeys.size() - 1; index >= 0; --index) {
-        const TableMutationState &state = states.value(appliedKeys.at(index));
+    QSet<QString> rollbackKeys;
+    for (const QString &key : tableWrittenKeys) {
+        rollbackKeys.insert(key);
+    }
+    for (const QString &key : rowIdWrittenKeys) {
+        rollbackKeys.insert(key);
+    }
+    for (const QString &key : indexUpdatedKeys) {
+        rollbackKeys.insert(key);
+    }
+
+    QStringList rollbackOrder = rollbackKeys.values();
+    std::sort(rollbackOrder.begin(), rollbackOrder.end());
+    for (int index = rollbackOrder.size() - 1; index >= 0; --index) {
+        const TableMutationState &state = states.value(rollbackOrder.at(index));
         QString rollbackError;
         if (!restoreTableArtifacts(state.databaseName,
                                    state.tableName,
@@ -1196,42 +1575,42 @@ bool validateIncomingForeignKeys(const QString &databaseName,
         error->clear();
     }
 
-    repo::TabRepo tabRepo(databaseName, dataRoot);
-    QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
-    if (!tabError.isEmpty()) {
+    QString catalogError;
+    const QStringList tableNames = cachedTableNames(dataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
         if (error != nullptr) {
-            *error = tabError;
+            *error = catalogError;
         }
         return false;
     }
 
-    for (const repo::TableEntry &tableEntry : tableEntries) {
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, dataRoot);
-        QString constraintError;
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&constraintError);
-        if (!constraintError.isEmpty()) {
+    for (const QString &tableName : tableNames) {
+        const tabledef::TableSchema childSchema = cachedTableSchema(dataRoot,
+                                                                    databaseName,
+                                                                    tableName,
+                                                                    &catalogError);
+        if (!catalogError.isEmpty()) {
             if (error != nullptr) {
-                *error = constraintError;
+                *error = catalogError;
             }
             return false;
         }
 
         repo::TableData childTable;
-        if (tableEntry.name == targetTableName) {
+        if (tableName == targetTableName) {
             childTable = candidateTable;
         } else {
-            childTable = repo::TableRepo(databaseName, tableEntry.name, dataRoot)
-                             .readTable(&constraintError);
-            if (!constraintError.isEmpty()) {
+            childTable = repo::TableRepo(databaseName, tableName, dataRoot)
+                             .readTable(&catalogError);
+            if (!catalogError.isEmpty()) {
                 if (error != nullptr) {
-                    *error = constraintError;
+                    *error = catalogError;
                 }
                 return false;
             }
         }
 
-        for (const tabledef::Constraint &constraint : constraints) {
+        for (const tabledef::Constraint &constraint : childSchema.constraints) {
             if (!tabledef::isForeignKeyConstraint(constraint)
                 || constraint.referencedTable != targetTableName) {
                 continue;
@@ -1286,7 +1665,7 @@ bool validateIncomingForeignKeys(const QString &databaseName,
                     }
                     if (error != nullptr) {
                         *error = QStringLiteral("foreign key '%1' from table '%2' would be broken")
-                                     .arg(constraint.name, tableEntry.name);
+                                     .arg(constraint.name, tableName);
                     }
                     return false;
                 }
@@ -1296,7 +1675,6 @@ bool validateIncomingForeignKeys(const QString &databaseName,
 
     return true;
 }
-
 struct ForeignKeyGraphEdge
 {
     QString parentTableName;
@@ -1386,24 +1764,29 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
     }
 
     ForeignKeyCascadePlan plan;
-    repo::TabRepo tabRepo(databaseName, currentDataRoot);
-    QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
-    if (!tabError.isEmpty()) {
+    CurrentDatabaseGuard databaseGuard(databaseName);
+    QString catalogError;
+    const QStringList tableNames = cachedTableNames(currentDataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
         if (error != nullptr) {
-            *error = tabError;
+            *error = catalogError;
         }
         return {};
     }
 
-    for (const repo::TableEntry &tableEntry : tableEntries) {
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(error);
-        if (error != nullptr && !error->isEmpty()) {
+    for (const QString &tableName : tableNames) {
+        const tabledef::TableSchema tableSchema = cachedTableSchema(currentDataRoot,
+                                                                    databaseName,
+                                                                    tableName,
+                                                                    &catalogError);
+        if (!catalogError.isEmpty()) {
+            if (error != nullptr) {
+                *error = catalogError;
+            }
             return {};
         }
 
-        for (const tabledef::Constraint &constraint : constraints) {
+        for (const tabledef::Constraint &constraint : tableSchema.constraints) {
             if (!tabledef::isForeignKeyConstraint(constraint)) {
                 continue;
             }
@@ -1416,7 +1799,7 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
 
             ForeignKeyGraphEdge edge;
             edge.parentTableName = constraint.referencedTable;
-            edge.childTableName = tableEntry.name;
+            edge.childTableName = tableName;
             edge.constraint = constraint;
             plan.edgesByParent[edge.parentTableName].append(edge);
         }
@@ -1443,7 +1826,6 @@ ForeignKeyCascadePlan planForeignKeyCascade(const QString &databaseName,
 
     return plan;
 }
-
 int traversalOrderIndex(const ForeignKeyCascadePlan &plan, const QString &tableName)
 {
     const int index = plan.traversalOrder.indexOf(tableName);
@@ -1477,6 +1859,9 @@ QList<ForeignKeyDependent> collectForeignKeyDependents(const QString &databaseNa
         TableMutationState *childState =
             ensureTableMutationState(databaseName, edge.childTableName, states, error);
         if (childState == nullptr) {
+            return {};
+        }
+        if (!ensureMutationStateRuntimeArtifacts(childState, error)) {
             return {};
         }
 
@@ -1646,6 +2031,9 @@ bool applyForeignKeyCascade(const QString &databaseName,
         TableMutationState *childState =
             ensureTableMutationState(databaseName, dependent.childTableName, states, error);
         if (childState == nullptr) {
+            return false;
+        }
+        if (!ensureMutationStateRuntimeArtifacts(childState, error)) {
             return false;
         }
 
@@ -2002,15 +2390,28 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         result.errorMessage = error;
         return result;
     }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
+
+    QMap<QString, TableMutationState> mutationStates;
+    TableMutationState *rootState = nullptr;
+    if (targetTableKind == TargetTableKind::TableDat) {
+        rootState = prepareRootMutationState(databaseName,
+                                             targetTableName,
+                                             targetSchema,
+                                             currentTable,
+                                             currentRowIds,
+                                             rowIdsInitialized,
+                                             &mutationStates,
+                                             &error);
+        if (rootState == nullptr) {
             result.errorMessage = error;
             return result;
         }
+        currentRowIds = rootState->candidateRowIds;
     }
 
-    repo::TableData candidateTable = currentTable;
+    repo::TableData candidateTable = targetTableKind == TargetTableKind::TableDat
+                                        ? rootState->candidateTable
+                                        : currentTable;
     QStringList candidateRowIds = currentRowIds;
     for (const QMap<QString, QString> &rowMap : rows) {
         repo::TableRow candidateRow;
@@ -2066,44 +2467,39 @@ TableDmlResult TableDmlService::insertRows(const QString &targetDatabaseName,
         }
     }
 
-    const repo::RepositoryResult writeResult =
-        writeTargetTable(store, targetTableKind, databaseName, targetTableName, candidateTable);
-    if (!writeResult.ok) {
-        result.errorMessage = writeResult.error;
-        return result;
-    }
-
     if (targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!saveUserTableRowIds(targetTableName, candidateRowIds, &error)) {
-            QString rollbackError;
-            if (!restoreTableArtifacts(databaseName,
-                                       targetTableName,
-                                       targetSchema,
-                                       currentTable,
-                                       currentRowIds,
-                                       &rollbackError)) {
-                appendRollbackError(&error, rollbackError);
+        rootState->candidateTable = candidateTable;
+        rootState->candidateRowIds = candidateRowIds;
+        rootState->dirty = true;
+
+        if (validationMode == ValidationMode::UserData) {
+            if (!validateMutationStateLocally(*rootState,
+                                              insertedRowIndexes,
+                                              &mutationStates,
+                                              false,
+                                              &error)) {
+                result.errorMessage = error;
+                return result;
             }
+            if (!validateOutgoingForeignKeys(databaseName, currentDataRoot, targetSchema, candidateTable, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+            if (!validateAllMutationStates(mutationStates, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+        }
+
+        if (!commitMutationStates(mutationStates, &error)) {
             result.errorMessage = error;
             return result;
         }
-        if (!insertTableIndexes(targetTableName,
-                                targetSchema,
-                                candidateTable,
-                                candidateRowIds,
-                                insertedRowIndexes,
-                                &error)) {
-            QString rollbackError;
-            if (!restoreTableArtifacts(databaseName,
-                                       targetTableName,
-                                       targetSchema,
-                                       currentTable,
-                                       currentRowIds,
-                                       &rollbackError)) {
-                appendRollbackError(&error, rollbackError);
-            }
-            result.errorMessage = error;
+    } else {
+        const repo::RepositoryResult writeResult =
+            writeTargetTable(store, targetTableKind, databaseName, targetTableName, candidateTable);
+        if (!writeResult.ok) {
+            result.errorMessage = writeResult.error;
             return result;
         }
     }
@@ -2155,12 +2551,23 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         result.errorMessage = error;
         return result;
     }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
+
+    QMap<QString, TableMutationState> mutationStates;
+    TableMutationState *rootState = nullptr;
+    if (targetTableKind == TargetTableKind::TableDat) {
+        rootState = prepareRootMutationState(databaseName,
+                                             targetTableName,
+                                             targetSchema,
+                                             currentTable,
+                                             currentRowIds,
+                                             rowIdsInitialized,
+                                             &mutationStates,
+                                             &error);
+        if (rootState == nullptr) {
             result.errorMessage = error;
             return result;
         }
+        currentRowIds = rootState->candidateRowIds;
     }
 
     for (auto it = assignmentMap.constBegin(); it != assignmentMap.constEnd(); ++it) {
@@ -2240,19 +2647,11 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
 
     if (validationMode == ValidationMode::UserData
         && targetTableKind == TargetTableKind::TableDat) {
-        QMap<QString, TableMutationState> mutationStates;
-        TableMutationState rootState;
-        rootState.databaseName = databaseName;
-        rootState.tableName = targetTableName;
-        rootState.schema = targetSchema;
-        rootState.originalTable = currentTable;
-        rootState.candidateTable = candidateTable;
-        rootState.originalRowIds = currentRowIds;
-        rootState.candidateRowIds = candidateRowIds;
-        rootState.dirty = true;
-        mutationStates.insert(tableMutationKey(databaseName, targetTableName), rootState);
+        rootState->candidateTable = candidateTable;
+        rootState->candidateRowIds = candidateRowIds;
+        rootState->dirty = true;
 
-        if (!validateMutationStateLocally(rootState,
+        if (!validateMutationStateLocally(*rootState,
                                           matchedRowIndexes,
                                           &mutationStates,
                                           false,
@@ -2424,12 +2823,23 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
         result.errorMessage = error;
         return result;
     }
-    if (rowIdsInitialized && targetTableKind == TargetTableKind::TableDat) {
-        CurrentDatabaseGuard databaseGuard(databaseName);
-        if (!rebuildTableIndexes(targetTableName, targetSchema, currentTable, currentRowIds, &error)) {
+
+    QMap<QString, TableMutationState> mutationStates;
+    TableMutationState *rootState = nullptr;
+    if (targetTableKind == TargetTableKind::TableDat) {
+        rootState = prepareRootMutationState(databaseName,
+                                             targetTableName,
+                                             targetSchema,
+                                             currentTable,
+                                             currentRowIds,
+                                             rowIdsInitialized,
+                                             &mutationStates,
+                                             &error);
+        if (rootState == nullptr) {
             result.errorMessage = error;
             return result;
         }
+        currentRowIds = rootState->candidateRowIds;
     }
 
     QList<int> matchedRowIndexes;
@@ -2476,19 +2886,11 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
 
     if (validationMode == ValidationMode::UserData
         && targetTableKind == TargetTableKind::TableDat) {
-        QMap<QString, TableMutationState> mutationStates;
-        TableMutationState rootState;
-        rootState.databaseName = databaseName;
-        rootState.tableName = targetTableName;
-        rootState.schema = targetSchema;
-        rootState.originalTable = currentTable;
-        rootState.candidateTable = candidateTable;
-        rootState.originalRowIds = currentRowIds;
-        rootState.candidateRowIds = candidateRowIds;
-        rootState.dirty = true;
-        mutationStates.insert(tableMutationKey(databaseName, targetTableName), rootState);
+        rootState->candidateTable = candidateTable;
+        rootState->candidateRowIds = candidateRowIds;
+        rootState->dirty = true;
 
-        if (!validateMutationStateLocally(rootState,
+        if (!validateMutationStateLocally(*rootState,
                                           matchedRowIndexes,
                                           &mutationStates,
                                           false,

@@ -15,9 +15,22 @@
 4. SQL 优化器。
 5. 复杂事务隔离级别。
 
+当前个人负责范围：只收口“阶段一：进程内表级并发控制”。阶段二 CatalogCache 与阶段三 DML 热路径/索引维护性能项由其他人继续推进；本文后续章节保留为整体规划，不作为当前个人任务完成口径。
+
+当前 thread 收口状态：
+
+1. `RuntimeLockManager` 已实现并覆盖共享锁、排它锁、超时、排序去重、失败回滚。
+2. `database_service / table_service / tuple_service` 入口已接入数据库级/表级运行时锁。
+3. `SELECT / SHOW / DESC / SHOW CREATE TABLE` 读路径使用共享锁；DDL/DML 写路径使用排它锁。
+4. `currentDatabase` 已回退为与 master 一致的 `inline` 服务层桥接状态；多客户端上下文隔离以后由 master 的 `ClientSession / ScopedServiceContext` 负责，本计划只保留运行时锁对并发读写边界的约束。
+5. FK cascade 写路径已覆盖多表锁集合与锁失败释放场景。
+6. 最终验证方式：clean build 后运行 `DBMS.exe` 服务测试入口，最近一次结果为 `Service test summary: ALL PASS (0 failed groups)`。
+
 ---
 
 ## 阶段一：进程内表级并发控制
+
+状态：已完成并通过全量服务测试。当前个人任务以本阶段为完成口径。
 
 目标：在不引入跨进程锁的前提下，先完成单进程多线程的表级并发控制。
 
@@ -325,6 +338,8 @@ tuple_service::updateRows/deleteRows
 
 ### 4. 测试计划
 
+状态：thread 相关代表测试已落地并通过。部分原计划测试名与最终测试名不完全一致，但覆盖语义已保留：共享/排它互斥、同表 DML 写互斥、DDL/DML 互斥、数据库级锁、FK cascade 多表锁失败释放。
+
 #### 4.1 `RuntimeLockManager`
 
 1. `test_acquireSharedLockSucceeds`
@@ -359,6 +374,31 @@ tuple_service::updateRows/deleteRows
 5. `test_deleteRowsSerializesSameTable`
 6. `test_fkCascadeLocksAllRelatedTablesInStableOrder`
 7. `test_lockFailureReturnsTaskError`
+
+#### 4.5 当前已验证的 thread 测试落点
+
+1. `tests/test_lock_manager.cpp`
+   - `test_acquireSharedLockSucceeds`
+   - `test_acquireExclusiveLockSucceeds`
+   - `test_sharedSharedCanCoexist`
+   - `test_sharedExclusiveBlocks`
+   - `test_exclusiveExclusiveBlocks`
+   - `test_timeoutReturnsError`
+   - `test_orderedLocksSortAndDeduplicate`
+   - `test_failedOrderedAcquireRollsBackPartialLocks`
+2. `tests/test_threaded_service.cpp`
+   - `test_selectRowsSharedSharedAllowed`
+   - `test_selectRowsBlockedByExclusiveWriter`
+   - `test_writePathFailsWhenRelatedTableLockIsHeld`
+   - `test_updateRowsBlockedBySameTableExclusiveLock`
+   - `test_deleteRowsBlockedBySameTableExclusiveLock`
+   - `test_addColumnBlockedByConcurrentDmlLock`
+   - `test_dropTableBlockedByConcurrentReadLock`
+   - `test_dropDatabaseBlocksConcurrentUseDatabase`
+3. `tests/test_table_runtime_pipeline.cpp`
+   - `test_fkCascadeMutationLocksAllDependentTablesAndReleasesOnFailure`
+
+最新全量验证：`Database / Parser / Logic / Query / Table / Tuple / LockManager / ThreadedService / CatalogCache / ServiceCommonCache / TableRuntimePipeline / IndexRuntimeRepair` 全部 PASS，服务测试汇总为 `ALL PASS (0 failed groups)`。
 
 ---
 

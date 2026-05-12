@@ -14,12 +14,17 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Core Test)
 
 set(DBMS_CORE_SOURCES
         constants/table_def.h
+        constants/thread_perf_def.h
         constants/cli_client_def.h
         utils/table_manu/table_manu.h
         utils/table_manu/type_utils.cpp
         utils/table_manu/schema_maint.cpp
         utils/table_manu/schema_builder.cpp
         utils/service_common/service_common.h
+        utils/thread_runtime/lock_manager.h
+        utils/thread_runtime/lock_manager.cpp
+        utils/thread_runtime/catalog_cache.h
+        utils/thread_runtime/catalog_cache.cpp
         utils/service_common/name_normalize.cpp
         utils/service_common/constraint_worker.cpp
         utils/service_common/sql_stringifier.cpp
@@ -53,6 +58,20 @@ set(DBMS_CORE_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
+        tests/test_entry.h
+        tests/test_parser_dispatcher.cpp
+        tests/test_database_service.cpp
+        tests/test_logic.cpp
+        tests/test_query_executor.cpp
+        tests/test_table_service.cpp
+        tests/test_tuple_service.cpp
+        tests/test_lock_manager.cpp
+        tests/test_threaded_service.cpp
+        tests/test_catalog_cache.cpp
+        tests/test_service_common_cache.cpp
+        tests/test_table_runtime_pipeline.cpp
+        tests/test_index_runtime_repair.cpp
+        # ── SQL Parser 层（纯解析，不碰文件系统）──
         utils/sql_parser/sql_tokenizer.h
         utils/sql_parser/sql_tokenizer.cpp
         utils/sql_parser/sql_parser.h

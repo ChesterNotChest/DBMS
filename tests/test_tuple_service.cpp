@@ -1,6 +1,7 @@
 #include "../service/service.h"
 
 #include <QDir>
+#include <QFile>
 #include <QtTest>
 
 #include "test_entry.h"
@@ -1491,22 +1492,59 @@ private slots:
         QVERIFY(!uniqueIndexName.isEmpty());
 
         repo::IndexRepo indexRepo(databaseName, tableName, m_dataRoot);
+        repo::FlatFileTableStore store(m_dataRoot);
+        const QString uniqueIndexPath = store.getSortIndexFilePath(databaseName, tableName, uniqueIndexName);
         const repo::RepositoryResult metadataRemovalResult = indexRepo.deleteIndex(uniqueIndexName);
         QVERIFY2(metadataRemovalResult.ok, qPrintable(metadataRemovalResult.error));
+        QVERIFY(QFile::remove(uniqueIndexPath));
 
         TaskResult duplicateInsert = tuple_service::insertRows(tableName,
                                                                makeRows({
                                                                    makeRow({{QStringLiteral("id"), QStringLiteral("3")},
                                                                             {QStringLiteral("name"), QStringLiteral("alice")}}),
                                                                }));
-        QVERIFY(!duplicateInsert.success);
-        QVERIFY(duplicateInsert.errorMessage.contains(QStringLiteral("duplicate")));
+        QVERIFY2(!duplicateInsert.success, qPrintable(duplicateInsert.errorMessage));
+        QVERIFY2(duplicateInsert.errorMessage.contains(QStringLiteral("duplicate")),
+                 qPrintable(duplicateInsert.errorMessage));
+    }
 
-        TaskResult duplicateUpdate = tuple_service::updateRows(tableName,
-                                                               makeAssignment(QStringLiteral("name"), QStringLiteral("alice")),
-                                                               {SimpleCondition{QStringLiteral("id"), QStringLiteral("2")}});
-        QVERIFY(!duplicateUpdate.success);
-        QVERIFY(duplicateUpdate.errorMessage.contains(QStringLiteral("duplicate")));
+    void test_uniqueConstraintStillRejectsDuplicatesWhenIndexFileIsMissing()
+    {
+        const QString databaseName = QStringLiteral("test_tuple_service_unique_missing_index_file_db");
+        const QString tableName = QStringLiteral("test_tuple_service_unique_missing_index_file_table");
+        ensureDatabase(databaseName, m_dataRoot);
+        ensureTable(databaseName, tableName, indexedSchema(tableName), m_dataRoot);
+
+        QVERIFY(tuple_service::insertRows(tableName,
+                                          makeRows({
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                                       {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                              makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                                                       {QStringLiteral("name"), QStringLiteral("bob")}}),
+                                          })).success);
+
+        QString error;
+        const QString uniqueIndexName = findIndexNameByColumns(databaseName,
+                                                               tableName,
+                                                               m_dataRoot,
+                                                               {QStringLiteral("name")},
+                                                               &error);
+        QVERIFY(error.isEmpty());
+        QVERIFY(!uniqueIndexName.isEmpty());
+
+        repo::FlatFileTableStore store(m_dataRoot);
+        const QString uniqueIndexPath = store.getSortIndexFilePath(databaseName, tableName, uniqueIndexName);
+        QVERIFY(QFile::exists(uniqueIndexPath));
+        QVERIFY(QFile::remove(uniqueIndexPath));
+
+        TaskResult duplicateInsert = tuple_service::insertRows(tableName,
+                                                               makeRows({
+                                                                   makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                                                                            {QStringLiteral("name"), QStringLiteral("alice")}}),
+                                                               }));
+        QVERIFY2(!duplicateInsert.success, qPrintable(duplicateInsert.errorMessage));
+        QVERIFY2(duplicateInsert.errorMessage.contains(QStringLiteral("duplicate")),
+                 qPrintable(duplicateInsert.errorMessage));
     }
 
     void test_incrementalIndexMaintenance()

@@ -495,7 +495,7 @@ bool appendEntry(QVector<IndexEntry> *entries,
         }
         if (isUnique) {
             if (error != nullptr) {
-                *error = QStringLiteral("unique index already contains key values");
+                *error = QStringLiteral("unique index already contains duplicate key values");
             }
             return false;
         }
