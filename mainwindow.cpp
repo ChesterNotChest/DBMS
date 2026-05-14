@@ -177,6 +177,20 @@ void MainWindow::setupToolBar()
     connect(btnExecute, &QPushButton::clicked, this, &MainWindow::onToolbarExecute);
     m_toolbar->addWidget(btnExecute);
 
+    // 新增：保存按钮
+    m_saveBtn = new QPushButton(u8"\U0001F4BE");
+    m_saveBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_saveBtn->setCursor(Qt::PointingHandCursor);
+    m_saveBtn->setFocusPolicy(Qt::NoFocus);
+    m_saveBtn->setStyleSheet(
+        "QPushButton { background:#E3F2FD; color:#1565C0; border:1px solid #BBDEFB; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#BBDEFB; border-color:#64B5F6; }"
+        "QPushButton:pressed { background:#90CAF9; }");
+    m_saveBtn->setToolTip("保存当前表格数据到数据库");
+    connect(m_saveBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSave);
+    m_toolbar->addWidget(m_saveBtn);
+
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_toolbar->addWidget(spacer);
@@ -259,6 +273,7 @@ void MainWindow::setupLayout()
     // editor 执行请求 -> 主窗口统一执行
     connect(m_editorPanel, &EditorPanel::executeRequested,
             this, &MainWindow::onExecuteRequested);
+
 }
 
 
@@ -370,7 +385,6 @@ void MainWindow::onDatabaseSelected(const QString &dbName)
         return;
     }
     m_resultPanel->showLog("切换数据库: " + dbName);
-    m_editorPanel->insertSql("\nUSE " + dbName + ";\n");
 }
 
 void MainWindow::onTableSelected(const QString &dbName, const QString &tableName)
@@ -381,7 +395,6 @@ void MainWindow::onTableSelected(const QString &dbName, const QString &tableName
     m_currentTable = tableName;
     updateStatusDbLabel();
     m_resultPanel->showLog("选中表: " + tableName);
-    m_editorPanel->insertSql("\nSELECT * FROM " + tableName + " LIMIT 100;\n");
 }
 
 void MainWindow::onColumnSelected(const QString &dbName,
@@ -393,7 +406,6 @@ void MainWindow::onColumnSelected(const QString &dbName,
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
-    m_editorPanel->insertSql("\nSELECT " + columnName + " FROM " + tableName + ";\n");
 }
 
 bool MainWindow::switchGuiDatabase(const QString &dbName)
@@ -537,4 +549,159 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
     } else {
         QMainWindow::keyPressEvent(e);
     }
+}
+
+// 处理 ResultPanel 信号（兼容）
+void MainWindow::onSaveRequested(const QString &tableName, const QList<QStringList> &rows)
+{
+    Q_UNUSED(tableName);
+    // 直接用当前已选表和表格数据保存
+    onToolbarSave();
+}
+
+// 工具栏保存按钮：精准生成 UPDATE/INSERT/DELETE SQL 并执行
+void MainWindow::onToolbarSave()
+{
+    if (m_currentTable.isEmpty()) {
+        m_resultPanel->showError("请先在左侧选择一张表，再点击保存");
+        return;
+    }
+
+    if (!m_resultPanel->hasUnsavedChanges()) {
+        m_resultPanel->showLog("数据未变更，无需保存");
+        return;
+    }
+
+    QStringList columns = m_resultPanel->getLastColumns();
+    if (columns.isEmpty()) {
+        m_resultPanel->showError("无法确定列名，请先 SELECT * FROM 该表");
+        return;
+    }
+
+    ResultPanel::ChangeInfo info = m_resultPanel->diffWithOriginal();
+    int upd = info.updatedCells.size();
+    int ins = info.newRowIds.size();
+    int del = info.deletedRows.size();
+    if (upd == 0 && ins == 0 && del == 0) {
+        m_resultPanel->showLog("数据未变更，无需保存");
+        return;
+    }
+
+    // 确认对话框
+    int ret = QMessageBox::question(this, u8"确认保存",
+        QString(u8"即将对表 '%1' 执行以下变更：\n\n"
+                u8"✏️ UPDATE %2 行\n"
+                u8"➕ INSERT %3 行\n"
+                u8"➖ DELETE %4 行\n\n"
+                u8"是否继续？").arg(m_currentTable).arg(upd).arg(ins).arg(del),
+        QMessageBox::Yes | QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    m_resultPanel->showLog(u8"=== 开始保存 ===");
+    int affectedTotal = 0;
+
+    // ── 辅助：格式化字段值 ──
+    auto fmtVal = [](const QString &raw) -> QString {
+        if (raw.isEmpty()) return "''";
+        bool isNum;
+        raw.toDouble(&isNum);
+        if (isNum) return raw;
+        if (raw.compare("NULL", Qt::CaseInsensitive) == 0) return "NULL";
+        QString escaped = raw;
+        escaped.replace("'", "''");
+        return "'" + escaped + "'";
+    };
+
+    // ── UPDATE：只更新脏单元格 ──
+    for (auto cit = info.updatedCells.constBegin(); cit != info.updatedCells.constEnd(); ++cit) {
+        int rowIdx = cit.key();
+        const QMap<int, QString> &cells = cit.value();
+        if (cells.isEmpty()) continue;
+
+        // WHERE 用原始 PK 值（第0列）
+        QString pkOrig = info.originalRows[rowIdx].value(0, "");
+        if (pkOrig.isEmpty()) {
+            m_resultPanel->showLog(QString(u8"⚠️ 第 %1 行无法 UPDATE：PK 值为空").arg(rowIdx + 1));
+            continue;
+        }
+
+        QString pkColName = columns.value(0, "");
+        QString setClause, whereClause;
+        QList<QPair<QString, QString>> setPairs;
+        for (auto mit = cells.constBegin(); mit != cells.constEnd(); ++mit) {
+            int ci = mit.key();
+            QString colName = columns.value(ci, QString("col%1").arg(ci + 1));
+            setPairs.append(qMakePair(colName, fmtVal(mit.value())));
+        }
+        for (int i = 0; i < setPairs.size(); ++i) {
+            setClause += setPairs[i].first + "=" + setPairs[i].second;
+            if (i < setPairs.size() - 1) setClause += ", ";
+        }
+        whereClause = pkColName + "=" + fmtVal(pkOrig);
+
+        QString sql = QString("UPDATE %1 SET %2 WHERE %3;")
+                        .arg(m_currentTable).arg(setClause).arg(whereClause);
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ UPDATE 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // ── INSERT：处理新行 ──
+    for (int rowIdx : info.newRowIds) {
+        QStringList currVals = info.currentRows.value(rowIdx, QStringList());
+        if (currVals.isEmpty()) {
+            // 从表格重新取数（防止空数据）
+            QTableWidget *tbl = m_resultPanel->getTable();
+            currVals.clear();
+            for (int ci = 0; ci < tbl->columnCount(); ++ci) {
+                QTableWidgetItem *it = tbl->item(rowIdx, ci);
+                currVals.append(it ? it->text() : "");
+            }
+        }
+
+        QStringList vals;
+        for (int ci = 0; ci < qMin(currVals.size(), columns.size()); ++ci)
+            vals.append(fmtVal(currVals[ci]));
+
+        QString sql = QString("INSERT INTO %1 (%2) VALUES (%3);")
+                        .arg(m_currentTable)
+                        .arg(columns.join(", "))
+                        .arg(vals.join(", "));
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ INSERT 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // ── DELETE：恢复已删除行 ──
+    for (auto dit = info.deletedRows.constBegin(); dit != info.deletedRows.constEnd(); ++dit) {
+        QString pkVal = dit.key();
+        QString pkColName = columns.value(0, "");
+        QString sql = QString("DELETE FROM %1 WHERE %2=%3;")
+                        .arg(m_currentTable)
+                        .arg(pkColName)
+                        .arg(fmtVal(pkVal));
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ DELETE 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // 全部成功：标记已提交，重新刷新数据
+    m_resultPanel->markAllCommitted();
+    m_resultPanel->showLog(QString(u8"✅ 保存成功！受影响 %1 行").arg(affectedTotal));
+
+    // 重新 SELECT 刷新界面
+    QString sql = QString("SELECT * FROM %1;").arg(m_currentTable);
+    onExecuteRequested(sql);
 }

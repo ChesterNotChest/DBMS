@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QTime>
 #include <QKeyEvent>
+#include <QStringList>
 
 #include "display/structure_panel.h"
 #include "display/editor_panel.h"
@@ -60,6 +61,11 @@ private slots:
     void onAbout();
     void onRefreshStructure();
 
+    // 新增：处理 ResultPanel 的保存请求
+    void onSaveRequested(const QString &tableName, const QList<QStringList> &rows);
+    // 新增：工具栏保存按钮
+    void onToolbarSave();
+
 private:
     void setupMenuBar();
     void setupToolBar();
@@ -86,6 +92,8 @@ protected:
     QStatusBar *m_statusBar = nullptr;
     QLabel *m_statusDbLabel = nullptr;
     QLabel *m_statusRowsLabel = nullptr;
+
+    QPushButton *m_saveBtn = nullptr;
 
     QString m_currentDatabase;
     QString m_currentTable;
