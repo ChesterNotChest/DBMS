@@ -191,6 +191,20 @@ void MainWindow::setupToolBar()
     connect(m_saveBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSave);
     m_toolbar->addWidget(m_saveBtn);
 
+    // 新增：可视化建表按钮
+    m_newTableBtn = new QPushButton(u8"\U0001F4C4", this);
+    m_newTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_newTableBtn->setCursor(Qt::PointingHandCursor);
+    m_newTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_newTableBtn->setStyleSheet(
+        "QPushButton { background:#E8F5E9; color:#2E7D32; border:1px solid #C8E6C9; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#C8E6C9; }"
+        "QPushButton:pressed { background:#A5D6A7; }");
+    m_newTableBtn->setToolTip("可视化建表");
+    connect(m_newTableBtn, SIGNAL(clicked()), this, SLOT(onToolbarNewTable()));
+    m_toolbar->addWidget(m_newTableBtn);
+
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_toolbar->addWidget(spacer);
@@ -211,16 +225,16 @@ void MainWindow::setupLayout()
         "QSplitter::handle:hover { background:#CCCCCC; }");
     rootLayout->addWidget(m_mainSplitter);
 
-    m_leftPanel = new QWidget(this);
-    m_leftPanel->setMinimumWidth(220);
-    m_leftPanel->setMaximumWidth(320);
-    QVBoxLayout *leftLayout = new QVBoxLayout(m_leftPanel);
+    QWidget *leftContainer = new QWidget(this);
+    leftContainer->setMinimumWidth(220);
+    leftContainer->setMaximumWidth(320);
+    QVBoxLayout *leftLayout = new QVBoxLayout(leftContainer);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(0);
 
     m_structurePanel = new StructurePanel(this);
     leftLayout->addWidget(m_structurePanel);
-    m_mainSplitter->addWidget(m_leftPanel);
+    m_mainSplitter->addWidget(leftContainer);
 
     m_rightPanel = new QWidget(this);
     m_rightPanel->setStyleSheet("QWidget { background:#FFFFFF; }");
@@ -515,7 +529,8 @@ void MainWindow::onRefreshStructure()
 
 void MainWindow::onToggleLeftPanel()
 {
-    m_leftPanel->setVisible(!m_leftPanel->isVisible());
+    QWidget *leftContainer = m_structurePanel->parentWidget();
+    if (leftContainer) leftContainer->setVisible(!leftContainer->isVisible());
 }
 
 void MainWindow::onToggleBottomPanel()
@@ -701,7 +716,18 @@ void MainWindow::onToolbarSave()
     m_resultPanel->markAllCommitted();
     m_resultPanel->showLog(QString(u8"✅ 保存成功！受影响 %1 行").arg(affectedTotal));
 
-    // 重新 SELECT 刷新界面
+    // Re-select to refresh
     QString sql = QString("SELECT * FROM %1;").arg(m_currentTable);
+    onExecuteRequested(sql);
+}
+
+// Visual table creation
+void MainWindow::onToolbarNewTable()
+{
+    CreateTableDialog dlg(this, m_currentDatabase);
+    if (dlg.exec() != QDialog::Accepted) return;
+    QString sql = dlg.getGeneratedSql();
+    if (sql.isEmpty()) return;
+    m_editorPanel->insertSql("\n" + sql + "\n");
     onExecuteRequested(sql);
 }

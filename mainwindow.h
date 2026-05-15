@@ -1,4 +1,4 @@
-#ifndef MAINWINDOW_H
+﻿#ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
 #include <QMainWindow>
@@ -16,10 +16,12 @@
 #include <QTime>
 #include <QKeyEvent>
 #include <QStringList>
+#include <QTableWidget>
 
 #include "display/structure_panel.h"
 #include "display/editor_panel.h"
 #include "display/result_panel.h"
+#include "display/create_table_dialog.h"
 #include "client/client_session_pool.h"
 #include "client/sql_client_engine.h"
 #include "controller/sql_dispatcher.h"
@@ -61,10 +63,10 @@ private slots:
     void onAbout();
     void onRefreshStructure();
 
-    // 新增：处理 ResultPanel 的保存请求
+    // ResultPanel save
     void onSaveRequested(const QString &tableName, const QList<QStringList> &rows);
-    // 新增：工具栏保存按钮
     void onToolbarSave();
+    void onToolbarNewTable();
 
 private:
     void setupMenuBar();
@@ -81,7 +83,6 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
 
     QSplitter *m_mainSplitter = nullptr;
-    QWidget *m_leftPanel = nullptr;
     QWidget *m_rightPanel = nullptr;
 
     StructurePanel *m_structurePanel = nullptr;
@@ -94,6 +95,7 @@ protected:
     QLabel *m_statusRowsLabel = nullptr;
 
     QPushButton *m_saveBtn = nullptr;
+    QPushButton *m_newTableBtn = nullptr;
 
     QString m_currentDatabase;
     QString m_currentTable;

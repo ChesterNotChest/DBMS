@@ -339,7 +339,8 @@ void ResultPanel::showTable(const QStringList &columns, const QList<QStringList>
     for (int c = 0; c < columns.size(); ++c)
         m_table->setColumnWidth(c, colWidths[c]);
 
-    // 填充数据
+    // 填充数据（阻塞 itemChanged 信号，防止 onCellChanged 将所有行标记为脏）
+    m_table->blockSignals(true);
     m_table->setRowCount(rows.size());
     for (int r = 0; r < rows.size(); ++r) {
         m_originalRows[r] = rows[r];
@@ -350,6 +351,7 @@ void ResultPanel::showTable(const QStringList &columns, const QList<QStringList>
             m_table->setItem(r, c, item);
         }
     }
+    m_table->blockSignals(false);
 
     m_table->show();
     m_emptyLabel->hide();

@@ -88,6 +88,8 @@ set(DBMS_GUI_SOURCES
         display/result_panel.cpp
         display/structure_panel.h
         display/structure_panel.cpp
+        display/create_table_dialog.h
+        display/create_table_dialog.cpp
 )
 
 set(DBMS_TEST_SOURCES

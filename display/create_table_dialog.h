@@ -1,0 +1,45 @@
+#ifndef CREATE_TABLE_DIALOG_H
+#define CREATE_TABLE_DIALOG_H
+
+#include <QDialog>
+#include <QLineEdit>
+#include <QTableWidget>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QTextEdit>
+#include <QMessageBox>
+#include <QHeaderView>
+
+class CreateTableDialog : public QDialog
+{
+    Q_OBJECT
+
+public:
+    explicit CreateTableDialog(QWidget *parent = nullptr,
+                               const QString &defaultDb = QString());
+
+    QString getGeneratedSql() const;
+
+private slots:
+    void onAddColumn();
+    void onDeleteColumn();
+    void onClearAll();
+    void onGenerateSql();
+    void onExecuteCreate();
+
+private:
+    void buildLayout(const QString &defaultDb);
+    void updatePkRadio(int row);
+    void refreshLengthEnable(int row);
+
+    QLineEdit   *m_tableNameEdit = nullptr;
+    QTableWidget *m_fieldTable   = nullptr;
+    QTextEdit   *m_sqlEdit       = nullptr;
+    QPushButton  *m_execBtn       = nullptr;
+};
+
+#endif // CREATE_TABLE_DIALOG_H
