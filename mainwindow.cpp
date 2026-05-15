@@ -413,13 +413,18 @@ void MainWindow::onTableSelected(const QString &dbName, const QString &tableName
 
 void MainWindow::onColumnSelected(const QString &dbName,
                                    const QString &tableName,
-                                   const QString &columnName)
+    const QString &columnName)
 {
     if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
         return;
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
+    m_resultPanel->showLog("选中列: " + tableName + "." + columnName);
+
+    // 自动执行查询：SELECT <column> FROM <table>
+    QString sql = QString("SELECT %1 FROM %2;").arg(columnName).arg(tableName);
+    onExecuteRequested(sql);
 }
 
 bool MainWindow::switchGuiDatabase(const QString &dbName)
@@ -728,6 +733,5 @@ void MainWindow::onToolbarNewTable()
     if (dlg.exec() != QDialog::Accepted) return;
     QString sql = dlg.getGeneratedSql();
     if (sql.isEmpty()) return;
-    m_editorPanel->insertSql("\n" + sql + "\n");
     onExecuteRequested(sql);
 }

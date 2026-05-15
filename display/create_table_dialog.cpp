@@ -11,25 +11,83 @@ CreateTableDialog::CreateTableDialog(QWidget *parent,
     : QDialog(parent)
 {
     buildLayout(defaultDb);
-    // 第一行默认字段
     onAddColumn();
     m_tableNameEdit->setFocus();
 }
 
 QString CreateTableDialog::getGeneratedSql() const
 {
-    return m_sqlEdit->toPlainText().trimmed();
+    return buildSql();
+}
+
+QString CreateTableDialog::buildSql() const
+{
+    QString tableName = m_tableNameEdit->text().trimmed();
+    if (tableName.isEmpty()) return QString();
+
+    if (m_fieldTable->rowCount() == 0) return QString();
+
+    // 检查列名
+    QSet<QString> colNames;
+    for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
+        QTableWidgetItem *it = m_fieldTable->item(r, 0);
+        QString colName = it ? it->text().trimmed() : "";
+        if (colName.isEmpty()) return QString();
+        if (colNames.contains(colName)) return QString();
+        colNames.insert(colName);
+    }
+
+    // 检查主键
+    int pkCount = 0;
+    for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
+        QCheckBox *pk = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 4));
+        if (pk && pk->isChecked()) pkCount++;
+    }
+    if (pkCount > 1) return QString();
+
+    // 生成 SQL
+    QString sql = QString("CREATE TABLE %1 (\n").arg(tableName);
+    QStringList colDefs;
+
+    for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
+        QString colName = m_fieldTable->item(r, 0)->text().trimmed();
+        QComboBox *typeCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(r, 1));
+        QString dataType = typeCombo ? typeCombo->currentText() : "INT";
+
+        QString colDef = "    " + colName + " " + dataType;
+
+        if (dataType == "VARCHAR" || dataType == "CHAR") {
+            QLineEdit *lenEdit = qobject_cast<QLineEdit*>(m_fieldTable->cellWidget(r, 2));
+            QString len = lenEdit ? lenEdit->text().trimmed() : "";
+            if (!len.isEmpty()) colDef += "(" + len + ")";
+            else colDef += "(255)";
+        }
+
+        QCheckBox *nullBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 3));
+        if (nullBox && !nullBox->isChecked()) colDef += " NOT NULL";
+
+        QCheckBox *pkBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 4));
+        if (pkBox && pkBox->isChecked()) colDef += " PRIMARY KEY";
+
+        QCheckBox *uniqBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 5));
+        if (uniqBox && uniqBox->isChecked()) colDef += " UNIQUE";
+
+        colDefs.append(colDef);
+    }
+
+    sql += colDefs.join(",\n");
+    sql += "\n);";
+    return sql;
 }
 
 void CreateTableDialog::buildLayout(const QString &defaultDb)
 {
     setWindowTitle("可视化建表");
-    setMinimumSize(720, 540);
+    setMinimumSize(720, 520);
     setStyleSheet(
         "QDialog { background:#E3F2FD; color:#000000; }"
         "QLabel { color:#000000; }"
         "QLineEdit { color:#000000; }"
-        "QTextEdit { color:#000000; }"
         "QComboBox { color:#000000; }"
         "QCheckBox { color:#000000; }"
         "QTableWidget { color:#000000; }"
@@ -92,7 +150,8 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
         "QLineEdit:focus { background:#FFFFFF; color:#000000; border:1px solid #1976D2; }"
         "QComboBox { background:#FFFFFF; color:#000000; border:1px solid #90CAF9; }"
         "QComboBox:focus { background:#FFFFFF; color:#000000; border:1px solid #1976D2; }"
-        "QComboBox QAbstractItemView { background:#FFFFFF; color:#000000; selection-background-color:#BBDEFB; }");
+        "QComboBox QAbstractItemView { background:#FFFFFF; color:#000000; selection-background-color:#BBDEFB; }"
+        "QTableWidget QTableCornerButton { background:#BBDEFB; border:1px solid #90CAF9; }");
     root->addWidget(m_fieldTable, 1);
 
     // ── 字段操作按钮 ──
@@ -126,31 +185,9 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     fieldBtnLayout->addStretch();
     root->addLayout(fieldBtnLayout);
 
-    // ── SQL 预览 ──
-    QLabel *sqlLabel = new QLabel("生成 SQL 预览：", this);
-    sqlLabel->setStyleSheet("QLabel { font-weight:bold; font-size:12px; margin-top:4px; }");
-    root->addWidget(sqlLabel);
-
-    m_sqlEdit = new QTextEdit(this);
-    m_sqlEdit->setReadOnly(false);
-    m_sqlEdit->setMaximumHeight(80);
-    m_sqlEdit->setStyleSheet(
-        "QTextEdit { background:#FFFFFF; border:1px solid #90CAF9; "
-        "border-radius:4px; padding:6px; font-family:'Consolas'; font-size:12px; color:#000000; }");
-    root->addWidget(m_sqlEdit);
-
     // ── 底部按钮 ──
     QHBoxLayout *bottomLayout = new QHBoxLayout();
     bottomLayout->addStretch();
-
-    QPushButton *genBtn = new QPushButton("生成 SQL", this);
-    genBtn->setCursor(Qt::PointingHandCursor);
-    genBtn->setStyleSheet(
-        "QPushButton { background:#1976D2; color:white; border:none; "
-        "border-radius:4px; padding:6px 18px; font-size:12px; }"
-        "QPushButton:hover { background:#1565C0; }");
-    connect(genBtn, &QPushButton::clicked, this, &CreateTableDialog::onGenerateSql);
-    bottomLayout->addWidget(genBtn);
 
     m_execBtn = new QPushButton("执行建表", this);
     m_execBtn->setCursor(Qt::PointingHandCursor);
@@ -177,40 +214,33 @@ void CreateTableDialog::onAddColumn()
     int row = m_fieldTable->rowCount();
     m_fieldTable->insertRow(row);
 
-    // 列名
     m_fieldTable->setItem(row, 0, new QTableWidgetItem(""));
 
-    // 数据类型 ComboBox
     QComboBox *typeCombo = new QComboBox(this);
     typeCombo->addItems(DATA_TYPES);
     typeCombo->setCurrentIndex(0);
     m_fieldTable->setCellWidget(row, 1, typeCombo);
 
-    // 长度
     QLineEdit *lenEdit = new QLineEdit(this);
     lenEdit->setPlaceholderText(u8"可选");
     lenEdit->setMaximumWidth(56);
     m_fieldTable->setCellWidget(row, 2, lenEdit);
 
-    // 先设置完所有 cellWidget 再连接信号，避免 refreshLengthEnable 访问空指针
     connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this, row](int) { refreshLengthEnable(row); });
     refreshLengthEnable(row);
 
-    // 允许空
     QCheckBox *nullBox = new QCheckBox(this);
     nullBox->setChecked(true);
     m_fieldTable->setCellWidget(row, 3, nullBox);
 
-    // 主键
     QCheckBox *pkBox = new QCheckBox(this);
     pkBox->setStyleSheet("QCheckBox { margin-left:8px; }");
     m_fieldTable->setCellWidget(row, 4, pkBox);
-    connect(pkBox, &QCheckBox::toggled, this, [this, row](bool checked) {
-        if (checked) updatePkRadio(row);
+    connect(pkBox, &QCheckBox::toggled, this, [this, row](bool) {
+        updatePkRadio(row);
     });
 
-    // 唯一
     QCheckBox *uniqBox = new QCheckBox(this);
     uniqBox->setStyleSheet("QCheckBox { margin-left:8px; }");
     m_fieldTable->setCellWidget(row, 5, uniqBox);
@@ -238,12 +268,10 @@ void CreateTableDialog::onClearAll()
                                     QMessageBox::Yes | QMessageBox::No);
     if (ret != QMessageBox::Yes) return;
     m_fieldTable->setRowCount(0);
-    m_sqlEdit->clear();
 }
 
 void CreateTableDialog::updatePkRadio(int row)
 {
-    // 互斥：只能一个主键
     for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
         if (r == row) continue;
         QCheckBox *cb = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 4));
@@ -262,7 +290,7 @@ void CreateTableDialog::refreshLengthEnable(int row)
     if (!needLen) le->clear();
 }
 
-void CreateTableDialog::onGenerateSql()
+void CreateTableDialog::onExecuteCreate()
 {
     QString tableName = m_tableNameEdit->text().trimmed();
     if (tableName.isEmpty()) {
@@ -276,7 +304,7 @@ void CreateTableDialog::onGenerateSql()
         return;
     }
 
-    // 检查列名
+    // 检查列名重复
     QSet<QString> colNames;
     for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
         QTableWidgetItem *it = m_fieldTable->item(r, 0);
@@ -306,54 +334,5 @@ void CreateTableDialog::onGenerateSql()
         return;
     }
 
-    // ── 生成 SQL ──
-    QString sql = QString("CREATE TABLE %1 (\n").arg(tableName);
-    QStringList colDefs;
-
-    for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
-        QString colName = m_fieldTable->item(r, 0)->text().trimmed();
-        QComboBox *typeCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(r, 1));
-        QString dataType = typeCombo ? typeCombo->currentText() : "INT";
-
-        QString colDef = "    " + colName + " " + dataType;
-
-        // 长度
-        if (dataType == "VARCHAR" || dataType == "CHAR") {
-            QLineEdit *lenEdit = qobject_cast<QLineEdit*>(m_fieldTable->cellWidget(r, 2));
-            QString len = lenEdit ? lenEdit->text().trimmed() : "";
-            if (!len.isEmpty()) colDef += "(" + len + ")";
-            else colDef += "(255)";  // 默认值
-        }
-
-        // NOT NULL
-        QCheckBox *nullBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 3));
-        if (nullBox && !nullBox->isChecked()) colDef += " NOT NULL";
-
-        // PRIMARY KEY
-        QCheckBox *pkBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 4));
-        if (pkBox && pkBox->isChecked()) colDef += " PRIMARY KEY";
-
-        // UNIQUE
-        QCheckBox *uniqBox = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 5));
-        if (uniqBox && uniqBox->isChecked()) colDef += " UNIQUE";
-
-        colDefs.append(colDef);
-    }
-
-    sql += colDefs.join(",\n");
-    sql += "\n);";
-
-    m_sqlEdit->setPlainText(sql);
-    QMessageBox::information(this, "成功", "SQL 已生成！");
-}
-
-void CreateTableDialog::onExecuteCreate()
-{
-    onGenerateSql();
-    QString sql = m_sqlEdit->toPlainText().trimmed();
-    if (sql.isEmpty()) return;
-
-    // 让 MainWindow 处理：把 SQL 发回去
-    // 通过 accepted() 信号让 MainWindow 执行 SQL
     accept();
 }

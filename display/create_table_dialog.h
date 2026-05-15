@@ -10,7 +10,6 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QTextEdit>
 #include <QMessageBox>
 #include <QHeaderView>
 
@@ -28,17 +27,16 @@ private slots:
     void onAddColumn();
     void onDeleteColumn();
     void onClearAll();
-    void onGenerateSql();
     void onExecuteCreate();
 
 private:
+    QString buildSql() const;
     void buildLayout(const QString &defaultDb);
     void updatePkRadio(int row);
     void refreshLengthEnable(int row);
 
     QLineEdit   *m_tableNameEdit = nullptr;
     QTableWidget *m_fieldTable   = nullptr;
-    QTextEdit   *m_sqlEdit       = nullptr;
     QPushButton  *m_execBtn       = nullptr;
 };
 
