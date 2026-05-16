@@ -51,6 +51,35 @@ int main(int argc, char *argv[])
     qDebug() << "Tuple service tests:" << (tupleTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << tupleTestResult << ")";
 
+    const int lockManagerTestResult = service_tests::runLockManagerTests();
+    reportTestGroup(QStringLiteral("Lock manager tests"), lockManagerTestResult);
+    qDebug() << "Lock manager tests:" << (lockManagerTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << lockManagerTestResult << ")";
+
+    const int threadedServiceTestResult = service_tests::runThreadedServiceTests();
+    reportTestGroup(QStringLiteral("Threaded service tests"), threadedServiceTestResult);
+    qDebug() << "Threaded service tests:" << (threadedServiceTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << threadedServiceTestResult << ")";
+
+    const int catalogCacheTestResult = service_tests::runCatalogCacheTests();
+    reportTestGroup(QStringLiteral("Catalog cache tests"), catalogCacheTestResult);
+    qDebug() << "Catalog cache tests:" << (catalogCacheTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << catalogCacheTestResult << ")";
+
+    const int serviceCommonCacheTestResult = service_tests::runServiceCommonCacheTests();
+    reportTestGroup(QStringLiteral("Service common cache tests"), serviceCommonCacheTestResult);
+    qDebug() << "Service common cache tests:" << (serviceCommonCacheTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << serviceCommonCacheTestResult << ")";
+
+    const int tableRuntimePipelineTestResult = service_tests::runTableRuntimePipelineTests();
+    reportTestGroup(QStringLiteral("Table runtime pipeline tests"), tableRuntimePipelineTestResult);
+    qDebug() << "Table runtime pipeline tests:" << (tableRuntimePipelineTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << tableRuntimePipelineTestResult << ")";
+
+    const int indexRuntimeRepairTestResult = service_tests::runIndexRuntimeRepairTests();
+    reportTestGroup(QStringLiteral("Index runtime repair tests"), indexRuntimeRepairTestResult);
+    qDebug() << "Index runtime repair tests:" << (indexRuntimeRepairTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << indexRuntimeRepairTestResult << ")";
     const int clientSessionTestResult = service_tests::runClientSessionTests();
     reportTestGroup(QStringLiteral("Client session tests"), clientSessionTestResult);
     qDebug() << "Client session tests:" << (clientSessionTestResult == 0 ? "PASS" : "FAIL")
@@ -77,6 +106,12 @@ int main(int argc, char *argv[])
                                   + (queryExecutorTestResult == 0 ? 0 : 1)
                                   + (tableTestResult == 0 ? 0 : 1)
                                   + (tupleTestResult == 0 ? 0 : 1)
+                                  + (lockManagerTestResult == 0 ? 0 : 1)
+                                  + (threadedServiceTestResult == 0 ? 0 : 1)
+                                  + (catalogCacheTestResult == 0 ? 0 : 1)
+                                  + (serviceCommonCacheTestResult == 0 ? 0 : 1)
+                                  + (tableRuntimePipelineTestResult == 0 ? 0 : 1)
+                                  + (indexRuntimeRepairTestResult == 0 ? 0 : 1);
                                   + (clientSessionTestResult == 0 ? 0 : 1)
                                   + (cliClientTestResult == 0 ? 0 : 1)
                                   + (authClientTestResult == 0 ? 0 : 1)

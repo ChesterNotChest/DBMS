@@ -2,6 +2,8 @@
 #define UTILS_SERVICE_COMMON_SERVICE_COMMON_H
 
 #include "../../service/service.h"
+#include "../thread_runtime/lock_manager.h"
+#include "../thread_runtime/catalog_cache.h"
 
 namespace service {
 
@@ -49,6 +51,7 @@ QString buildCreateTableText(const tabledef::TableSchema &schema);
 // 表/索引/row-id 的载入与维护。
 // 这些函数统一封装 service 层对持久化元数据和行定位信息的访问。
 QList<tabledef::IndexMeta> loadUserTableIndexes(const QString &tableName, QString *error);
+QList<tabledef::Constraint> loadUserTableConstraints(const QString &tableName, QString *error);
 tabledef::TableSchema loadUserTableSchema(const QString &tableName, QString *error);
 repo::TableData loadUserTableData(const QString &tableName, QString *error);
 QStringList loadUserTableRowIds(const QString &tableName,
@@ -87,6 +90,9 @@ bool ensureConstraintBoundIndex(const QString &tableName,
 bool removeConstraintBoundIndex(const QString &tableName,
                                const QString &constraintName,
                                QString *error);
+QStringList collectMutationRelatedTables(const QString &databaseName,
+                                         const QString &tableName,
+                                         QString *error);
 
 } // namespace service
 

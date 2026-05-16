@@ -1,4 +1,5 @@
 #include "service.h"
+#include "../constants/thread_perf_def.h"
 
 #include <QSet>
 
@@ -102,31 +103,34 @@ bool hasIncomingForeignKeyReferenceToColumn(const QString &databaseName,
         error->clear();
     }
 
-    repo::TabRepo tabRepo(databaseName, currentDataRoot);
-    QString tabError;
-    const QList<repo::TableEntry> tableEntries = tabRepo.listTables(&tabError);
-    if (!tabError.isEmpty()) {
+    QString catalogError;
+    const thread_runtime::DatabaseCatalogSnapshot databaseCatalog =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &catalogError);
+    if (!catalogError.isEmpty()) {
         if (error != nullptr) {
-            *error = tabError;
+            *error = catalogError;
         }
         return true;
     }
 
-    for (const repo::TableEntry &tableEntry : tableEntries) {
-        if (tableEntry.name == targetTableName) {
+    for (const QString &tableName : databaseCatalog.tableNames) {
+        if (tableName == targetTableName) {
             continue;
         }
 
-        repo::ConstraintRepo constraintRepo(databaseName, tableEntry.name, currentDataRoot);
-        const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&tabError);
-        if (!tabError.isEmpty()) {
+        const thread_runtime::TableCatalogSnapshot tableCatalog =
+            thread_runtime::CatalogCache::instance().getTableCatalog(currentDataRoot,
+                                                                     databaseName,
+                                                                     tableName,
+                                                                     &catalogError);
+        if (!catalogError.isEmpty()) {
             if (error != nullptr) {
-                *error = tabError;
+                *error = catalogError;
             }
             return true;
         }
 
-        for (const tabledef::Constraint &constraint : constraints) {
+        for (const tabledef::Constraint &constraint : tableCatalog.schema.constraints) {
             if (!tabledef::isForeignKeyConstraint(constraint)
                 || constraint.referencedTable != targetTableName) {
                 continue;
@@ -135,7 +139,7 @@ bool hasIncomingForeignKeyReferenceToColumn(const QString &databaseName,
             if (constraint.referencedColumns.contains(targetColumnName)) {
                 if (error != nullptr) {
                     *error = QStringLiteral("column '%1' is referenced by foreign key '%2' from table '%3'")
-                                 .arg(targetColumnName, constraint.name, tableEntry.name);
+                                 .arg(targetColumnName, constraint.name, tableName);
                 }
                 return true;
             }
@@ -157,6 +161,39 @@ bool rebuildIndexesForTable(const QString &tableName,
     return service::rebuildTableIndexes(tableName, schema, tableData, rowIds, error);
 }
 
+std::vector<thread_runtime::ScopedRuntimeLock> acquireTableDdlLocks(const QString &databaseName,
+                                                                    const QString &tableName,
+                                                                    QString *error)
+{
+    return thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
+        {thread_runtime::databaseLockKey(currentDataRoot, databaseName),
+         thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName)},
+        thread_runtime::RuntimeLockMode::Exclusive,
+        threadperf::kDatabaseLockAcquireTimeoutMs,
+        error);
+}
+
+std::vector<thread_runtime::ScopedRuntimeLock> acquireTableReadLocks(const QString &databaseName,
+                                                                     const QString &tableName,
+                                                                     QString *error)
+{
+    return thread_runtime::RuntimeLockManager::instance().acquireOrderedLocks(
+        {thread_runtime::tableLockKey(currentDataRoot, databaseName, tableName)},
+        thread_runtime::RuntimeLockMode::Shared,
+        threadperf::kTableLockAcquireTimeoutMs,
+        error);
+}
+
+void invalidateTableCatalogs(const QString &databaseName,
+                             const QString &tableName,
+                             bool invalidateDatabase)
+{
+    thread_runtime::CatalogCache::instance().invalidateTableCatalog(currentDataRoot, databaseName, tableName);
+    if (invalidateDatabase) {
+        thread_runtime::CatalogCache::instance().invalidateDatabaseCatalog(currentDataRoot, databaseName);
+    }
+}
+
 } // namespace
 
 namespace service::table_service {
@@ -175,10 +212,17 @@ TaskResult createTable(const QString &tableName,
         return result;
     }
 
+    QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     tabledef::TableSchema normalizedSchema = schema;
     normalizedSchema.tableName = tableName;
 
-    QString error;
     if (!tabledef::validateConstraintDefinitions(normalizedSchema, QString(), &error)) {
         result.errorMessage = error;
         return result;
@@ -272,6 +316,7 @@ TaskResult createTable(const QString &tableName,
         }
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, true);
     result.success = true;
     return result;
 }
@@ -289,8 +334,15 @@ TaskResult dropTable(const QString &tableName)
         return result;
     }
 
-    repo::TabRepo tabRepo(normalizedDatabaseName, currentDataRoot);
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    repo::TabRepo tabRepo(normalizedDatabaseName, currentDataRoot);
     if (!tabRepo.hasTable(tableName, &error)) {
         result.errorMessage = error.isEmpty()
                                  ? QStringLiteral("table '%1' does not exist").arg(tableName)
@@ -325,6 +377,7 @@ TaskResult dropTable(const QString &tableName)
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, true);
     result.success = true;
     return result;
 }
@@ -340,6 +393,13 @@ TaskResult addColumn(const QString &tableName,
     }
 
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (!validateColumnDefinition(definition, &error)) {
         result.errorMessage = error;
         return result;
@@ -449,6 +509,7 @@ TaskResult addColumn(const QString &tableName,
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -463,15 +524,19 @@ TaskResult deleteColumn(const QString &tableName,
         return result;
     }
 
+    QString lockError;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &lockError);
+    if (runtimeLocks.empty() && !lockError.isEmpty()) {
+        result.errorMessage = lockError;
+        return result;
+    }
+
     tabledef::TableSchema schema = loadUserTableSchema(tableName, &result.errorMessage);
     if (!result.errorMessage.isEmpty()) {
         return result;
     }
-    repo::ConstraintRepo constraintRepo(normalizedDatabaseName, tableName, currentDataRoot);
-    const QList<tabledef::Constraint> constraints = constraintRepo.listConstraints(&result.errorMessage);
-    if (!result.errorMessage.isEmpty()) {
-        return result;
-    }
+    const QList<tabledef::Constraint> constraints = schema.constraints;
 
     const int columnIndex = tabledef::findColumnIndex(schema, columnName);
     if (columnIndex < 0) {
@@ -566,6 +631,7 @@ TaskResult deleteColumn(const QString &tableName,
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -582,6 +648,13 @@ TaskResult modifyColumn(const QString &tableName,
     }
 
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (!validateColumnDefinition(definition, &error)) {
         result.errorMessage = error;
         return result;
@@ -864,6 +937,7 @@ TaskResult modifyColumn(const QString &tableName,
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -874,6 +948,13 @@ TaskResult addConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -924,6 +1005,7 @@ TaskResult addConstraint(const QString &tableName,
         result.errorMessage = error;
         return result;
     }
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -935,6 +1017,13 @@ TaskResult modifyConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -1014,6 +1103,7 @@ TaskResult modifyConstraint(const QString &tableName,
             return result;
         }
     }
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -1024,6 +1114,13 @@ TaskResult deleteConstraint(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -1052,6 +1149,7 @@ TaskResult deleteConstraint(const QString &tableName,
         result.errorMessage = writeResult.error;
         return result;
     }
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -1064,6 +1162,13 @@ TaskResult createIndex(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -1084,15 +1189,10 @@ TaskResult createIndex(const QString &tableName,
 
     bool rowIdsInitialized = false;
     const QStringList rowIds = loadUserTableRowIds(tableName, table, &rowIdsInitialized, &error);
+    Q_UNUSED(rowIdsInitialized);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
-    }
-    if (rowIdsInitialized) {
-        if (!rebuildIndexesForTable(tableName, schema, table, &error)) {
-            result.errorMessage = error;
-            return result;
-        }
     }
 
     if (isUnique) {
@@ -1147,6 +1247,7 @@ TaskResult createIndex(const QString &tableName,
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
@@ -1157,6 +1258,13 @@ TaskResult dropIndex(const QString &tableName,
     TaskResult result;
     const QString normalizedDatabaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks =
+        acquireTableDdlLocks(normalizedDatabaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -1191,26 +1299,55 @@ TaskResult dropIndex(const QString &tableName,
         return result;
     }
 
+    invalidateTableCatalogs(normalizedDatabaseName, tableName, false);
     result.success = true;
     return result;
 }
 
 SelectRowsResult showTables()
 {
-    TableDmlService dmlService;
+    SelectRowsResult result;
     const QString databaseName = normalizeDatabaseName(QString());
-    return dmlService.selectRows(QString(),
-                                 QString(),
-                                 TargetTableKind::DatabaseTab,
-                                 tabledef::buildDatabaseTableCatalogSchema(databaseName),
-                                 {QStringLiteral("*")},
-                                 {});
+    QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            thread_runtime::databaseLockKey(currentDataRoot, databaseName),
+            thread_runtime::RuntimeLockMode::Shared,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    const thread_runtime::DatabaseCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getDatabaseCatalog(currentDataRoot, databaseName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    result.resultTable.columns = {QStringLiteral("table_name")};
+    for (const QString &tableName : snapshot.tableNames) {
+        result.resultTable.rows.append(repo::TableRow{tableName});
+    }
+    result.columnTypes = {tabledef::ColumnType::Varchar};
+    result.affectedRowCount = result.resultTable.rows.size();
+    result.success = true;
+    return result;
 }
 
 TextResult describeTable(const QString &tableName)
 {
     TextResult result;
+    const QString databaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -1233,7 +1370,14 @@ TextResult describeTable(const QString &tableName)
 TextResult showCreateTable(const QString &tableName)
 {
     TextResult result;
+    const QString databaseName = normalizeDatabaseName(QString());
     QString error;
+    std::vector<thread_runtime::ScopedRuntimeLock> runtimeLocks = acquireTableReadLocks(databaseName, tableName, &error);
+    if (runtimeLocks.empty() && !error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;

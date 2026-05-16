@@ -1,6 +1,12 @@
 #include "service.h"
+#include "../constants/thread_perf_def.h"
 
 namespace {
+
+thread_runtime::RuntimeLockKey rootDatabaseListLockKey()
+{
+    return thread_runtime::databaseLockKey(service::currentDataRoot, QString());
+}
 
 bool databaseExists(const QString &databaseName, QString *error)
 {
@@ -35,6 +41,17 @@ TaskResult createDatabase(const QString &databaseName)
     }
 
     QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            rootDatabaseListLockKey(),
+            thread_runtime::RuntimeLockMode::Exclusive,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (databaseExists(normalizedDatabaseName, &error)) {
         result.errorMessage = QStringLiteral("database '%1' already exists").arg(normalizedDatabaseName);
         return result;
@@ -79,6 +96,7 @@ TaskResult createDatabase(const QString &databaseName)
         return result;
     }
 
+    thread_runtime::CatalogCache::instance().invalidateAllForDataRoot(currentDataRoot);
     result.success = true;
     return result;
 }
@@ -93,6 +111,17 @@ TaskResult dropDatabase(const QString &databaseName)
     }
 
     QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            rootDatabaseListLockKey(),
+            thread_runtime::RuntimeLockMode::Exclusive,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (!databaseExists(normalizedDatabaseName, &error)) {
         if (!error.isEmpty()) {
             result.errorMessage = error;
@@ -127,6 +156,7 @@ TaskResult dropDatabase(const QString &databaseName)
         currentDatabase.clear();
     }
 
+    thread_runtime::CatalogCache::instance().invalidateAllForDataRoot(currentDataRoot);
     result.success = true;
     result.affectedRowCount = deleteResult.affectedRowCount;
     return result;
@@ -142,6 +172,17 @@ TaskResult useDatabase(const QString &databaseName)
     }
 
     QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            rootDatabaseListLockKey(),
+            thread_runtime::RuntimeLockMode::Shared,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
     if (!databaseExists(normalizedDatabaseName, &error)) {
         if (!error.isEmpty()) {
             result.errorMessage = error;
@@ -158,13 +199,34 @@ TaskResult useDatabase(const QString &databaseName)
 
 SelectRowsResult showDatabases()
 {
-    TableDmlService dmlService;
-    return dmlService.selectRows(QString(),
-                                 QString(),
-                                 TargetTableKind::RootDbf,
-                                 tabledef::buildDatabaseRootSchema(),
-                                 {QStringLiteral("*")},
-                                 {});
+    SelectRowsResult result;
+    QString error;
+    thread_runtime::ScopedRuntimeLock runtimeLock =
+        thread_runtime::RuntimeLockManager::instance().acquireLock(
+            rootDatabaseListLockKey(),
+            thread_runtime::RuntimeLockMode::Shared,
+            threadperf::kDatabaseLockAcquireTimeoutMs,
+            &error);
+    if (!runtimeLock.isValid()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    const thread_runtime::RootCatalogSnapshot snapshot =
+        thread_runtime::CatalogCache::instance().getRootCatalog(currentDataRoot, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    result.resultTable.columns = {QStringLiteral("database_name")};
+    for (const QString &databaseName : snapshot.databaseNames) {
+        result.resultTable.rows.append(repo::TableRow{databaseName});
+    }
+    result.columnTypes = {tabledef::ColumnType::Varchar};
+    result.affectedRowCount = result.resultTable.rows.size();
+    result.success = true;
+    return result;
 }
 
 } // namespace service::database_service
