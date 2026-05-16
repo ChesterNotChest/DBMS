@@ -352,8 +352,6 @@ bool tryFindIndexedRowIndexes(const QString &databaseName,
         keyValues.append(conditionValues.value(columnName));
     }
 
-    Q_UNUSED(databaseName);
-    Q_UNUSED(tableName);
     if (rowIds.size() != table.rows.size()) {
         return false;
     }
@@ -2703,20 +2701,42 @@ bool applyOrderBy(repo::TableData *table,
         return false;
     }
 
+    auto compareNullableNumericStrings = [](const QString &left,
+                                            const QString &right,
+                                            auto convert) {
+        const bool leftEmpty = left.isEmpty();
+        const bool rightEmpty = right.isEmpty();
+        if (leftEmpty || rightEmpty) {
+            return leftEmpty == rightEmpty ? 0 : (leftEmpty ? -1 : 1);
+        }
+
+        bool leftOk = false;
+        bool rightOk = false;
+        const auto leftValue = convert(left, &leftOk);
+        const auto rightValue = convert(right, &rightOk);
+        if (leftOk && rightOk) {
+            return leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
+        }
+        if (leftOk != rightOk) {
+            return leftOk ? -1 : 1;
+        }
+        return QString::compare(left, right);
+    };
+
     const tabledef::ColumnType columnType = columnTypeForName(schema, orderBy.columnName);
-    std::stable_sort(table->rows.begin(), table->rows.end(), [columnIndex, columnType, &orderBy](const repo::TableRow &lhs,
-                                                                                                const repo::TableRow &rhs) {
+    std::stable_sort(table->rows.begin(), table->rows.end(), [columnIndex, columnType, &orderBy, &compareNullableNumericStrings](const repo::TableRow &lhs,
+                                                                                                                                 const repo::TableRow &rhs) {
         const QString left = lhs.value(columnIndex);
         const QString right = rhs.value(columnIndex);
         int comparison = 0;
         if (columnType == tabledef::ColumnType::Int) {
-            const qlonglong leftValue = left.toLongLong();
-            const qlonglong rightValue = right.toLongLong();
-            comparison = leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
+            comparison = compareNullableNumericStrings(left, right, [](const QString &value, bool *ok) {
+                return value.toLongLong(ok);
+            });
         } else if (columnType == tabledef::ColumnType::Float) {
-            const double leftValue = left.toDouble();
-            const double rightValue = right.toDouble();
-            comparison = leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
+            comparison = compareNullableNumericStrings(left, right, [](const QString &value, bool *ok) {
+                return value.toDouble(ok);
+            });
         } else {
             comparison = QString::compare(left, right);
         }

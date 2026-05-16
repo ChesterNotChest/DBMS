@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMap>
+#include <QQueue>
 #include <QReadLocker>
 #include <QReadWriteLock>
 #include <QSet>
@@ -23,6 +24,8 @@ struct IndexEntry
 };
 
 QVector<IndexEntry> loadEntriesFromDocument(const QJsonObject &document);
+
+constexpr int kMaxCachedIndexFiles = 64;
 
 struct BPlusNode
 {
@@ -58,12 +61,37 @@ QReadWriteLock &indexCacheLock()
     return lock;
 }
 
+QQueue<QString> &indexCacheLru()
+{
+    static QQueue<QString> lru;
+    return lru;
+}
+
+void touchIndexCachePathLocked(const QString &path)
+{
+    QQueue<QString> &lru = indexCacheLru();
+    lru.removeAll(path);
+    lru.enqueue(path);
+}
+
+void trimIndexCachesLocked()
+{
+    QQueue<QString> &lru = indexCacheLru();
+    while (lru.size() > kMaxCachedIndexFiles) {
+        const QString evictedPath = lru.dequeue();
+        indexDocumentCache().remove(evictedPath);
+        indexLookupCache().remove(evictedPath);
+        indexEntriesCache().remove(evictedPath);
+    }
+}
+
 void removeIndexCaches(const QString &path)
 {
     QWriteLocker locker(&indexCacheLock());
     indexDocumentCache().remove(path);
     indexLookupCache().remove(path);
     indexEntriesCache().remove(path);
+    indexCacheLru().removeAll(path);
 }
 
 QString keySignature(const QStringList &values)
@@ -403,6 +431,8 @@ bool writeIndexDocument(const QString &path, const QJsonObject &document, QStrin
         indexDocumentCache().insert(path, document);
         indexLookupCache().remove(path);
         indexEntriesCache().insert(path, entries);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
     }
     return true;
 }
@@ -458,6 +488,8 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
     {
         QWriteLocker locker(&indexCacheLock());
         indexDocumentCache().insert(path, *document);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
     }
     return true;
 }
@@ -788,6 +820,8 @@ QVector<IndexEntry> orderedEntriesForPath(const QString &path, const QJsonObject
     {
         QWriteLocker locker(&indexCacheLock());
         indexEntriesCache().insert(path, entries);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
     }
     return entries;
 }
@@ -1122,6 +1156,8 @@ QStringList SortIndexRepo::search(const QStringList &keyValues, QString *error) 
     {
         QWriteLocker locker(&indexCacheLock());
         indexLookupCache().insert(path, std::move(lookup));
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
     }
     return matches;
 }
