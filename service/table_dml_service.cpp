@@ -2708,15 +2708,19 @@ bool applyOrderBy(repo::TableData *table,
                                                                                                 const repo::TableRow &rhs) {
         const QString left = lhs.value(columnIndex);
         const QString right = rhs.value(columnIndex);
-        bool less = false;
+        int comparison = 0;
         if (columnType == tabledef::ColumnType::Int) {
-            less = left.toLongLong() < right.toLongLong();
+            const qlonglong leftValue = left.toLongLong();
+            const qlonglong rightValue = right.toLongLong();
+            comparison = leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
         } else if (columnType == tabledef::ColumnType::Float) {
-            less = left.toDouble() < right.toDouble();
+            const double leftValue = left.toDouble();
+            const double rightValue = right.toDouble();
+            comparison = leftValue < rightValue ? -1 : (leftValue > rightValue ? 1 : 0);
         } else {
-            less = left < right;
+            comparison = QString::compare(left, right);
         }
-        return orderBy.descending ? !less && left != right : less;
+        return orderBy.descending ? comparison > 0 : comparison < 0;
     });
     return true;
 }

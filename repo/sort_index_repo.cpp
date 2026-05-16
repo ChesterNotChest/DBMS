@@ -8,7 +8,10 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMap>
+#include <QReadLocker>
+#include <QReadWriteLock>
 #include <QSet>
+#include <QWriteLocker>
 #include <QVector>
 
 namespace {
@@ -47,6 +50,20 @@ QMap<QString, QVector<IndexEntry>> &indexEntriesCache()
 {
     static QMap<QString, QVector<IndexEntry>> cache;
     return cache;
+}
+
+QReadWriteLock &indexCacheLock()
+{
+    static QReadWriteLock lock;
+    return lock;
+}
+
+void removeIndexCaches(const QString &path)
+{
+    QWriteLocker locker(&indexCacheLock());
+    indexDocumentCache().remove(path);
+    indexLookupCache().remove(path);
+    indexEntriesCache().remove(path);
 }
 
 QString keySignature(const QStringList &values)
@@ -380,9 +397,13 @@ bool writeIndexDocument(const QString &path, const QJsonObject &document, QStrin
         return false;
     }
 
-    indexDocumentCache().insert(path, document);
-    indexLookupCache().remove(path);
-    indexEntriesCache().insert(path, loadEntriesFromDocument(document));
+    const QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexDocumentCache().insert(path, document);
+        indexLookupCache().remove(path);
+        indexEntriesCache().insert(path, entries);
+    }
     return true;
 }
 
@@ -400,19 +421,20 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
 
     QFileInfo fileInfo(path);
     if (!fileInfo.exists()) {
-        indexDocumentCache().remove(path);
-        indexLookupCache().remove(path);
-        indexEntriesCache().remove(path);
+        removeIndexCaches(path);
         if (error != nullptr) {
             *error = QStringLiteral("index file '%1' does not exist").arg(path);
         }
         return false;
     }
 
-    const auto cached = indexDocumentCache().constFind(path);
-    if (cached != indexDocumentCache().constEnd()) {
-        *document = cached.value();
-        return true;
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto cached = indexDocumentCache().constFind(path);
+        if (cached != indexDocumentCache().constEnd()) {
+            *document = cached.value();
+            return true;
+        }
     }
 
     QFile file(path);
@@ -433,7 +455,10 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
     }
 
     *document = parsed.object();
-    indexDocumentCache().insert(path, *document);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexDocumentCache().insert(path, *document);
+    }
     return true;
 }
 
@@ -752,12 +777,18 @@ QMap<QString, QStringList> buildLookupMap(const QJsonObject &document)
 
 QVector<IndexEntry> orderedEntriesForPath(const QString &path, const QJsonObject &document)
 {
-    const auto cached = indexEntriesCache().constFind(path);
-    if (cached != indexEntriesCache().constEnd()) {
-        return cached.value();
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto cached = indexEntriesCache().constFind(path);
+        if (cached != indexEntriesCache().constEnd()) {
+            return cached.value();
+        }
     }
     QVector<IndexEntry> entries = loadEntriesFromDocument(document);
-    indexEntriesCache().insert(path, entries);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexEntriesCache().insert(path, entries);
+    }
     return entries;
 }
 
@@ -867,9 +898,7 @@ RepositoryResult SortIndexRepo::createIndex(const tabledef::IndexMeta &index,
 
 RepositoryResult SortIndexRepo::dropIndex() const
 {
-    indexDocumentCache().remove(getIndexFilePath());
-    indexLookupCache().remove(getIndexFilePath());
-    indexEntriesCache().remove(getIndexFilePath());
+    removeIndexCaches(getIndexFilePath());
     return m_store.removeFile(getIndexFilePath());
 }
 
@@ -1076,9 +1105,12 @@ QStringList SortIndexRepo::search(const QStringList &keyValues, QString *error) 
     }
     const QString path = getIndexFilePath();
     const QString key = keySignature(keyValues);
-    const auto lookupCacheIt = indexLookupCache().constFind(path);
-    if (lookupCacheIt != indexLookupCache().constEnd()) {
-        return lookupCacheIt.value().value(key);
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto lookupCacheIt = indexLookupCache().constFind(path);
+        if (lookupCacheIt != indexLookupCache().constEnd()) {
+            return lookupCacheIt.value().value(key);
+        }
     }
 
     QJsonObject document;
@@ -1087,7 +1119,10 @@ QStringList SortIndexRepo::search(const QStringList &keyValues, QString *error) 
     }
     QMap<QString, QStringList> lookup = buildLookupMap(document);
     const QStringList matches = lookup.value(key);
-    indexLookupCache().insert(path, std::move(lookup));
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexLookupCache().insert(path, std::move(lookup));
+    }
     return matches;
 }
 

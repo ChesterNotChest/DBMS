@@ -308,20 +308,32 @@ static bool parseOrderByClause(const QVector<SqlToken> &tokens,
 
     bool descending = false;
     const int directionIndex = orderIdx + 3;
+    int nextIndex = directionIndex;
     if (directionIndex < tokens.size()
         && tokens[directionIndex].type != TokenType::LIMIT
         && tokens[directionIndex].type != TokenType::END_OF_INPUT
         && tokens[directionIndex].type != TokenType::SEMICOLON) {
         if (tokens[directionIndex].type == TokenType::DESC) {
             descending = true;
+            nextIndex = directionIndex + 1;
         } else if (tokens[directionIndex].type == TokenType::ASC) {
             descending = false;
+            nextIndex = directionIndex + 1;
         } else {
             if (error != nullptr) {
                 *error = QStringLiteral("ORDER BY: expected ASC or DESC");
             }
             return false;
         }
+    }
+    if (nextIndex < tokens.size()
+        && tokens[nextIndex].type != TokenType::LIMIT
+        && tokens[nextIndex].type != TokenType::END_OF_INPUT
+        && tokens[nextIndex].type != TokenType::SEMICOLON) {
+        if (error != nullptr) {
+            *error = QStringLiteral("ORDER BY: unsupported trailing token '%1'").arg(tokens[nextIndex].lexeme);
+        }
+        return false;
     }
 
     if (payload != nullptr) {
@@ -400,7 +412,9 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
 
         int limit = -1;
         QString limitError;
-        const int limitParseStart = limitIdx >= 0 ? limitIdx : tokens.size() - 1;
+        const int limitParseStart = limitIdx >= 0
+                                        ? limitIdx
+                                        : ((orderIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableIndex + 1);
         if (!parseSelectLimit(tokens, limitParseStart, &limit, &limitError)) {
             return {false, limitError, cmdType, {}};
         }

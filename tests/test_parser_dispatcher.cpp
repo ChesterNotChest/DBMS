@@ -239,6 +239,19 @@ private slots:
         QVERIFY2(ordered.success, qPrintable(ordered.errorMessage));
         QCOMPARE(ordered.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("id"));
         QCOMPARE(ordered.payload.value(QStringLiteral("orderByDescending")).toBool(), true);
+
+        const sqlparser::ParseResult orderedWithLimit = sqlparser::parseSql(
+            QStringLiteral("SELECT * FROM student ORDER BY id DESC LIMIT 2"));
+        QVERIFY2(orderedWithLimit.success, qPrintable(orderedWithLimit.errorMessage));
+        QCOMPARE(orderedWithLimit.payload.value(QStringLiteral("limit")).toInt(), 2);
+
+        const sqlparser::ParseResult trailingAfterOrder = sqlparser::parseSql(
+            QStringLiteral("SELECT * FROM student ORDER BY id DESC garbage"));
+        QVERIFY(!trailingAfterOrder.success);
+
+        const sqlparser::ParseResult trailingAfterLimit = sqlparser::parseSql(
+            QStringLiteral("SELECT * FROM student LIMIT 2 garbage"));
+        QVERIFY(!trailingAfterLimit.success);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
