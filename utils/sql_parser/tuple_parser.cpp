@@ -129,7 +129,7 @@ static bool isSimpleWhereNode(const logic::LogicNode &node, QVariantList *condit
 static bool extractWherePayload(const QString &sql,
                                 const QVector<SqlToken> &tokens,
                                 int whereIdx,
-                                int limitIdx,
+                                int clauseEndIdx,
                                 QVariantMap *payload,
                                 QString *error)
 {
@@ -147,7 +147,7 @@ static bool extractWherePayload(const QString &sql,
     }
 
     const int whereStart = whereIdx + 1;
-    const int whereEnd = limitIdx >= 0 ? limitIdx - 1 : lastMeaningfulTokenIndex(tokens);
+    const int whereEnd = clauseEndIdx >= 0 ? clauseEndIdx - 1 : lastMeaningfulTokenIndex(tokens);
     const QString whereText = sliceClauseText(sql, tokens, whereStart, whereEnd);
     if (whereText.trimmed().isEmpty()) {
         if (error != nullptr) {
@@ -282,6 +282,67 @@ static bool parseSelectLimit(const QVector<SqlToken>& tokens,
     return true;
 }
 
+static bool parseOrderByClause(const QVector<SqlToken> &tokens,
+                               int orderIdx,
+                               QVariantMap *payload,
+                               QString *error)
+{
+    if (payload != nullptr) {
+        payload->remove(QStringLiteral("orderByColumn"));
+        payload->remove(QStringLiteral("orderByDescending"));
+    }
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (orderIdx < 0) {
+        return true;
+    }
+    if (orderIdx + 2 >= tokens.size()
+        || tokens[orderIdx + 1].type != TokenType::BY
+        || tokens[orderIdx + 2].type != TokenType::IDENTIFIER) {
+        if (error != nullptr) {
+            *error = QStringLiteral("ORDER BY: expected column name");
+        }
+        return false;
+    }
+
+    bool descending = false;
+    const int directionIndex = orderIdx + 3;
+    int nextIndex = directionIndex;
+    if (directionIndex < tokens.size()
+        && tokens[directionIndex].type != TokenType::LIMIT
+        && tokens[directionIndex].type != TokenType::END_OF_INPUT
+        && tokens[directionIndex].type != TokenType::SEMICOLON) {
+        if (tokens[directionIndex].type == TokenType::DESC) {
+            descending = true;
+            nextIndex = directionIndex + 1;
+        } else if (tokens[directionIndex].type == TokenType::ASC) {
+            descending = false;
+            nextIndex = directionIndex + 1;
+        } else {
+            if (error != nullptr) {
+                *error = QStringLiteral("ORDER BY: expected ASC or DESC");
+            }
+            return false;
+        }
+    }
+    if (nextIndex < tokens.size()
+        && tokens[nextIndex].type != TokenType::LIMIT
+        && tokens[nextIndex].type != TokenType::END_OF_INPUT
+        && tokens[nextIndex].type != TokenType::SEMICOLON) {
+        if (error != nullptr) {
+            *error = QStringLiteral("ORDER BY: unsupported trailing token '%1'").arg(tokens[nextIndex].lexeme);
+        }
+        return false;
+    }
+
+    if (payload != nullptr) {
+        payload->insert(QStringLiteral("orderByColumn"), tokens[orderIdx + 2].lexeme);
+        payload->insert(QStringLiteral("orderByDescending"), descending);
+    }
+    return true;
+}
+
 // ============================================================
 //  parseTupleSql
 // ============================================================
@@ -316,10 +377,13 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
             return {false, "SELECT: expected FROM table", cmdType, {}};
 
         int whereIdx = -1;
+        int orderIdx = -1;
         int limitIdx = -1;
         for (int i = tableIndex + 1; i < tokens.size(); ++i) {
             if (tokens[i].type == TokenType::WHERE && whereIdx < 0) {
                 whereIdx = i;
+            } else if (tokens[i].type == TokenType::ORDER && orderIdx < 0) {
+                orderIdx = i;
             } else if (tokens[i].type == TokenType::LIMIT && limitIdx < 0) {
                 limitIdx = i;
             }
@@ -328,15 +392,29 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         if (whereIdx >= 0 && limitIdx >= 0 && limitIdx < whereIdx) {
             return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
         }
+        if (whereIdx >= 0 && orderIdx >= 0 && orderIdx < whereIdx) {
+            return {false, "SELECT: unsupported clause 'ORDER'", cmdType, {}};
+        }
+        if (orderIdx >= 0 && limitIdx >= 0 && limitIdx < orderIdx) {
+            return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
+        }
 
         QString whereError;
-        if (!extractWherePayload(sql, tokens, whereIdx, limitIdx, &payload, &whereError)) {
+        const int whereEndClause = orderIdx >= 0 ? orderIdx : limitIdx;
+        if (!extractWherePayload(sql, tokens, whereIdx, whereEndClause, &payload, &whereError)) {
             return {false, whereError, cmdType, {}};
+        }
+
+        QString orderError;
+        if (!parseOrderByClause(tokens, orderIdx, &payload, &orderError)) {
+            return {false, orderError, cmdType, {}};
         }
 
         int limit = -1;
         QString limitError;
-        const int limitParseStart = limitIdx >= 0 ? limitIdx : (whereIdx >= 0 ? tokens.size() - 1 : tableIndex + 1);
+        const int limitParseStart = limitIdx >= 0
+                                        ? limitIdx
+                                        : ((orderIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableIndex + 1);
         if (!parseSelectLimit(tokens, limitParseStart, &limit, &limitError)) {
             return {false, limitError, cmdType, {}};
         }

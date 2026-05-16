@@ -512,6 +512,9 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     QString table = p.payload["tableName"].toString();
     QStringList projection = p.payload["projection"].toStringList();
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
+    OrderByClause orderBy;
+    orderBy.columnName = p.payload.value(QStringLiteral("orderByColumn")).toString().trimmed();
+    orderBy.descending = p.payload.value(QStringLiteral("orderByDescending"), false).toBool();
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
@@ -519,7 +522,7 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
         return {false, conditionError};
     }
 
-    auto r = tuple_service::selectRows(table, projection, conditions, limit);
+    auto r = tuple_service::selectRows(table, projection, conditions, limit, orderBy);
     if (r.success)
         return {true, {}, formatSelectResult(r), r.affectedRowCount, r};
     return {false, r.errorMessage};

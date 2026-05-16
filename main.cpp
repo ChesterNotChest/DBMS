@@ -10,6 +10,10 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     const QStringList arguments = a.arguments();
     const bool runTestsOnly = arguments.contains(QStringLiteral("--run-tests"));
+    if (arguments.contains(QStringLiteral("--skip-stress-tests"))
+        || arguments.contains(QStringLiteral("--no-stress-tests"))) {
+        qputenv("DBMS_SKIP_STRESS_TESTS", "1");
+    }
     QTextStream testOutput(stdout);
 
     auto reportTestGroup = [&](const QString &name, int result) {
@@ -100,6 +104,16 @@ int main(int argc, char *argv[])
     qDebug() << "GUI client runtime tests:" << (guiClientRuntimeTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << guiClientRuntimeTestResult << ")";
 
+    const int integrationTestResult = service_tests::runIntegrationTests();
+    reportTestGroup(QStringLiteral("Integration tests"), integrationTestResult);
+    qDebug() << "Integration tests:" << (integrationTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << integrationTestResult << ")";
+
+    const int stressTestResult = service_tests::runStressTests();
+    reportTestGroup(QStringLiteral("Stress tests"), stressTestResult);
+    qDebug() << "Stress tests:" << (stressTestResult == 0 ? "PASS" : "FAIL")
+             << "(code=" << stressTestResult << ")";
+
     const int totalFailureCount = (databaseTestResult == 0 ? 0 : 1)
                                   + (parserDispatcherTestResult == 0 ? 0 : 1)
                                   + (logicTestResult == 0 ? 0 : 1)
@@ -111,11 +125,13 @@ int main(int argc, char *argv[])
                                   + (catalogCacheTestResult == 0 ? 0 : 1)
                                   + (serviceCommonCacheTestResult == 0 ? 0 : 1)
                                   + (tableRuntimePipelineTestResult == 0 ? 0 : 1)
-                                  + (indexRuntimeRepairTestResult == 0 ? 0 : 1);
+                                  + (indexRuntimeRepairTestResult == 0 ? 0 : 1)
                                   + (clientSessionTestResult == 0 ? 0 : 1)
                                   + (cliClientTestResult == 0 ? 0 : 1)
                                   + (authClientTestResult == 0 ? 0 : 1)
-                                  + (guiClientRuntimeTestResult == 0 ? 0 : 1);
+                                  + (guiClientRuntimeTestResult == 0 ? 0 : 1)
+                                  + (integrationTestResult == 0 ? 0 : 1)
+                                  + (stressTestResult == 0 ? 0 : 1);
     qDebug() << "=== Service Tests End ===";
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";
