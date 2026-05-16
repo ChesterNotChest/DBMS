@@ -15,7 +15,7 @@
 - `test_parseCreateTableUsesQtBasePayload`
   验证 `CREATE TABLE` 输出的 `columns`、`constraints` 都是 Qt 基础类型，并保留列级 / 表级 FK 动作。
 - `test_parseSelectLimitAndSimpleWhere`
-  验证 `SELECT ... WHERE ... AND ... LIMIT ...` 能正确输出 `projection / tableName / limit / conditions`。
+  验证 `SELECT ... WHERE ... AND ... LIMIT ...` 能正确输出 `projection / tableName / limit / conditions`，并覆盖单表别名、限定列名、投影别名和 `ORDER BY` 投影别名 payload。
 - `test_parseUpdateAndDeleteSupportSimpleWhere`
   验证 `UPDATE`、`DELETE` 的简单 `WHERE` 会转成 `conditions`。
 - `test_parseInsertWithoutColumnListProducesSingleRowPayload`
@@ -28,7 +28,7 @@
 ### parser 失败路径
 
 - `test_parseSelectLimitAndSimpleWhere`
-  验证 `SELECT ... ORDER BY ...` 能输出排序列和升降序 payload。
+  验证 `SELECT ... ORDER BY ...` 能输出排序列和升降序 payload，并拒绝 `SELECT * AS alias`、多列排序和表名后多余 token。
 - `test_parseUpdateAndDeleteSupportSimpleWhere`
   验证 `>` 这类非等值谓词被拒绝。
 - `test_parseWhereRejectsUnsupportedForms`
@@ -50,6 +50,10 @@
   验证 `RENAME COLUMN` 会保留行数据，并同步更新索引元数据中的列名。
 - `test_dispatcherWhereAndLimitFlowToService`
   验证 `SELECT / UPDATE / DELETE` 的简单 `WHERE` 和 `LIMIT` 会真正下推到 `tuple_service`。
+- `test_dispatchSelectAliasAndQualifiedColumns`
+  验证 dispatcher 能解析单表别名、限定列名、投影别名和 `ORDER BY` 投影别名，并按输出别名返回结果列。
+- `test_dispatchCorrelatedSubqueryUsesOuterAlias`
+  验证相关子查询可以使用外层表别名引用，例如 `p.id`，同时保持本地别名作用域优先。
 - `test_dispatcherIndexSqlUsesService`
   验证 `CREATE INDEX / DROP INDEX` 会真正下推到 `table_service`。
 - `test_dispatcherUniqueAndMultiColumnIndexSqlUseService`
@@ -67,6 +71,8 @@
 当前 parser / dispatcher 测试已经覆盖：
 - `CREATE TABLE`
 - `SELECT ... WHERE ... AND ... LIMIT ...`
+- `SELECT` 单表别名、限定列名、投影别名和 `ORDER BY` 投影别名
+- `EXISTS` 相关子查询外层表别名引用
 - `UPDATE ... WHERE ...`
 - `DELETE ... WHERE ...`
 - `INSERT`

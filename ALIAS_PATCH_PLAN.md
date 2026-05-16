@@ -4,6 +4,30 @@
 
 本文只规划“名字解析增强”，不规划新的关系代数能力。换句话说，本计划让现有可执行查询可以用更自然的 SQL 名字写法表达，但不新增 JOIN、GROUP BY、聚合、表达式投影、多表 FROM 或多列 ORDER BY。
 
+## 当前实现状态
+
+状态：已完成，并通过全量回归。
+
+已落地能力：
+
+1. parser 输出单表 `tableAlias`、`projectionItems`、限定列名和投影别名 payload。
+2. dispatcher 将投影列、限定列名、`ORDER BY` 列名和投影别名归一化为真实列名后下推 service。
+3. 查询执行器为本地行上下文补充裸列名、表名限定列和表别名限定列。
+4. 相关子查询支持外层表别名引用，例如 `p.id`，并保留旧 `outer.id` 兼容路径。
+5. 本地作用域优先于外层作用域，外层 binding merge 不覆盖本地同名限定列。
+
+最近验证：
+
+```powershell
+& 'E:\Qt\Tools\CMake_64\bin\cmake.exe' --build build/codex-vs-debug --config Debug --parallel 1
+```
+
+```powershell
+$env:QT_QPA_PLATFORM='offscreen'
+$env:PATH='E:\Qt\6.9.2\msvc2022_64\bin;' + $env:PATH
+& 'E:\Qt-projects\DBMS\build\codex-vs-debug\Debug\DBMS.exe' --run-tests
+```
+
 ## 总体收口边界
 
 ### 支持

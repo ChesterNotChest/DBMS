@@ -269,6 +269,218 @@ bool simpleConditionsFromPayload(const QVariantList &conditionsPayload,
     return true;
 }
 
+struct SelectProjectionItem {
+    QString sourceName;
+    QString resolvedColumnName;
+    QString outputName;
+};
+
+struct SelectNameResolution {
+    QString tableName;
+    QString tableAlias;
+    QMap<QString, QString> visibleColumnToRealColumn;
+    QMap<QString, QString> outputAliasToRealColumn;
+};
+
+QString unqualifiedName(const QString &name)
+{
+    const int dotIndex = name.lastIndexOf(QLatin1Char('.'));
+    return dotIndex >= 0 && dotIndex + 1 < name.size() ? name.mid(dotIndex + 1) : name;
+}
+
+SelectNameResolution buildSelectNameResolution(const tabledef::TableSchema &schema,
+                                               const QString &tableAlias)
+{
+    SelectNameResolution resolution;
+    resolution.tableName = schema.tableName;
+    resolution.tableAlias = tableAlias.trimmed();
+    for (const tabledef::Column &column : schema.columns) {
+        resolution.visibleColumnToRealColumn.insert(column.name, column.name);
+        if (!schema.tableName.trimmed().isEmpty()) {
+            resolution.visibleColumnToRealColumn.insert(schema.tableName + QLatin1Char('.') + column.name, column.name);
+        }
+        if (!resolution.tableAlias.isEmpty()) {
+            resolution.visibleColumnToRealColumn.insert(resolution.tableAlias + QLatin1Char('.') + column.name, column.name);
+        }
+    }
+    return resolution;
+}
+
+bool resolveVisibleColumn(const SelectNameResolution &resolution,
+                          const QString &name,
+                          QString *resolvedColumn,
+                          QString *error)
+{
+    const QString trimmed = name.trimmed();
+    const auto found = resolution.visibleColumnToRealColumn.constFind(trimmed);
+    if (found != resolution.visibleColumnToRealColumn.constEnd()) {
+        if (resolvedColumn != nullptr) {
+            *resolvedColumn = found.value();
+        }
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("SELECT: column '%1' does not exist").arg(name);
+    }
+    return false;
+}
+
+QVariantList projectionItemsFromPayload(const QVariantMap &payload)
+{
+    QVariantList items = payload.value(QStringLiteral("projectionItems")).toList();
+    if (!items.isEmpty()) {
+        return items;
+    }
+    const QStringList projection = payload.value(QStringLiteral("projection")).toStringList();
+    for (const QString &columnName : projection) {
+        QVariantMap item;
+        item.insert(QStringLiteral("sourceColumn"), columnName);
+        item.insert(QStringLiteral("outputColumn"), unqualifiedName(columnName));
+        items.append(item);
+    }
+    return items;
+}
+
+bool resolveProjectionItems(const SelectNameResolution &resolution,
+                            const QVariantList &payloadItems,
+                            QList<SelectProjectionItem> *items,
+                            QString *error)
+{
+    if (items != nullptr) {
+        items->clear();
+    }
+    for (const QVariant &value : payloadItems) {
+        if (value.typeId() != QMetaType::QVariantMap) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT projection payload is incomplete");
+            }
+            return false;
+        }
+        const QVariantMap map = value.toMap();
+        const QString sourceName = map.value(QStringLiteral("sourceColumn")).toString().trimmed();
+        const QString outputName = map.value(QStringLiteral("outputColumn"), unqualifiedName(sourceName)).toString().trimmed();
+        QString resolvedColumn;
+        if (!resolveVisibleColumn(resolution, sourceName, &resolvedColumn, error)) {
+            return false;
+        }
+        if (items != nullptr) {
+            items->append(SelectProjectionItem{sourceName,
+                                               resolvedColumn,
+                                               outputName.isEmpty() ? unqualifiedName(sourceName) : outputName});
+        }
+    }
+    return true;
+}
+
+QStringList resolvedProjectionColumns(const QList<SelectProjectionItem> &items)
+{
+    QStringList columns;
+    for (const SelectProjectionItem &item : items) {
+        columns.append(item.resolvedColumnName);
+    }
+    return columns;
+}
+
+QStringList outputProjectionColumns(const QList<SelectProjectionItem> &items)
+{
+    QStringList columns;
+    for (const SelectProjectionItem &item : items) {
+        columns.append(item.outputName);
+    }
+    return columns;
+}
+
+bool resolveOrderByColumn(const SelectNameResolution &resolution,
+                          const QList<SelectProjectionItem> &projectionItems,
+                          const QString &rawOrderBy,
+                          QString *resolvedColumn,
+                          QString *error)
+{
+    const QString trimmed = rawOrderBy.trimmed();
+    if (trimmed.isEmpty()) {
+        if (resolvedColumn != nullptr) {
+            resolvedColumn->clear();
+        }
+        return true;
+    }
+    for (const SelectProjectionItem &item : projectionItems) {
+        if (item.outputName == trimmed) {
+            if (resolvedColumn != nullptr) {
+                *resolvedColumn = item.resolvedColumnName;
+            }
+            return true;
+        }
+    }
+    if (resolveVisibleColumn(resolution, trimmed, resolvedColumn, nullptr)) {
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("ORDER BY column '%1' does not exist").arg(rawOrderBy);
+    }
+    return false;
+}
+
+bool normalizeSimpleConditions(const SelectNameResolution &resolution,
+                               QList<SimpleCondition> *conditions,
+                               QString *error)
+{
+    if (conditions == nullptr) {
+        return true;
+    }
+    for (SimpleCondition &condition : *conditions) {
+        QString resolvedColumn;
+        if (!resolveVisibleColumn(resolution, condition.columnName, &resolvedColumn, error)) {
+            return false;
+        }
+        condition.columnName = resolvedColumn;
+    }
+    return true;
+}
+
+bool prepareSelectNames(const sqlparser::ParseResult &p,
+                        const tabledef::TableSchema &schema,
+                        QStringList *resolvedProjection,
+                        QStringList *outputProjection,
+                        OrderByClause *orderBy,
+                        QString *error)
+{
+    const SelectNameResolution resolution =
+        buildSelectNameResolution(schema, p.payload.value(QStringLiteral("tableAlias")).toString());
+    QList<SelectProjectionItem> projectionItems;
+    const QStringList legacyProjection = p.payload.value(QStringLiteral("projection")).toStringList();
+    const bool selectAll = p.payload.value(QStringLiteral("selectAll"), false).toBool()
+                           || (legacyProjection.size() == 1 && legacyProjection.first() == QStringLiteral("*"));
+    if (!selectAll) {
+        if (!resolveProjectionItems(resolution,
+                                    projectionItemsFromPayload(p.payload),
+                                    &projectionItems,
+                                    error)) {
+            return false;
+        }
+    }
+
+    QString resolvedOrderBy;
+    if (!resolveOrderByColumn(resolution,
+                              projectionItems,
+                              p.payload.value(QStringLiteral("orderByColumn")).toString(),
+                              &resolvedOrderBy,
+                              error)) {
+        return false;
+    }
+
+    if (resolvedProjection != nullptr) {
+        *resolvedProjection = selectAll ? QStringList{QStringLiteral("*")} : resolvedProjectionColumns(projectionItems);
+    }
+    if (outputProjection != nullptr) {
+        *outputProjection = selectAll ? QStringList{} : outputProjectionColumns(projectionItems);
+    }
+    if (orderBy != nullptr) {
+        orderBy->columnName = resolvedOrderBy;
+        orderBy->descending = p.payload.value(QStringLiteral("orderByDescending"), false).toBool();
+    }
+    return true;
+}
+
 } // namespace
 
 // ============================================================
@@ -606,6 +818,13 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected. Use USE database_name;"};
 
+    const QString table = p.payload["tableName"].toString();
+    QString schemaError;
+    const tabledef::TableSchema schema = loadUserTableSchema(table, &schemaError);
+    if (!schemaError.isEmpty()) {
+        return {false, schemaError};
+    }
+
     if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
         QueryExecutor executor;
         const QueryExecuteResult queryResult = executor.executeParsed(p,
@@ -629,22 +848,33 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
                 p.payload};
     }
 
-    QString table = p.payload["tableName"].toString();
-    QStringList projection = p.payload["projection"].toStringList();
+    QStringList projection;
+    QStringList outputProjection;
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
     OrderByClause orderBy;
-    orderBy.columnName = p.payload.value(QStringLiteral("orderByColumn")).toString().trimmed();
-    orderBy.descending = p.payload.value(QStringLiteral("orderByDescending"), false).toBool();
+    QString nameError;
+    if (!prepareSelectNames(p, schema, &projection, &outputProjection, &orderBy, &nameError)) {
+        return {false, nameError};
+    }
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
     if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
         return {false, conditionError};
     }
+    if (!normalizeSimpleConditions(buildSelectNameResolution(schema, p.payload.value(QStringLiteral("tableAlias")).toString()),
+                                   &conditions,
+                                   &conditionError)) {
+        return {false, conditionError};
+    }
 
     auto r = tuple_service::selectRows(table, projection, conditions, limit, orderBy);
-    if (r.success)
+    if (r.success) {
+        if (!outputProjection.isEmpty()) {
+            r.resultTable.columns = outputProjection;
+        }
         return {true, {}, formatSelectResult(r), r.affectedRowCount, r};
+    }
     return {false, r.errorMessage};
 }
 

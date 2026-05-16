@@ -82,7 +82,7 @@
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| `CREATE TABLE`、`SELECT`、`INSERT`、`UPDATE`、`DELETE`、`ALTER TABLE`、`CREATE INDEX` 等 SQL。 | parser 生成正确 payload；dispatcher 成功执行合法 SQL 并拒绝非法 payload。 | 解析字段、执行结果、错误路径均符合断言。 |
+| `CREATE TABLE`、`SELECT`、`INSERT`、`UPDATE`、`DELETE`、`ALTER TABLE`、`CREATE INDEX` 等 SQL。 | parser 生成正确 payload；dispatcher 成功执行合法 SQL 并拒绝非法 payload；单表 `SELECT` 支持表别名、限定列名、投影别名和 `ORDER BY` 投影别名。 | 解析字段、执行结果、错误路径均符合断言。 |
 
 ### 2.3 DDL 建表、删表与表结构维护
 
@@ -178,7 +178,7 @@
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| `EXISTS`、`IN`、`ANY`、`ALL`、相关子查询、缺失绑定。 | 子查询按外层行逐行求值；非法绑定返回错误。 | 子查询布尔结果、错误信息和最终查询结果符合断言。 |
+| `EXISTS`、`IN`、`ANY`、`ALL`、相关子查询、缺失绑定、外层表别名引用。 | 子查询按外层行逐行求值；支持 `p.id` 这类外层别名绑定并兼容旧 `outer.id`；非法绑定返回错误。 | 子查询布尔结果、错误信息和最终查询结果符合断言。 |
 
 ### 2.11 索引创建、删除与查询维护
 

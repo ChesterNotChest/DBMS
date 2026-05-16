@@ -81,7 +81,8 @@ QStringList requiredOuterReferences(const logic::LogicNode &node)
 
 logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
                                        const repo::TableData &table,
-                                       int rowIndex)
+                                       int rowIndex,
+                                       const QString &tableAlias = QString())
 {
     logic::LogicRowContext rowContext;
     rowContext.tableName = schema.tableName;
@@ -98,6 +99,18 @@ logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
                                       logic::LogicCellValue{value,
                                                             column.type,
                                                             value.isEmpty()});
+        if (!schema.tableName.trimmed().isEmpty()) {
+            rowContext.cellsByName.insert(schema.tableName + QLatin1Char('.') + column.name,
+                                          logic::LogicCellValue{value,
+                                                                column.type,
+                                                                value.isEmpty()});
+        }
+        if (!tableAlias.trimmed().isEmpty()) {
+            rowContext.cellsByName.insert(tableAlias.trimmed() + QLatin1Char('.') + column.name,
+                                          logic::LogicCellValue{value,
+                                                                column.type,
+                                                                value.isEmpty()});
+        }
     }
     return rowContext;
 }
@@ -109,9 +122,66 @@ void mergeBindings(logic::LogicRowContext *rowContext, const logic::CorrelationB
     }
 
     for (const logic::CorrelatedBinding &binding : bindings.items) {
-        rowContext->cellsByName.insert(binding.name,
-                                       logic::LogicCellValue{binding.value, binding.type, binding.isNull});
+        if (!rowContext->cellsByName.contains(binding.name)) {
+            rowContext->cellsByName.insert(binding.name,
+                                           logic::LogicCellValue{binding.value, binding.type, binding.isNull});
+        }
     }
+}
+
+QString unqualifiedName(const QString &name)
+{
+    const int dotIndex = name.lastIndexOf(QLatin1Char('.'));
+    return dotIndex >= 0 && dotIndex + 1 < name.size() ? name.mid(dotIndex + 1) : name;
+}
+
+QMap<QString, QString> visibleColumnMap(const tabledef::TableSchema &schema, const QString &tableAlias)
+{
+    QMap<QString, QString> visible;
+    for (const tabledef::Column &column : schema.columns) {
+        visible.insert(column.name, column.name);
+        if (!schema.tableName.trimmed().isEmpty()) {
+            visible.insert(schema.tableName + QLatin1Char('.') + column.name, column.name);
+        }
+        if (!tableAlias.trimmed().isEmpty()) {
+            visible.insert(tableAlias.trimmed() + QLatin1Char('.') + column.name, column.name);
+        }
+    }
+    return visible;
+}
+
+bool resolveColumnName(const QMap<QString, QString> &visibleColumns,
+                       const QString &name,
+                       QString *resolved,
+                       QString *error)
+{
+    const auto found = visibleColumns.constFind(name.trimmed());
+    if (found == visibleColumns.constEnd()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: column '%1' does not exist").arg(name);
+        }
+        return false;
+    }
+    if (resolved != nullptr) {
+        *resolved = found.value();
+    }
+    return true;
+}
+
+QVariantList projectionItemsFromPayload(const QVariantMap &payload)
+{
+    QVariantList items = payload.value(QStringLiteral("projectionItems")).toList();
+    if (!items.isEmpty()) {
+        return items;
+    }
+    const QStringList projection = payload.value(QStringLiteral("projection")).toStringList();
+    for (const QString &columnName : projection) {
+        QVariantMap item;
+        item.insert(QStringLiteral("sourceColumn"), columnName);
+        item.insert(QStringLiteral("outputColumn"), unqualifiedName(columnName));
+        items.append(item);
+    }
+    return items;
 }
 
 bool applySimpleConditions(const repo::TableData &table,
@@ -294,6 +364,8 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     const QStringList projection = parsed.payload.value(QStringLiteral("projection")).toStringList();
     const bool selectAll = parsed.payload.value(QStringLiteral("selectAll"), false).toBool();
     const int limit = parsed.payload.value(QStringLiteral("limit"), -1).toInt();
+    const QString tableAlias = parsed.payload.value(QStringLiteral("tableAlias")).toString().trimmed();
+    const QMap<QString, QString> visibleColumns = visibleColumnMap(schema, tableAlias);
 
     auto columnTypeForName = [&](const QString &columnName) {
         for (const tabledef::Column &column : schema.columns) {
@@ -306,6 +378,8 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
 
     SelectRowsResult selectResult;
     selectResult.success = true;
+    QStringList resolvedProjection;
+    QStringList outputProjection;
 
     if (selectAll) {
         selectResult.resultTable.columns = schema.columns.isEmpty()
@@ -323,10 +397,23 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
             result.text = result.errorMessage;
             return result;
         }
-        selectResult.resultTable.columns = projection;
-        for (const QString &columnName : projection) {
-            selectResult.columnTypes.append(columnTypeForName(columnName));
+        const QVariantList projectionItems = projectionItemsFromPayload(parsed.payload);
+        for (const QVariant &itemValue : projectionItems) {
+            const QVariantMap item = itemValue.toMap();
+            const QString sourceColumn = item.value(QStringLiteral("sourceColumn")).toString();
+            const QString outputColumn = item.value(QStringLiteral("outputColumn"), unqualifiedName(sourceColumn)).toString();
+            QString resolvedColumn;
+            if (!resolveColumnName(visibleColumns, sourceColumn, &resolvedColumn, &error)) {
+                result.success = false;
+                result.errorMessage = error;
+                result.text = error;
+                return result;
+            }
+            resolvedProjection.append(resolvedColumn);
+            outputProjection.append(outputColumn.trimmed().isEmpty() ? unqualifiedName(sourceColumn) : outputColumn);
+            selectResult.columnTypes.append(columnTypeForName(resolvedColumn));
         }
+        selectResult.resultTable.columns = outputProjection;
     }
 
     const bool useSimpleConditions = !hasWhereAst
@@ -345,7 +432,7 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     }
 
     for (int rowIndex = 0; rowIndex < tableData.rows.size(); ++rowIndex) {
-        logic::LogicRowContext rowContext = buildRowContext(schema, tableData, rowIndex);
+        logic::LogicRowContext rowContext = buildRowContext(schema, tableData, rowIndex, tableAlias);
         if (bindings != nullptr) {
             mergeBindings(&rowContext, *bindings);
         }
@@ -375,7 +462,7 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
             projectedRow = tableData.rows.at(rowIndex);
         } else {
             projectedRow.reserve(projection.size());
-            for (const QString &columnName : projection) {
+            for (const QString &columnName : resolvedProjection) {
                 int columnIndex = -1;
                 for (int schemaIndex = 0; schemaIndex < schema.columns.size(); ++schemaIndex) {
                     if (schema.columns.at(schemaIndex).name == columnName) {

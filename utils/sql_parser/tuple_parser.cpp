@@ -189,6 +189,180 @@ static bool projectionIsSelectAll(const QStringList &projection)
     return projection.size() == 1 && projection.first() == QStringLiteral("*");
 }
 
+static bool isClauseTerminator(TokenType type)
+{
+    return type == TokenType::WHERE
+           || type == TokenType::ORDER
+           || type == TokenType::LIMIT
+           || type == TokenType::SEMICOLON
+           || type == TokenType::END_OF_INPUT;
+}
+
+static bool isIdentifierLike(TokenType type)
+{
+    return type == TokenType::IDENTIFIER
+           || type == TokenType::INT_TYPE
+           || type == TokenType::FLOAT_TYPE
+           || type == TokenType::CHAR_TYPE
+           || type == TokenType::VARCHAR_TYPE
+           || type == TokenType::TEXT_TYPE;
+}
+
+static bool parseQualifiedIdentifier(const QVector<SqlToken> &tokens,
+                                     int *index,
+                                     int endExclusive,
+                                     QString *name)
+{
+    if (index == nullptr || name == nullptr || *index >= endExclusive) {
+        return false;
+    }
+    if (!isIdentifierLike(tokens[*index].type)) {
+        return false;
+    }
+
+    QString result = tokens[*index].lexeme;
+    ++(*index);
+    if (*index + 1 < endExclusive
+        && tokens[*index].type == TokenType::DOT
+        && isIdentifierLike(tokens[*index + 1].type)) {
+        result += QLatin1Char('.');
+        result += tokens[*index + 1].lexeme;
+        *index += 2;
+    }
+
+    *name = result;
+    return true;
+}
+
+static QString defaultOutputNameForSource(const QString &sourceName)
+{
+    const int dotIndex = sourceName.lastIndexOf(QLatin1Char('.'));
+    return dotIndex >= 0 && dotIndex + 1 < sourceName.size()
+               ? sourceName.mid(dotIndex + 1)
+               : sourceName;
+}
+
+static bool parseProjectionItems(const QVector<SqlToken> &tokens,
+                                 int from,
+                                 int to,
+                                 QStringList *projection,
+                                 QVariantList *projectionItems,
+                                 QString *error)
+{
+    if (projection != nullptr) {
+        projection->clear();
+    }
+    if (projectionItems != nullptr) {
+        projectionItems->clear();
+    }
+    if (from > to) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: expected projection columns");
+        }
+        return false;
+    }
+
+    int index = from;
+    while (index <= to) {
+        if (tokens[index].type == TokenType::COMMA) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected projection column");
+            }
+            return false;
+        }
+
+        QString sourceColumn;
+        if (tokens[index].type == TokenType::STAR) {
+            sourceColumn = QStringLiteral("*");
+            ++index;
+            if (index <= to && !isClauseTerminator(tokens[index].type) && tokens[index].type != TokenType::COMMA) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: '*' cannot have an alias");
+                }
+                return false;
+            }
+        } else if (tokens[index].type == TokenType::LPAREN) {
+            const int right = findMatchingParen(tokens, index);
+            if (right < 0 || right > to) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: unmatched projection parenthesis");
+                }
+                return false;
+            }
+            if (index + 1 >= right || !parseQualifiedIdentifier(tokens, &(++index), right, &sourceColumn)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: expected projection column");
+                }
+                return false;
+            }
+            if (index != right) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: unsupported projection expression");
+                }
+                return false;
+            }
+            index = right + 1;
+        } else if (!parseQualifiedIdentifier(tokens, &index, to + 1, &sourceColumn)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected projection column");
+            }
+            return false;
+        }
+
+        QString outputColumn = defaultOutputNameForSource(sourceColumn);
+        if (index <= to && tokens[index].type != TokenType::COMMA) {
+            if (tokens[index].lexeme.compare(QStringLiteral("AS"), Qt::CaseInsensitive) == 0) {
+                ++index;
+                if (index > to || !isIdentifierLike(tokens[index].type)) {
+                    if (error != nullptr) {
+                        *error = QStringLiteral("SELECT: expected projection alias after AS");
+                    }
+                    return false;
+                }
+                outputColumn = tokens[index].lexeme;
+                ++index;
+            } else if (isIdentifierLike(tokens[index].type)) {
+                outputColumn = tokens[index].lexeme;
+                ++index;
+            } else {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: unsupported projection token '%1'").arg(tokens[index].lexeme);
+                }
+                return false;
+            }
+        }
+
+        if (projection != nullptr) {
+            projection->append(sourceColumn);
+        }
+        if (projectionItems != nullptr) {
+            QVariantMap item;
+            item.insert(QStringLiteral("sourceColumn"), sourceColumn);
+            item.insert(QStringLiteral("outputColumn"), outputColumn);
+            projectionItems->append(item);
+        }
+
+        if (index > to) {
+            break;
+        }
+        if (tokens[index].type != TokenType::COMMA) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected ',' between projection columns");
+            }
+            return false;
+        }
+        ++index;
+        if (index > to) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected projection column after ','");
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static bool parseSimpleConditions(const QVector<SqlToken> &tokens,
                                   int from,
                                   int to,
@@ -298,8 +472,16 @@ static bool parseOrderByClause(const QVector<SqlToken> &tokens,
         return true;
     }
     if (orderIdx + 2 >= tokens.size()
-        || tokens[orderIdx + 1].type != TokenType::BY
-        || tokens[orderIdx + 2].type != TokenType::IDENTIFIER) {
+        || tokens[orderIdx + 1].type != TokenType::BY) {
+        if (error != nullptr) {
+            *error = QStringLiteral("ORDER BY: expected column name");
+        }
+        return false;
+    }
+
+    int itemIndex = orderIdx + 2;
+    QString orderByColumn;
+    if (!parseQualifiedIdentifier(tokens, &itemIndex, tokens.size(), &orderByColumn)) {
         if (error != nullptr) {
             *error = QStringLiteral("ORDER BY: expected column name");
         }
@@ -307,7 +489,7 @@ static bool parseOrderByClause(const QVector<SqlToken> &tokens,
     }
 
     bool descending = false;
-    const int directionIndex = orderIdx + 3;
+    const int directionIndex = itemIndex;
     int nextIndex = directionIndex;
     if (directionIndex < tokens.size()
         && tokens[directionIndex].type != TokenType::LIMIT
@@ -337,7 +519,7 @@ static bool parseOrderByClause(const QVector<SqlToken> &tokens,
     }
 
     if (payload != nullptr) {
-        payload->insert(QStringLiteral("orderByColumn"), tokens[orderIdx + 2].lexeme);
+        payload->insert(QStringLiteral("orderByColumn"), orderByColumn);
         payload->insert(QStringLiteral("orderByDescending"), descending);
     }
     return true;
@@ -354,16 +536,24 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
     // ── SELECT ──
     if (cmdType == "SELECT") {
         QStringList projection;
+        QVariantList projectionItems;
         QString table;
+        QString tableAlias;
         int tableIndex = -1;
 
         int fromIdx = -1;
         for (int i = 1; i < tokens.size(); ++i) {
             if (tokens[i].type == TokenType::FROM) { fromIdx = i; break; }
             if (tokens[i].type == TokenType::END_OF_INPUT) break;
-            if (tokens[i].type == TokenType::STAR ||
-                tokens[i].type == TokenType::IDENTIFIER)
-                projection.append(tokens[i].lexeme);
+        }
+
+        if (fromIdx < 0) {
+            return {false, "SELECT: expected FROM table", cmdType, {}};
+        }
+
+        QString projectionError;
+        if (!parseProjectionItems(tokens, 1, fromIdx - 1, &projection, &projectionItems, &projectionError)) {
+            return {false, projectionError, cmdType, {}};
         }
 
         if (fromIdx >= 0) {
@@ -399,6 +589,29 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
             return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
         }
 
+        const int tableTailEnd = whereIdx >= 0
+                                     ? whereIdx
+                                     : (orderIdx >= 0
+                                            ? orderIdx
+                                            : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1));
+        int aliasIndex = tableIndex + 1;
+        if (aliasIndex < tableTailEnd) {
+            if (tokens[aliasIndex].lexeme.compare(QStringLiteral("AS"), Qt::CaseInsensitive) == 0) {
+                ++aliasIndex;
+                if (aliasIndex >= tableTailEnd || tokens[aliasIndex].type != TokenType::IDENTIFIER) {
+                    return {false, "SELECT: expected table alias after AS", cmdType, {}};
+                }
+                tableAlias = tokens[aliasIndex].lexeme;
+                ++aliasIndex;
+            } else if (tokens[aliasIndex].type == TokenType::IDENTIFIER) {
+                tableAlias = tokens[aliasIndex].lexeme;
+                ++aliasIndex;
+            }
+        }
+        if (aliasIndex < tableTailEnd) {
+            return {false, QStringLiteral("SELECT: unsupported trailing token '%1'").arg(tokens[aliasIndex].lexeme), cmdType, {}};
+        }
+
         QString whereError;
         const int whereEndClause = orderIdx >= 0 ? orderIdx : limitIdx;
         if (!extractWherePayload(sql, tokens, whereIdx, whereEndClause, &payload, &whereError)) {
@@ -422,9 +635,12 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         payload["selectAll"] = projectionIsSelectAll(projection);
         if (payload.value(QStringLiteral("selectAll")).toBool()) {
             projection.clear();
+            projectionItems.clear();
         }
         payload["projection"] = projection;
+        payload["projectionItems"] = projectionItems;
         payload["tableName"] = table;
+        payload["tableAlias"] = tableAlias;
         payload["limit"] = limit;
 
         return {true, "", cmdType, payload};

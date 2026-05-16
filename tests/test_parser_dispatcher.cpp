@@ -252,6 +252,29 @@ private slots:
         const sqlparser::ParseResult trailingAfterLimit = sqlparser::parseSql(
             QStringLiteral("SELECT * FROM student LIMIT 2 garbage"));
         QVERIFY(!trailingAfterLimit.success);
+
+        const sqlparser::ParseResult aliasedTable = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id AS sid FROM student AS s ORDER BY sid DESC"));
+        QVERIFY2(aliasedTable.success, qPrintable(aliasedTable.errorMessage));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("tableAlias")).toString(), QStringLiteral("s"));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("projection")).toStringList(),
+                 QStringList({QStringLiteral("s.id")}));
+        const QVariantMap projectionItem = aliasedTable.payload.value(QStringLiteral("projectionItems")).toList().first().toMap();
+        QCOMPARE(projectionItem.value(QStringLiteral("sourceColumn")).toString(), QStringLiteral("s.id"));
+        QCOMPARE(projectionItem.value(QStringLiteral("outputColumn")).toString(), QStringLiteral("sid"));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("sid"));
+
+        const sqlparser::ParseResult starAlias = sqlparser::parseSql(
+            QStringLiteral("SELECT * AS x FROM student"));
+        QVERIFY(!starAlias.success);
+
+        const sqlparser::ParseResult extraAlias = sqlparser::parseSql(
+            QStringLiteral("SELECT id FROM student s extra"));
+        QVERIFY(!extraAlias.success);
+
+        const sqlparser::ParseResult multiOrder = sqlparser::parseSql(
+            QStringLiteral("SELECT id FROM student ORDER BY a, b"));
+        QVERIFY(!multiOrder.success);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
@@ -367,6 +390,90 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
+    }
+
+    void test_dispatchSelectAliasAndQualifiedColumns()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_select_alias_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_select_alias_table");
+
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT s.id AS sid FROM %1 AS s ORDER BY sid DESC").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("sid")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("2"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("1"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT * FROM %1 s WHERE s.id = 1").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(1), QStringLiteral("alice"));
+    }
+
+    void test_dispatchCorrelatedSubqueryUsesOuterAlias()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_correlated_alias_db");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema parentSchema;
+        parentSchema.tableName = QStringLiteral("parent_alias");
+        parentSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        parentSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_parent_alias_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(parentSchema.tableName, parentSchema);
+
+        tabledef::TableSchema childSchema;
+        childSchema.tableName = QStringLiteral("child_alias");
+        childSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int),
+        };
+        childSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_child_alias_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(childSchema.tableName, childSchema);
+
+        seedRows(parentSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                           {QStringLiteral("name"), QStringLiteral("alice")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                           {QStringLiteral("name"), QStringLiteral("bob")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                           {QStringLiteral("name"), QStringLiteral("carol")}})});
+        seedRows(childSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                           {QStringLiteral("parent_id"), QStringLiteral("1")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("11")},
+                           {QStringLiteral("parent_id"), QStringLiteral("1")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("12")},
+                           {QStringLiteral("parent_id"), QStringLiteral("3")}})});
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT p.id FROM parent_alias p "
+                           "WHERE EXISTS (SELECT c.id FROM child_alias c WHERE c.parent_id = p.id)"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("3"));
     }
 
     void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()

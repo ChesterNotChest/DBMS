@@ -48,7 +48,7 @@ bool appendOuterName(QStringList *names, const QString &name)
 }
 
 bool collectOuterNamesFromNode(const LogicNode &node,
-                               const QString &allowedTablePrefix,
+                               const QStringList &localPrefixes,
                                QStringList *names,
                                LogicError *error,
                                const QString &expressionText)
@@ -61,20 +61,22 @@ bool collectOuterNamesFromNode(const LogicNode &node,
         if (node.reference.scope == LogicReferenceScope::Outer) {
             appendOuterName(names, node.reference.name);
         } else if (node.reference.name.contains(QLatin1Char('.'))) {
-            if (!allowedTablePrefix.isEmpty() && node.reference.name.startsWith(allowedTablePrefix)) {
+            bool localReference = false;
+            for (const QString &prefix : localPrefixes) {
+                if (!prefix.isEmpty() && node.reference.name.startsWith(prefix)) {
+                    localReference = true;
+                    break;
+                }
+            }
+            if (localReference) {
                 return true;
             }
-            if (error != nullptr) {
-                error->message = QStringLiteral("only outer.xxx is allowed in correlated subqueries");
-                const int position = expressionText.indexOf(node.reference.name);
-                error->position = position >= 0 ? position : -1;
-            }
-            return false;
+            appendOuterName(names, node.reference.name);
         }
     }
 
     for (const LogicNode &child : node.children) {
-        if (!collectOuterNamesFromNode(child, allowedTablePrefix, names, error, expressionText)) {
+        if (!collectOuterNamesFromNode(child, localPrefixes, names, error, expressionText)) {
             return false;
         }
     }
@@ -138,13 +140,19 @@ bool collectOuterNamesFromText(const QString &text, QStringList *names, LogicErr
         names->clear();
     }
 
-    const QString allowedTablePrefix = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed().isEmpty()
-                                           ? QString()
-                                           : parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed() + QLatin1Char('.');
+    QStringList localPrefixes;
+    const QString tableName = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed();
+    const QString tableAlias = parsedSql.payload.value(QStringLiteral("tableAlias")).toString().trimmed();
+    if (!tableName.isEmpty()) {
+        localPrefixes.append(tableName + QLatin1Char('.'));
+    }
+    if (!tableAlias.isEmpty()) {
+        localPrefixes.append(tableAlias + QLatin1Char('.'));
+    }
 
     if (parsedSql.payload.contains(QStringLiteral("whereAst"))) {
         const LogicNode whereAst = parsedSql.payload.value(QStringLiteral("whereAst")).value<LogicNode>();
-        if (!collectOuterNamesFromNode(whereAst, allowedTablePrefix, names, error, text)) {
+        if (!collectOuterNamesFromNode(whereAst, localPrefixes, names, error, text)) {
             return false;
         }
     }

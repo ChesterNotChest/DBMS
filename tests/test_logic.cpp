@@ -180,7 +180,7 @@ private slots:
                  QStringLiteral("  SELECT id FROM child WHERE child.parent_id = outer.id  "));
     }
 
-    void test_parseCorrelatedReferenceRejectsTableNamePrefix()
+    void test_parseCorrelatedReferenceCollectsOuterTablePrefix()
     {
         const QString expression = QStringLiteral(
             "EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
@@ -189,11 +189,11 @@ private slots:
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.message.contains(QStringLiteral("outer.xxx")));
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
-    void test_parseCorrelatedReferenceRejectsAliasPrefix()
+    void test_parseCorrelatedReferenceAllowsLocalAliasPrefix()
     {
         const QString expression = QStringLiteral(
             "EXISTS (SELECT id FROM child c WHERE c.parent_id = outer.id)");
@@ -202,8 +202,21 @@ private slots:
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.message.contains(QStringLiteral("outer.xxx")));
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+    }
+
+    void test_parseCorrelatedReferenceCollectsOuterAliasPrefix()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT id FROM child c WHERE c.parent_id = p.id)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("p.id")}));
     }
 
     void test_buildCorrelationBindingsExtractsTypedOuterValues()
@@ -849,8 +862,8 @@ private slots:
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.position >= 0);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
     void test_existsSubqueryWithoutExecutorReturnsError()
@@ -1002,13 +1015,8 @@ private slots:
             const auto tokenized = logic::tokenizeLogicExpression(expr);
             QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
             const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
-            QVERIFY(!parsed.success);
-            QCOMPARE(parsed.error.message, QStringLiteral("only outer.xxx is allowed in correlated subqueries"));
-            const int start = expr.indexOf('(');
-            const int end = expr.lastIndexOf(')');
-            const QString sub = expr.mid(start + 1, end - start - 1);
-            const int expectedPos = sub.indexOf(QStringLiteral("parent.id"));
-            QCOMPARE(parsed.error.position, expectedPos);
+            QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+            QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
         }
 
         // EXISTS missing parentheses
