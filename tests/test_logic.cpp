@@ -219,6 +219,22 @@ private slots:
         QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("p.id")}));
     }
 
+    void test_parseCorrelatedSubqueryCollectsMultiTableOuterReferences()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT a.id FROM a JOIN b ON a.bid = outer.bid WHERE b.name = outer.name)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
+        QCOMPARE(parsed.root.referencedOuterNames.size(), 2);
+        QVERIFY(parsed.root.referencedOuterNames.contains(QStringLiteral("outer.bid")));
+        QVERIFY(parsed.root.referencedOuterNames.contains(QStringLiteral("outer.name")));
+    }
+
     void test_buildCorrelationBindingsExtractsTypedOuterValues()
     {
         const logic::LogicRowContext outerRowContext = makeOuterRowContext();

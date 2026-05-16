@@ -47,6 +47,28 @@ bool appendOuterName(QStringList *names, const QString &name)
     return true;
 }
 
+void appendLocalPrefixesFromSource(const QVariantMap &source, QStringList *localPrefixes)
+{
+    if (localPrefixes == nullptr) {
+        return;
+    }
+
+    const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
+    const QString tableAlias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
+    if (!tableName.isEmpty()) {
+        const QString prefix = tableName + QLatin1Char('.');
+        if (!localPrefixes->contains(prefix)) {
+            localPrefixes->append(prefix);
+        }
+    }
+    if (!tableAlias.isEmpty()) {
+        const QString prefix = tableAlias + QLatin1Char('.');
+        if (!localPrefixes->contains(prefix)) {
+            localPrefixes->append(prefix);
+        }
+    }
+}
+
 bool collectOuterNamesFromNode(const LogicNode &node,
                                const QStringList &localPrefixes,
                                QStringList *names,
@@ -141,18 +163,29 @@ bool collectOuterNamesFromText(const QString &text, QStringList *names, LogicErr
     }
 
     QStringList localPrefixes;
-    const QString tableName = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed();
-    const QString tableAlias = parsedSql.payload.value(QStringLiteral("tableAlias")).toString().trimmed();
-    if (!tableName.isEmpty()) {
-        localPrefixes.append(tableName + QLatin1Char('.'));
+    const QVariantList sources = parsedSql.payload.value(QStringLiteral("fromSources")).toList();
+    for (const QVariant &sourceValue : sources) {
+        appendLocalPrefixesFromSource(sourceValue.toMap(), &localPrefixes);
     }
-    if (!tableAlias.isEmpty()) {
-        localPrefixes.append(tableAlias + QLatin1Char('.'));
+    if (localPrefixes.isEmpty()) {
+        appendLocalPrefixesFromSource(parsedSql.payload, &localPrefixes);
     }
 
     if (parsedSql.payload.contains(QStringLiteral("whereAst"))) {
         const LogicNode whereAst = parsedSql.payload.value(QStringLiteral("whereAst")).value<LogicNode>();
         if (!collectOuterNamesFromNode(whereAst, localPrefixes, names, error, text)) {
+            return false;
+        }
+    }
+
+    const QVariantList joins = parsedSql.payload.value(QStringLiteral("joins")).toList();
+    for (const QVariant &joinValue : joins) {
+        const QVariantMap joinMap = joinValue.toMap();
+        if (!joinMap.contains(QStringLiteral("onAst"))) {
+            continue;
+        }
+        const LogicNode onAst = joinMap.value(QStringLiteral("onAst")).value<LogicNode>();
+        if (!collectOuterNamesFromNode(onAst, localPrefixes, names, error, text)) {
             return false;
         }
     }

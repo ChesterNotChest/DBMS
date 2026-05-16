@@ -192,6 +192,16 @@ logic::LogicCellValue nullCell(tabledef::ColumnType type)
     return logic::LogicCellValue{QString(), type, true};
 }
 
+logic::LogicRowContext buildNullContextFromSample(const logic::LogicRowContext &sample)
+{
+    logic::LogicRowContext nullContext;
+    nullContext.tableName = sample.tableName;
+    for (auto it = sample.cellsByName.cbegin(); it != sample.cellsByName.cend(); ++it) {
+        nullContext.cellsByName.insert(it.key(), nullCell(it.value().type));
+    }
+    return nullContext;
+}
+
 bool loadSourcesFromPayload(const QVariantMap &payload,
                             QList<SelectTableSource> *sources,
                             QString *error)
@@ -518,6 +528,7 @@ QVector<logic::LogicRowContext> joinRowsets(const QVector<logic::LogicRowContext
                                             const logic::LogicNode *onAst,
                                             const logic::CorrelationBindings *bindings,
                                             const logic::LogicEvalContext &evalContext,
+                                            const logic::LogicRowContext *leftNullTemplate,
                                             QString *error)
 {
     QVector<logic::LogicRowContext> output;
@@ -549,12 +560,9 @@ QVector<logic::LogicRowContext> joinRowsets(const QVector<logic::LogicRowContext
     }
 
     if (joinType == QStringLiteral("right") || joinType == QStringLiteral("full")) {
-        logic::LogicRowContext nullLeft;
-        if (!leftRows.isEmpty()) {
-            for (auto it = leftRows.first().cellsByName.cbegin(); it != leftRows.first().cellsByName.cend(); ++it) {
-                nullLeft.cellsByName.insert(it.key(), nullCell(it.value().type));
-            }
-        }
+        const logic::LogicRowContext nullLeft = !leftRows.isEmpty()
+                                                    ? buildNullContextFromSample(leftRows.first())
+                                                    : (leftNullTemplate != nullptr ? *leftNullTemplate : logic::LogicRowContext{});
         for (int rightIndex = 0; rightIndex < rightRows.size(); ++rightIndex) {
             if (!matchedRight.value(rightIndex)) {
                 output.append(mergeRowContexts(nullLeft, rightRows.at(rightIndex)));
@@ -736,6 +744,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
         whereAst = parsed.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
     }
 
+    logic::LogicRowContext nullTemplate = buildNullSourceContext(sources.first());
     QVector<logic::LogicRowContext> joinedRows = rowsForSource(sources.first());
     const QVariantList joinPayload = parsed.payload.value(QStringLiteral("joins")).toList();
     if (joinPayload.isEmpty()) {
@@ -746,6 +755,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
                                      nullptr,
                                      bindings,
                                      evalContext,
+                                     &nullTemplate,
                                      &error);
             if (!error.isEmpty()) {
                 result.success = false;
@@ -753,6 +763,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
                 result.text = error;
                 return result;
             }
+            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(sources.at(sourceIndex)));
         }
     } else {
         for (const QVariant &joinValue : joinPayload) {
@@ -771,6 +782,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
                                      &onAst,
                                      bindings,
                                      evalContext,
+                                     &nullTemplate,
                                      &error);
             if (!error.isEmpty()) {
                 result.success = false;
@@ -778,6 +790,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
                 result.text = error;
                 return result;
             }
+            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(sources.at(rightIndex)));
         }
     }
 

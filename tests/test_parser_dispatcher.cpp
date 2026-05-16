@@ -826,6 +826,12 @@ private slots:
                  QStringLiteral("ALTER_COLUMN_SET_TYPE"));
         QCOMPARE(setType.payload.value(QStringLiteral("type")).toString(), QStringLiteral("VARCHAR"));
         QCOMPARE(setType.payload.value(QStringLiteral("length")).toInt(), 64);
+
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age SET DEFAULT 18 garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age DROP DEFAULT garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age TYPE VARCHAR(64) garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student RENAME COLUMN old_name TO new_name extra")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student DROP COLUMN age extra")).success);
     }
 
     void test_parseAlterForeignKeyAndMultiColumnIndexPayload()
