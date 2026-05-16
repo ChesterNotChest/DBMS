@@ -37,6 +37,14 @@ namespace service::tuple_service {
 SelectRowsResult selectRows(const QString &tableName,
                             const QStringList &projectionColumns,
                             const QList<SimpleCondition> &conditions,
+                            int limit)
+{
+    return selectRows(tableName, projectionColumns, conditions, limit, {});
+}
+
+SelectRowsResult selectRows(const QString &tableName,
+                            const QStringList &projectionColumns,
+                            const QList<SimpleCondition> &conditions,
                             int limit,
                             const OrderByClause &orderBy)
 {

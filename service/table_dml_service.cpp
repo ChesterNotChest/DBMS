@@ -2811,6 +2811,24 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
                                              const tabledef::TableSchema &targetSchema,
                                              const QStringList &projectionColumns,
                                              const QList<SimpleCondition> &simpleConditions,
+                                             int limit) const
+{
+    return selectRows(targetDatabaseName,
+                      targetTableName,
+                      targetTableKind,
+                      targetSchema,
+                      projectionColumns,
+                      simpleConditions,
+                      limit,
+                      {});
+}
+
+SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
+                                             const QString &targetTableName,
+                                             TargetTableKind targetTableKind,
+                                             const tabledef::TableSchema &targetSchema,
+                                             const QStringList &projectionColumns,
+                                             const QList<SimpleCondition> &simpleConditions,
                                              int limit,
                                              const service::OrderByClause &orderBy) const
 {
