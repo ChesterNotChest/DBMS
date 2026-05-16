@@ -37,7 +37,10 @@ private:
 
     QLineEdit   *m_tableNameEdit = nullptr;
     QTableWidget *m_fieldTable   = nullptr;
-    QPushButton  *m_execBtn       = nullptr;
+    QPushButton  *m_execBtn      = nullptr;
+    QPushButton  *m_cancelBtn    = nullptr;
+
+    QString m_generatedSql;
 };
 
 #endif // CREATE_TABLE_DIALOG_H

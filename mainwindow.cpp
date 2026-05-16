@@ -409,6 +409,10 @@ void MainWindow::onTableSelected(const QString &dbName, const QString &tableName
     m_currentTable = tableName;
     updateStatusDbLabel();
     m_resultPanel->showLog("选中表: " + tableName);
+
+    // 自动执行查询：双击表名 → 显示全部数据
+    QString sql = QString("SELECT * FROM %1;").arg(tableName);
+    onExecuteRequested(sql);
 }
 
 void MainWindow::onColumnSelected(const QString &dbName,
@@ -599,14 +603,78 @@ void MainWindow::onToolbarSave()
     }
 
     ResultPanel::ChangeInfo info = m_resultPanel->diffWithOriginal();
+    // ── 首先统计所有变更类型 ──
+    int addCols = info.addedColumns.size();
+    int dropCols = info.deletedColumns.size();
     int upd = info.updatedCells.size();
     int ins = info.newRowIds.size();
     int del = info.deletedRows.size();
-    if (upd == 0 && ins == 0 && del == 0) {
-        m_resultPanel->showLog("数据未变更，无需保存");
+    bool hasColChanges = (addCols > 0 || dropCols > 0);
+    bool hasRowChanges = (upd > 0 || ins > 0 || del > 0);
+
+    // ── ALTER TABLE：处理新增列 ──
+    for (auto cit = info.addedColumns.constBegin(); cit != info.addedColumns.constEnd(); ++cit) {
+        int colIdx = cit.key();
+        QString colDef = cit.value();
+        
+        // 解析列定义：格式为 "列名:类型:约束"
+        QStringList parts = colDef.split(':');
+        QString colName = parts.value(0);
+        QString colType = parts.value(1, "VARCHAR(255)");
+        QString colConstraints = parts.value(2);
+        
+        QString sql;
+        if (colConstraints.isEmpty()) {
+            sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3;")
+                    .arg(m_currentTable)
+                    .arg(colName)
+                    .arg(colType);
+        } else {
+            sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3 %4;")
+                    .arg(m_currentTable)
+                    .arg(colName)
+                    .arg(colType)
+                    .arg(colConstraints);
+        }
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString("❌ ADD COLUMN 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+    }
+
+    // ── ALTER TABLE：处理删除列 ──
+    for (auto it = info.deletedColumns.constBegin(); it != info.deletedColumns.constEnd(); ++it) {
+        QString colName = it.value();
+        QString sql = QString("ALTER TABLE %1 DROP COLUMN %2;")
+                        .arg(m_currentTable)
+                        .arg(colName);
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString("❌ DROP COLUMN 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+    }
+
+    int affectedTotal = 0;
+
+    // ── 如果只有列变更，直接标记完成并刷新 ──
+    if (hasColChanges && !hasRowChanges) {
+        m_resultPanel->markAllCommitted();
+        QString colMsg = (addCols > 0 ? QString("➕ ADD COLUMN %1 列").arg(addCols) : "") +
+                        ((addCols > 0 && dropCols > 0) ? " " : "") +
+                        (dropCols > 0 ? QString("➖ DROP COLUMN %1 列").arg(dropCols) : "");
+        m_resultPanel->showLog(QString("✅ 保存成功！%1").arg(colMsg));
+
+        // 重新查询刷新表
+        QString sql = QString("SELECT * FROM %1;").arg(m_currentTable);
+        onExecuteRequested(sql);
         return;
     }
 
+    // ── 只有行变更，显示确认对话框 ──
     // 确认对话框
     int ret = QMessageBox::question(this, u8"确认保存",
         QString(u8"即将对表 '%1' 执行以下变更：\n\n"
@@ -618,7 +686,6 @@ void MainWindow::onToolbarSave()
     if (ret != QMessageBox::Yes) return;
 
     m_resultPanel->showLog(u8"=== 开始保存 ===");
-    int affectedTotal = 0;
 
     // ── 辅助：格式化字段值 ──
     auto fmtVal = [](const QString &raw) -> QString {

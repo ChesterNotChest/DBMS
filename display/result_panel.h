@@ -27,6 +27,7 @@ public:
     void clear();
     QTableWidget *getTable() { return m_table; }
     QStringList getLastColumns() const { return m_lastColumns; }
+    QSet<QString> getDeletedColumnNames() const { return m_deletedColumnNames; }
 
     // 智能保存：返回变更信息，供 MainWindow 执行 SQL
     struct ChangeInfo {
@@ -40,14 +41,24 @@ public:
         QMap<int, QStringList> originalRows;
         // all current rows (for comparing)
         QMap<int, QStringList> currentRows;
+        // added columns: colIndex -> column name
+        QMap<int, QString> addedColumns;
+        // deleted columns: colIndex -> column name
+        QMap<int, QString> deletedColumns;
     };
     ChangeInfo diffWithOriginal() const;
     bool hasUnsavedChanges() const;
     void markAllCommitted();
+    void undoLastChange();
+
+signals:
+    void saveRequested();
 
 private slots:
     void onAddRow();
     void onDeleteRow();
+    void onAddColumn();
+    void onDeleteColumn();
     void onSave();
     void onCellChanged(QTableWidgetItem *item);
     void onToggleLogFooter();
@@ -96,6 +107,14 @@ private:
     QMap<int, QStringList> m_currentRows;
     // 下一个新行ID
     int m_nextNewRowId = 0;
+    // 新增的列（列定义）
+    QStringList m_addedColumns;
+    // 已删除的列（列名）
+    QSet<QString> m_deletedColumnNames;
+    // 已删除的列（原始索引 -> 列名，用于撤销）
+    QMap<int, QString> m_deletedColumnsWithIndex;
+    // 原始列名列表（用于撤销）
+    QStringList m_originalColumns;
 };
 
 #endif // RESULT_PANEL_H
