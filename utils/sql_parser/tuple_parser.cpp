@@ -198,6 +198,32 @@ static bool isClauseTerminator(TokenType type)
            || type == TokenType::END_OF_INPUT;
 }
 
+static bool isJoinStart(TokenType type)
+{
+    return type == TokenType::JOIN
+           || type == TokenType::INNER
+           || type == TokenType::LEFT
+           || type == TokenType::RIGHT
+           || type == TokenType::FULL
+           || type == TokenType::NATURAL
+           || type == TokenType::CROSS;
+}
+
+static bool isFromItemTerminator(TokenType type)
+{
+    return isClauseTerminator(type)
+           || type == TokenType::COMMA
+           || isJoinStart(type)
+           || type == TokenType::ON;
+}
+
+static bool isAliasForbidden(TokenType type)
+{
+    return isFromItemTerminator(type)
+           || type == TokenType::BY
+           || type == TokenType::USING;
+}
+
 static bool isIdentifierLike(TokenType type)
 {
     return type == TokenType::IDENTIFIER
@@ -231,6 +257,294 @@ static bool parseQualifiedIdentifier(const QVector<SqlToken> &tokens,
     }
 
     *name = result;
+    return true;
+}
+
+static bool parseLogicAstFromTokenRange(const QString &sql,
+                                        const QVector<SqlToken> &tokens,
+                                        int from,
+                                        int to,
+                                        logic::LogicNode *ast,
+                                        QString *error)
+{
+    const QString text = sliceClauseText(sql, tokens, from, to);
+    if (text.trimmed().isEmpty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("JOIN: expected ON condition");
+        }
+        return false;
+    }
+
+    const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(text);
+    if (!tokenized.success) {
+        if (error != nullptr) {
+            *error = tokenized.error.message;
+        }
+        return false;
+    }
+
+    const logic::LogicParseResult parsed = logic::parseLogicTokens(text, tokenized.tokens);
+    if (!parsed.success) {
+        if (error != nullptr) {
+            *error = parsed.error.message;
+        }
+        return false;
+    }
+    if (ast != nullptr) {
+        *ast = parsed.root;
+    }
+    return true;
+}
+
+static bool parseTableSource(const QVector<SqlToken> &tokens,
+                             int startIndex,
+                             int endExclusive,
+                             QVariantMap *source,
+                             int *nextIndex,
+                             QString *error)
+{
+    if (startIndex >= endExclusive || !isIdentifierLike(tokens[startIndex].type)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: expected table name");
+        }
+        return false;
+    }
+    if (startIndex + 1 < endExclusive && tokens[startIndex + 1].type == TokenType::DOT) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: database-qualified table names are not supported");
+        }
+        return false;
+    }
+
+    QVariantMap parsedSource;
+    parsedSource.insert(QStringLiteral("tableName"), tokens[startIndex].lexeme);
+    parsedSource.insert(QStringLiteral("tableAlias"), QString());
+
+    int index = startIndex + 1;
+    if (index < endExclusive && !isFromItemTerminator(tokens[index].type)) {
+        if (tokens[index].lexeme.compare(QStringLiteral("AS"), Qt::CaseInsensitive) == 0) {
+            ++index;
+            if (index >= endExclusive || !isIdentifierLike(tokens[index].type) || isAliasForbidden(tokens[index].type)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: expected table alias after AS");
+                }
+                return false;
+            }
+            parsedSource.insert(QStringLiteral("tableAlias"), tokens[index].lexeme);
+            ++index;
+        } else if (isIdentifierLike(tokens[index].type) && !isAliasForbidden(tokens[index].type)) {
+            parsedSource.insert(QStringLiteral("tableAlias"), tokens[index].lexeme);
+            ++index;
+        }
+    }
+
+    if (source != nullptr) {
+        *source = parsedSource;
+    }
+    if (nextIndex != nullptr) {
+        *nextIndex = index;
+    }
+    return true;
+}
+
+static QString sourceAliasOrTable(const QVariantMap &source)
+{
+    const QString alias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
+    return alias.isEmpty() ? source.value(QStringLiteral("tableName")).toString().trimmed() : alias;
+}
+
+static bool validateSourceNames(const QVariantList &sources, QString *error)
+{
+    QSet<QString> visiblePrefixes;
+    QSet<QString> unaliasedTables;
+    for (const QVariant &value : sources) {
+        const QVariantMap source = value.toMap();
+        const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
+        const QString alias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
+        const QString prefix = alias.isEmpty() ? tableName : alias;
+        if (prefix.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected table name");
+            }
+            return false;
+        }
+        if (visiblePrefixes.contains(prefix)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: duplicate table alias '%1'").arg(prefix);
+            }
+            return false;
+        }
+        visiblePrefixes.insert(prefix);
+        if (alias.isEmpty()) {
+            if (unaliasedTables.contains(tableName)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table '%1' requires aliases").arg(tableName);
+                }
+                return false;
+            }
+            unaliasedTables.insert(tableName);
+        }
+    }
+    return true;
+}
+
+static bool parseFromClause(const QString &sql,
+                            const QVector<SqlToken> &tokens,
+                            int fromIndex,
+                            int clauseEndIndex,
+                            QVariantList *fromSources,
+                            QVariantList *joins,
+                            QString *singleTableName,
+                            QString *singleTableAlias,
+                            bool *isMultiTable,
+                            QString *error)
+{
+    if (fromSources != nullptr) {
+        fromSources->clear();
+    }
+    if (joins != nullptr) {
+        joins->clear();
+    }
+
+    const int endExclusive = clauseEndIndex;
+    int index = fromIndex + 1;
+    QVariantMap firstSource;
+    if (!parseTableSource(tokens, index, endExclusive, &firstSource, &index, error)) {
+        return false;
+    }
+
+    QVariantList parsedSources;
+    QVariantList parsedJoins;
+    parsedSources.append(firstSource);
+
+    enum class FromMode { None, Comma, Join };
+    FromMode mode = FromMode::None;
+
+    while (index < endExclusive) {
+        if (tokens[index].type == TokenType::COMMA) {
+            if (mode == FromMode::Join) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: cannot mix comma FROM and JOIN in the same FROM clause");
+                }
+                return false;
+            }
+            mode = FromMode::Comma;
+            ++index;
+            QVariantMap source;
+            if (!parseTableSource(tokens, index, endExclusive, &source, &index, error)) {
+                return false;
+            }
+            parsedSources.append(source);
+            continue;
+        }
+
+        QString joinType;
+        if (tokens[index].type == TokenType::JOIN) {
+            if (mode == FromMode::Comma) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: cannot mix comma FROM and JOIN in the same FROM clause");
+                }
+                return false;
+            }
+            joinType = QStringLiteral("inner");
+            ++index;
+        } else if (tokens[index].type == TokenType::INNER
+                   || tokens[index].type == TokenType::LEFT
+                   || tokens[index].type == TokenType::RIGHT
+                   || tokens[index].type == TokenType::FULL) {
+            if (mode == FromMode::Comma) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: cannot mix comma FROM and JOIN in the same FROM clause");
+                }
+                return false;
+            }
+            if (tokens[index].type == TokenType::INNER) joinType = QStringLiteral("inner");
+            if (tokens[index].type == TokenType::LEFT) joinType = QStringLiteral("left");
+            if (tokens[index].type == TokenType::RIGHT) joinType = QStringLiteral("right");
+            if (tokens[index].type == TokenType::FULL) joinType = QStringLiteral("full");
+            ++index;
+            if (index >= endExclusive || tokens[index].type != TokenType::JOIN) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: expected JOIN after join type");
+                }
+                return false;
+            }
+            ++index;
+        } else if (tokens[index].type == TokenType::NATURAL || tokens[index].type == TokenType::CROSS) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: unsupported JOIN type '%1'").arg(tokens[index].lexeme);
+            }
+            return false;
+        } else {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: unsupported trailing token '%1'").arg(tokens[index].lexeme);
+            }
+            return false;
+        }
+
+        mode = FromMode::Join;
+        QVariantMap rightSource;
+        const int rightSourceIndex = parsedSources.size();
+        if (!parseTableSource(tokens, index, endExclusive, &rightSource, &index, error)) {
+            return false;
+        }
+        parsedSources.append(rightSource);
+
+        if (index >= endExclusive || tokens[index].type != TokenType::ON) {
+            if (index < endExclusive && tokens[index].type == TokenType::USING) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: JOIN USING is not supported");
+                }
+                return false;
+            }
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: JOIN requires ON condition");
+            }
+            return false;
+        }
+
+        const int onStart = index + 1;
+        int onEndExclusive = onStart;
+        while (onEndExclusive < endExclusive && !isJoinStart(tokens[onEndExclusive].type)) {
+            ++onEndExclusive;
+        }
+        logic::LogicNode onAst;
+        QString onError;
+        if (!parseLogicAstFromTokenRange(sql, tokens, onStart, onEndExclusive - 1, &onAst, &onError)) {
+            if (error != nullptr) {
+                *error = onError;
+            }
+            return false;
+        }
+
+        QVariantMap join;
+        join.insert(QStringLiteral("joinType"), joinType);
+        join.insert(QStringLiteral("leftSourceIndex"), rightSourceIndex - 1);
+        join.insert(QStringLiteral("rightSourceIndex"), rightSourceIndex);
+        join.insert(QStringLiteral("onAst"), QVariant::fromValue(onAst));
+        parsedJoins.append(join);
+        index = onEndExclusive;
+    }
+
+    if (!validateSourceNames(parsedSources, error)) {
+        return false;
+    }
+
+    if (fromSources != nullptr) {
+        *fromSources = parsedSources;
+    }
+    if (joins != nullptr) {
+        *joins = parsedJoins;
+    }
+    if (singleTableName != nullptr) {
+        *singleTableName = firstSource.value(QStringLiteral("tableName")).toString();
+    }
+    if (singleTableAlias != nullptr) {
+        *singleTableAlias = firstSource.value(QStringLiteral("tableAlias")).toString();
+    }
+    if (isMultiTable != nullptr) {
+        *isMultiTable = parsedSources.size() > 1;
+    }
     return true;
 }
 
@@ -537,9 +851,10 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (cmdType == "SELECT") {
         QStringList projection;
         QVariantList projectionItems;
+        QVariantList fromSources;
+        QVariantList joins;
         QString table;
         QString tableAlias;
-        int tableIndex = -1;
 
         int fromIdx = -1;
         for (int i = 1; i < tokens.size(); ++i) {
@@ -556,20 +871,10 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
             return {false, projectionError, cmdType, {}};
         }
 
-        if (fromIdx >= 0) {
-            for (int i = fromIdx + 1; i < tokens.size(); ++i) {
-                if (tokens[i].type == TokenType::IDENTIFIER)
-                    { table = tokens[i].lexeme; tableIndex = i; break; }
-            }
-        }
-
-        if (table.isEmpty())
-            return {false, "SELECT: expected FROM table", cmdType, {}};
-
         int whereIdx = -1;
         int orderIdx = -1;
         int limitIdx = -1;
-        for (int i = tableIndex + 1; i < tokens.size(); ++i) {
+        for (int i = fromIdx + 1; i < tokens.size(); ++i) {
             if (tokens[i].type == TokenType::WHERE && whereIdx < 0) {
                 whereIdx = i;
             } else if (tokens[i].type == TokenType::ORDER && orderIdx < 0) {
@@ -594,22 +899,20 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
                                      : (orderIdx >= 0
                                             ? orderIdx
                                             : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1));
-        int aliasIndex = tableIndex + 1;
-        if (aliasIndex < tableTailEnd) {
-            if (tokens[aliasIndex].lexeme.compare(QStringLiteral("AS"), Qt::CaseInsensitive) == 0) {
-                ++aliasIndex;
-                if (aliasIndex >= tableTailEnd || tokens[aliasIndex].type != TokenType::IDENTIFIER) {
-                    return {false, "SELECT: expected table alias after AS", cmdType, {}};
-                }
-                tableAlias = tokens[aliasIndex].lexeme;
-                ++aliasIndex;
-            } else if (tokens[aliasIndex].type == TokenType::IDENTIFIER) {
-                tableAlias = tokens[aliasIndex].lexeme;
-                ++aliasIndex;
-            }
-        }
-        if (aliasIndex < tableTailEnd) {
-            return {false, QStringLiteral("SELECT: unsupported trailing token '%1'").arg(tokens[aliasIndex].lexeme), cmdType, {}};
+
+        bool isMultiTable = false;
+        QString fromError;
+        if (!parseFromClause(sql,
+                             tokens,
+                             fromIdx,
+                             tableTailEnd,
+                             &fromSources,
+                             &joins,
+                             &table,
+                             &tableAlias,
+                             &isMultiTable,
+                             &fromError)) {
+            return {false, fromError, cmdType, {}};
         }
 
         QString whereError;
@@ -627,7 +930,7 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         QString limitError;
         const int limitParseStart = limitIdx >= 0
                                         ? limitIdx
-                                        : ((orderIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableIndex + 1);
+                                        : ((orderIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableTailEnd);
         if (!parseSelectLimit(tokens, limitParseStart, &limit, &limitError)) {
             return {false, limitError, cmdType, {}};
         }
@@ -641,6 +944,9 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         payload["projectionItems"] = projectionItems;
         payload["tableName"] = table;
         payload["tableAlias"] = tableAlias;
+        payload["fromSources"] = fromSources;
+        payload["joins"] = joins;
+        payload["isMultiTable"] = isMultiTable;
         payload["limit"] = limit;
 
         return {true, "", cmdType, payload};

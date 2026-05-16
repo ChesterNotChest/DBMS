@@ -275,6 +275,37 @@ private slots:
         const sqlparser::ParseResult multiOrder = sqlparser::parseSql(
             QStringLiteral("SELECT id FROM student ORDER BY a, b"));
         QVERIFY(!multiOrder.success);
+
+        const sqlparser::ParseResult commaFrom = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id, c.name FROM student s, class c WHERE s.class_id = c.id"));
+        QVERIFY2(commaFrom.success, qPrintable(commaFrom.errorMessage));
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("isMultiTable")).toBool(), true);
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("fromSources")).toList().size(), 2);
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("joins")).toList().size(), 0);
+
+        const sqlparser::ParseResult leftJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s LEFT JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(leftJoin.success, qPrintable(leftJoin.errorMessage));
+        QCOMPARE(leftJoin.payload.value(QStringLiteral("fromSources")).toList().size(), 2);
+        const QVariantMap leftJoinPayload = leftJoin.payload.value(QStringLiteral("joins")).toList().first().toMap();
+        QCOMPARE(leftJoinPayload.value(QStringLiteral("joinType")).toString(), QStringLiteral("left"));
+        QVERIFY(leftJoinPayload.contains(QStringLiteral("onAst")));
+
+        const sqlparser::ParseResult rightJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s RIGHT JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(rightJoin.success, qPrintable(rightJoin.errorMessage));
+        QCOMPARE(rightJoin.payload.value(QStringLiteral("joins")).toList().first().toMap().value(QStringLiteral("joinType")).toString(),
+                 QStringLiteral("right"));
+
+        const sqlparser::ParseResult fullJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s FULL JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(fullJoin.success, qPrintable(fullJoin.errorMessage));
+        QCOMPARE(fullJoin.payload.value(QStringLiteral("joins")).toList().first().toMap().value(QStringLiteral("joinType")).toString(),
+                 QStringLiteral("full"));
+
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a NATURAL JOIN b")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a, b JOIN c ON b.id = c.id")).success);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
@@ -474,6 +505,99 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
         QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
         QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("3"));
+    }
+
+    void test_dispatchMultiTableFromAndJoins()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_multi_from_db");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema studentSchema;
+        studentSchema.tableName = QStringLiteral("student_multi");
+        studentSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("class_id"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        studentSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_student_multi_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(studentSchema.tableName, studentSchema);
+
+        tabledef::TableSchema classSchema;
+        classSchema.tableName = QStringLiteral("class_multi");
+        classSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        classSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_class_multi_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(classSchema.tableName, classSchema);
+
+        seedRows(studentSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                           {QStringLiteral("class_id"), QStringLiteral("10")},
+                           {QStringLiteral("name"), QStringLiteral("alice")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                           {QStringLiteral("class_id"), QStringLiteral("20")},
+                           {QStringLiteral("name"), QStringLiteral("bob")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                           {QStringLiteral("class_id"), QStringLiteral("99")},
+                           {QStringLiteral("name"), QStringLiteral("carol")}})});
+        seedRows(classSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                           {QStringLiteral("name"), QStringLiteral("cs")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("20")},
+                           {QStringLiteral("name"), QStringLiteral("math")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("30")},
+                           {QStringLiteral("name"), QStringLiteral("art")}})});
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s, class_multi c "
+                           "WHERE s.class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(1), QStringLiteral("cs"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("2"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(1), QStringLiteral("math"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id AS sid, c.name FROM student_multi s "
+                           "JOIN class_multi c ON s.class_id = c.id ORDER BY sid DESC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns.first(), QStringLiteral("sid"));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("2"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "LEFT JOIN class_multi c ON s.class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(0), QStringLiteral("3"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(1), QString());
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "RIGHT JOIN class_multi c ON s.class_id = c.id ORDER BY c.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(0), QString());
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(1), QStringLiteral("art"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "FULL JOIN class_multi c ON s.class_id = c.id ORDER BY c.name ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 4);
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT id FROM student_multi s JOIN class_multi c ON s.class_id = c.id"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("ambiguous column")));
     }
 
     void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()

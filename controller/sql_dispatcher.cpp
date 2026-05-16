@@ -825,7 +825,8 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
         return {false, schemaError};
     }
 
-    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()
+        || p.payload.value(QStringLiteral("isMultiTable")).toBool()) {
         QueryExecutor executor;
         const QueryExecuteResult queryResult = executor.executeParsed(p,
                                                                      QueryExecuteContext{currentDatabase,
