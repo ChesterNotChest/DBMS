@@ -965,6 +965,37 @@ bool indexMatchesTableSnapshot(const QString &databaseName,
         return false;
     }
 
+    QMap<QString, QStringList> indexedRowLocatorsByKey;
+    const QJsonArray nodes = root.value(QStringLiteral("nodes")).toArray();
+    for (const QJsonValue &nodeValue : nodes) {
+        const QJsonObject node = nodeValue.toObject();
+        if (!node.value(QStringLiteral("leaf")).toBool()) {
+            continue;
+        }
+
+        const QJsonArray keys = node.value(QStringLiteral("keys")).toArray();
+        const QJsonArray values = node.value(QStringLiteral("values")).toArray();
+        if (keys.size() != values.size()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("index '%1' node key/value count mismatch").arg(index.indexName);
+            }
+            return false;
+        }
+
+        for (int keyIndex = 0; keyIndex < keys.size(); ++keyIndex) {
+            const QString keySignature = keys.at(keyIndex).toString();
+            QStringList rowLocators = indexedRowLocatorsByKey.value(keySignature);
+            const QJsonArray buckets = values.at(keyIndex).toArray();
+            for (const QJsonValue &bucketValue : buckets) {
+                const QJsonArray locatorArray = bucketValue.toArray();
+                for (const QJsonValue &locatorValue : locatorArray) {
+                    rowLocators.append(locatorValue.toString());
+                }
+            }
+            indexedRowLocatorsByKey.insert(keySignature, rowLocators);
+        }
+    }
+
     for (int rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex) {
         QStringList keyValues;
         keyValues.reserve(index.columnNames.size());
@@ -992,13 +1023,11 @@ bool indexMatchesTableSnapshot(const QString &databaseName,
         }
 
         const QString rowId = rowIds.at(rowIndex);
-        QString searchError;
-        const QStringList matches = sortIndexRepo.search(keyValues, &searchError);
-        if (!searchError.isEmpty() || !matches.contains(rowId)) {
+        const QString signature = compositeKeySignature(keyValues);
+        const QStringList matches = indexedRowLocatorsByKey.value(signature);
+        if (!matches.contains(rowId)) {
             if (error != nullptr) {
-                *error = searchError.isEmpty()
-                             ? QStringLiteral("index '%1' does not contain row locator '%2'").arg(index.indexName, rowId)
-                             : searchError;
+                *error = QStringLiteral("index '%1' does not contain row locator '%2'").arg(index.indexName, rowId);
             }
             return false;
         }

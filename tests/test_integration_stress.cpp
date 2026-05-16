@@ -4,11 +4,13 @@
 #include "../service/service.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTextStream>
 #include <QtTest>
 
@@ -23,12 +25,61 @@ QString testDataRoot()
     return QDir(QDir::tempPath()).absoluteFilePath(QStringLiteral("DBMS_test_integration_stress"));
 }
 
+QString csvEscape(QString value)
+{
+    if (value.contains(QLatin1Char('"'))
+        || value.contains(QLatin1Char(','))
+        || value.contains(QLatin1Char('\n'))
+        || value.contains(QLatin1Char('\r'))) {
+        value.replace(QStringLiteral("\""), QStringLiteral("\"\""));
+        return QStringLiteral("\"%1\"").arg(value);
+    }
+    return value;
+}
+
+void appendPerformanceCsvRow(const QString &stageName,
+                             int rowCount,
+                             qint64 elapsedMs,
+                             const QDateTime &startedAt,
+                             const QDateTime &endedAt)
+{
+    const QString csvPath = QString::fromLocal8Bit(qgetenv("DBMS_PERF_CSV_PATH")).trimmed();
+    if (csvPath.isEmpty()) {
+        return;
+    }
+
+    const QFileInfo fileInfo(csvPath);
+    QDir directory = fileInfo.dir();
+    if (!directory.exists()) {
+        directory.mkpath(QStringLiteral("."));
+    }
+
+    const bool writeHeader = !fileInfo.exists() || fileInfo.size() == 0;
+    QFile file(csvPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QTextStream(stderr) << "[integration-stress] WARN unable to open performance CSV "
+                            << csvPath << ": " << file.errorString() << Qt::endl;
+        return;
+    }
+
+    QTextStream out(&file);
+    if (writeHeader) {
+        out << "stage,row_count,elapsed_ms,started_at_utc,ended_at_utc" << Qt::endl;
+    }
+    out << csvEscape(stageName) << ','
+        << (rowCount >= 0 ? QString::number(rowCount) : QString()) << ','
+        << elapsedMs << ','
+        << startedAt.toUTC().toString(Qt::ISODateWithMs) << ','
+        << endedAt.toUTC().toString(Qt::ISODateWithMs) << Qt::endl;
+}
+
 class ScopedStageTimer
 {
 public:
     ScopedStageTimer(QString stageName, int rowCount = -1)
         : m_stageName(std::move(stageName))
         , m_rowCount(rowCount)
+        , m_startedAt(QDateTime::currentDateTimeUtc())
     {
         m_timer.start();
         QTextStream(stdout) << "[integration-stress] START " << m_stageName
@@ -37,9 +88,12 @@ public:
 
     ~ScopedStageTimer()
     {
+        const qint64 elapsedMs = m_timer.elapsed();
+        const QDateTime endedAt = QDateTime::currentDateTimeUtc();
         QTextStream(stdout) << "[integration-stress] END " << m_stageName
                             << rowCountText()
-                            << " elapsed_ms=" << m_timer.elapsed() << Qt::endl;
+                            << " elapsed_ms=" << elapsedMs << Qt::endl;
+        appendPerformanceCsvRow(m_stageName, m_rowCount, elapsedMs, m_startedAt, endedAt);
     }
 
 private:
@@ -50,6 +104,7 @@ private:
 
     QString m_stageName;
     int m_rowCount = -1;
+    QDateTime m_startedAt;
     QElapsedTimer m_timer;
 };
 
@@ -95,6 +150,26 @@ int stressRowCount(int defaultValue)
     bool ok = false;
     const int configured = QString::fromLocal8Bit(qgetenv("DBMS_STRESS_ROW_COUNT")).toInt(&ok);
     return (ok && configured > 0) ? configured : defaultValue;
+}
+
+QList<int> performanceSampleRowCounts()
+{
+    const QString configured = QString::fromLocal8Bit(qgetenv("DBMS_PERF_ROW_COUNTS")).trimmed();
+    if (configured.isEmpty()) {
+        return {100, 500, 1000};
+    }
+
+    QList<int> rowCounts;
+    const QStringList parts = configured.split(QRegularExpression(QStringLiteral("[,;\\s]+")),
+                                               Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        bool ok = false;
+        const int value = part.toInt(&ok);
+        if (ok && value > 0 && !rowCounts.contains(value)) {
+            rowCounts.append(value);
+        }
+    }
+    return rowCounts.isEmpty() ? QList<int>{100, 500, 1000} : rowCounts;
 }
 
 bool execOk(client::SqlClientEngine &engine,
@@ -786,6 +861,94 @@ protected:
         }
     }
 
+    void test_stressPerformanceCsvSamples()
+    {
+        if (!stressEnabled()) {
+            QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
+        }
+
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString clientId = pool.createSession(m_dataRoot);
+
+        service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        for (const int rowCount : performanceSampleRowCounts()) {
+            const QString databaseName = QStringLiteral("stress_perf_sample_%1").arg(rowCount);
+            const QString tableName = QStringLiteral("sample_rows_%1").arg(rowCount);
+
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.prepare"), rowCount);
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("CREATE DATABASE %1;"
+                                               "USE %1;"
+                                               "CREATE TABLE %2 ("
+                                               "id INT PRIMARY KEY, "
+                                               "code VARCHAR(32), "
+                                               "value INT);")
+                                    .arg(databaseName, tableName),
+                                "prepare performance sample",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.insert"), rowCount);
+                insertBulkRows(engine, clientId, tableName, rowCount, 100);
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.select_all"), rowCount);
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT * FROM %1;").arg(tableName),
+                                 "select all performance sample rows",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+            }
+
+            const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.update_one"), rowCount);
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("UPDATE %1 SET value = 777 WHERE id = %2;")
+                                    .arg(tableName)
+                                    .arg(targetId),
+                                "update performance sample row",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.create_index"), rowCount);
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("CREATE INDEX idx_%1_code ON %1(code);").arg(tableName),
+                                "create performance sample index",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("perf.sample.indexed_select"), rowCount);
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT id, value FROM %1 WHERE code = 'code_%2';")
+                                     .arg(tableName)
+                                     .arg(targetId),
+                                 "indexed select performance sample row",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+                QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
+            }
+        }
+    }
+
 private:
     QString m_dataRoot;
 };
@@ -869,6 +1032,11 @@ private slots:
     void test_stressIndexLookupBenefit()
     {
         IntegrationStressFixture::test_stressIndexLookupBenefit();
+    }
+
+    void test_stressPerformanceCsvSamples()
+    {
+        IntegrationStressFixture::test_stressPerformanceCsvSamples();
     }
 };
 
