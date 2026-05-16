@@ -1,13 +1,18 @@
 #include "repo.h"
 
 #include <algorithm>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMap>
+#include <QQueue>
+#include <QReadLocker>
+#include <QReadWriteLock>
 #include <QSet>
+#include <QWriteLocker>
 #include <QVector>
 
 namespace {
@@ -18,6 +23,10 @@ struct IndexEntry
     QStringList rowLocators;
 };
 
+QVector<IndexEntry> loadEntriesFromDocument(const QJsonObject &document);
+
+constexpr int kMaxCachedIndexFiles = 64;
+
 struct BPlusNode
 {
     int id = -1;
@@ -27,6 +36,63 @@ struct BPlusNode
     QList<int> children;
     int next = -1;
 };
+
+QMap<QString, QJsonObject> &indexDocumentCache()
+{
+    static QMap<QString, QJsonObject> cache;
+    return cache;
+}
+
+QMap<QString, QMap<QString, QStringList>> &indexLookupCache()
+{
+    static QMap<QString, QMap<QString, QStringList>> cache;
+    return cache;
+}
+
+QMap<QString, QVector<IndexEntry>> &indexEntriesCache()
+{
+    static QMap<QString, QVector<IndexEntry>> cache;
+    return cache;
+}
+
+QReadWriteLock &indexCacheLock()
+{
+    static QReadWriteLock lock;
+    return lock;
+}
+
+QQueue<QString> &indexCacheLru()
+{
+    static QQueue<QString> lru;
+    return lru;
+}
+
+void touchIndexCachePathLocked(const QString &path)
+{
+    QQueue<QString> &lru = indexCacheLru();
+    lru.removeAll(path);
+    lru.enqueue(path);
+}
+
+void trimIndexCachesLocked()
+{
+    QQueue<QString> &lru = indexCacheLru();
+    while (lru.size() > kMaxCachedIndexFiles) {
+        const QString evictedPath = lru.dequeue();
+        indexDocumentCache().remove(evictedPath);
+        indexLookupCache().remove(evictedPath);
+        indexEntriesCache().remove(evictedPath);
+    }
+}
+
+void removeIndexCaches(const QString &path)
+{
+    QWriteLocker locker(&indexCacheLock());
+    indexDocumentCache().remove(path);
+    indexLookupCache().remove(path);
+    indexEntriesCache().remove(path);
+    indexCacheLru().removeAll(path);
+}
 
 QString keySignature(const QStringList &values)
 {
@@ -359,6 +425,15 @@ bool writeIndexDocument(const QString &path, const QJsonObject &document, QStrin
         return false;
     }
 
+    const QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexDocumentCache().insert(path, document);
+        indexLookupCache().remove(path);
+        indexEntriesCache().insert(path, entries);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
+    }
     return true;
 }
 
@@ -374,13 +449,25 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
         return false;
     }
 
-    QFile file(path);
-    if (!file.exists()) {
+    QFileInfo fileInfo(path);
+    if (!fileInfo.exists()) {
+        removeIndexCaches(path);
         if (error != nullptr) {
             *error = QStringLiteral("index file '%1' does not exist").arg(path);
         }
         return false;
     }
+
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto cached = indexDocumentCache().constFind(path);
+        if (cached != indexDocumentCache().constEnd()) {
+            *document = cached.value();
+            return true;
+        }
+    }
+
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (error != nullptr) {
             *error = QStringLiteral("failed to open '%1' for reading").arg(path);
@@ -398,6 +485,12 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
     }
 
     *document = parsed.object();
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexDocumentCache().insert(path, *document);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
+    }
     return true;
 }
 
@@ -504,6 +597,78 @@ bool appendEntry(QVector<IndexEntry> *entries,
 
     entries->append(IndexEntry{keyValues, {rowLocator}});
     std::sort(entries->begin(), entries->end(), entryLessThan);
+    return true;
+}
+
+bool appendEntries(QVector<IndexEntry> *entries,
+                   const QList<QStringList> &keyValuesList,
+                   const QStringList &rowLocators,
+                   bool isUnique,
+                   QString *error)
+{
+    if (entries == nullptr) {
+        if (error != nullptr) {
+            *error = QStringLiteral("entries output pointer cannot be null");
+        }
+        return false;
+    }
+    if (keyValuesList.size() != rowLocators.size()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("index key count does not match row locator count");
+        }
+        return false;
+    }
+
+    QSet<QString> seenUniqueKeys;
+    QSet<QString> seenLocatorKeys;
+    seenLocatorKeys.reserve(entries->size() + keyValuesList.size());
+    for (const IndexEntry &entry : *entries) {
+        const QString entryKey = keySignature(entry.keyValues);
+        for (const QString &rowLocator : entry.rowLocators) {
+            seenLocatorKeys.insert(entryKey + QLatin1Char('|') + rowLocator);
+        }
+    }
+    if (isUnique) {
+        seenUniqueKeys.reserve(entries->size() + keyValuesList.size());
+        for (const IndexEntry &entry : *entries) {
+            if (!keyContainsEmptyValue(entry.keyValues)) {
+                seenUniqueKeys.insert(keySignature(entry.keyValues));
+            }
+        }
+    }
+
+    bool changed = false;
+    for (int index = 0; index < keyValuesList.size(); ++index) {
+        const QStringList keyValues = keyValuesList.at(index);
+        const QString rowLocator = rowLocators.at(index);
+        if (isUnique && keyContainsEmptyValue(keyValues)) {
+            continue;
+        }
+
+        const QString key = keySignature(keyValues);
+        const QString locatorKey = key + QLatin1Char('|') + rowLocator;
+        if (seenLocatorKeys.contains(locatorKey)) {
+            continue;
+        }
+        seenLocatorKeys.insert(locatorKey);
+
+        if (isUnique) {
+            if (seenUniqueKeys.contains(key)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("unique index already contains duplicate key values");
+                }
+                return false;
+            }
+            seenUniqueKeys.insert(key);
+        }
+
+        entries->append(IndexEntry{keyValues, {rowLocator}});
+        changed = true;
+    }
+
+    if (changed) {
+        std::sort(entries->begin(), entries->end(), entryLessThan);
+    }
     return true;
 }
 
@@ -631,6 +796,36 @@ QStringList searchEntries(const QJsonObject &document, const QStringList &keyVal
     return matches;
 }
 
+QMap<QString, QStringList> buildLookupMap(const QJsonObject &document)
+{
+    QMap<QString, QStringList> lookup;
+    const QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    for (const IndexEntry &entry : entries) {
+        QStringList &rowLocators = lookup[keySignature(entry.keyValues)];
+        rowLocators.append(entry.rowLocators);
+    }
+    return lookup;
+}
+
+QVector<IndexEntry> orderedEntriesForPath(const QString &path, const QJsonObject &document)
+{
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto cached = indexEntriesCache().constFind(path);
+        if (cached != indexEntriesCache().constEnd()) {
+            return cached.value();
+        }
+    }
+    QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexEntriesCache().insert(path, entries);
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
+    }
+    return entries;
+}
+
 } // namespace
 
 namespace repo {
@@ -737,6 +932,7 @@ RepositoryResult SortIndexRepo::createIndex(const tabledef::IndexMeta &index,
 
 RepositoryResult SortIndexRepo::dropIndex() const
 {
+    removeIndexCaches(getIndexFilePath());
     return m_store.removeFile(getIndexFilePath());
 }
 
@@ -832,6 +1028,19 @@ RepositoryResult SortIndexRepo::rebuild(const TableData &table, const QStringLis
 
 RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const
 {
+    return insertIndexEntries({keyValues}, {rowLocator});
+}
+
+RepositoryResult SortIndexRepo::insertIndexEntries(const QList<QStringList> &keyValuesList,
+                                                   const QStringList &rowLocators) const
+{
+    if (keyValuesList.size() != rowLocators.size()) {
+        return RepositoryResult::failure(QStringLiteral("index key count does not match row locator count"));
+    }
+    if (keyValuesList.isEmpty()) {
+        return RepositoryResult::success();
+    }
+
     QString error;
     QJsonObject document;
     if (!readIndexDocument(getIndexFilePath(), &document, &error)) {
@@ -841,7 +1050,7 @@ RepositoryResult SortIndexRepo::insertIndexEntry(const QStringList &keyValues, c
     const QJsonObject metaObject = document.value(QStringLiteral("meta")).toObject();
     const bool isUnique = metaObject.value(QStringLiteral("isUnique")).toBool(false);
     QVector<IndexEntry> entries = loadEntriesFromDocument(document);
-    if (!appendEntry(&entries, keyValues, rowLocator, isUnique, &error)) {
+    if (!appendEntries(&entries, keyValuesList, rowLocators, isUnique, &error)) {
         return RepositoryResult::failure(error);
     }
 
@@ -925,11 +1134,81 @@ RepositoryResult SortIndexRepo::updateIndexEntry(const QStringList &oldKeyValues
 
 QStringList SortIndexRepo::search(const QStringList &keyValues, QString *error) const
 {
+    if (error != nullptr) {
+        error->clear();
+    }
+    const QString path = getIndexFilePath();
+    const QString key = keySignature(keyValues);
+    {
+        QReadLocker locker(&indexCacheLock());
+        const auto lookupCacheIt = indexLookupCache().constFind(path);
+        if (lookupCacheIt != indexLookupCache().constEnd()) {
+            return lookupCacheIt.value().value(key);
+        }
+    }
+
     QJsonObject document;
-    if (!readIndexDocument(getIndexFilePath(), &document, error)) {
+    if (!readIndexDocument(path, &document, error)) {
         return {};
     }
-    return searchEntries(document, keyValues, error);
+    QMap<QString, QStringList> lookup = buildLookupMap(document);
+    const QStringList matches = lookup.value(key);
+    {
+        QWriteLocker locker(&indexCacheLock());
+        indexLookupCache().insert(path, std::move(lookup));
+        touchIndexCachePathLocked(path);
+        trimIndexCachesLocked();
+    }
+    return matches;
+}
+
+QList<QStringList> SortIndexRepo::orderedKeyValues(bool descending, QString *error) const
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QString path = getIndexFilePath();
+    QJsonObject document;
+    if (!readIndexDocument(path, &document, error)) {
+        return {};
+    }
+
+    QVector<IndexEntry> entries = orderedEntriesForPath(path, document);
+    if (descending) {
+        std::reverse(entries.begin(), entries.end());
+    }
+
+    QList<QStringList> keyValuesList;
+    for (const IndexEntry &entry : entries) {
+        for (int rowIndex = 0; rowIndex < entry.rowLocators.size(); ++rowIndex) {
+            keyValuesList.append(entry.keyValues);
+        }
+    }
+    return keyValuesList;
+}
+
+QStringList SortIndexRepo::orderedRowLocators(bool descending, QString *error) const
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QString path = getIndexFilePath();
+    QJsonObject document;
+    if (!readIndexDocument(path, &document, error)) {
+        return {};
+    }
+
+    QVector<IndexEntry> entries = orderedEntriesForPath(path, document);
+    if (descending) {
+        std::reverse(entries.begin(), entries.end());
+    }
+    QStringList locators;
+    for (const IndexEntry &entry : entries) {
+        locators.append(entry.rowLocators);
+    }
+    return locators;
 }
 
 bool SortIndexRepo::validateUniqueKeys(QString *error) const

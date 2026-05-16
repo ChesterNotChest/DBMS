@@ -58,19 +58,6 @@ set(DBMS_CORE_SOURCES
         repo/tab_repo.cpp
         repo/table_repo.cpp
         repo/sort_index_repo.cpp
-        tests/test_entry.h
-        tests/test_parser_dispatcher.cpp
-        tests/test_database_service.cpp
-        tests/test_logic.cpp
-        tests/test_query_executor.cpp
-        tests/test_table_service.cpp
-        tests/test_tuple_service.cpp
-        tests/test_lock_manager.cpp
-        tests/test_threaded_service.cpp
-        tests/test_catalog_cache.cpp
-        tests/test_service_common_cache.cpp
-        tests/test_table_runtime_pipeline.cpp
-        tests/test_index_runtime_repair.cpp
         # ── SQL Parser 层（纯解析，不碰文件系统）──
         utils/sql_parser/sql_tokenizer.h
         utils/sql_parser/sql_tokenizer.cpp
@@ -113,10 +100,17 @@ set(DBMS_TEST_SOURCES
         tests/test_query_executor.cpp
         tests/test_table_service.cpp
         tests/test_tuple_service.cpp
+        tests/test_lock_manager.cpp
+        tests/test_threaded_service.cpp
+        tests/test_catalog_cache.cpp
+        tests/test_service_common_cache.cpp
+        tests/test_table_runtime_pipeline.cpp
+        tests/test_index_runtime_repair.cpp
         tests/test_client_session.cpp
         tests/test_cli_client.cpp
         tests/test_auth_client.cpp
         tests/test_gui_client_runtime.cpp
+        tests/test_integration_stress.cpp
 )
 
 set(DBMS_CLI_SOURCES

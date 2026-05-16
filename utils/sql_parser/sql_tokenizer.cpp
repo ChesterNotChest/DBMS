@@ -24,6 +24,7 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "SELECT")         return TokenType::SELECT;
     if (w == "FROM")           return TokenType::FROM;
     if (w == "WHERE")          return TokenType::WHERE;
+    if (w == "ORDER")          return TokenType::ORDER;
     if (w == "LIMIT")          return TokenType::LIMIT;
     if (w == "INSERT")         return TokenType::INSERT;
     if (w == "INTO")           return TokenType::INTO;
@@ -41,6 +42,7 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "USER")           return TokenType::USER;
     if (w == "IDENTIFIED")     return TokenType::IDENTIFIED;
     if (w == "BY")             return TokenType::BY;
+    if (w == "ASC")            return TokenType::ASC;
     if (w == "GRANT")          return TokenType::GRANT;
     if (w == "REVOKE")         return TokenType::REVOKE;
     if (w == "ALL")            return TokenType::ALL;
