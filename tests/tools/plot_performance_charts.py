@@ -4,8 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-BEFORE_PATH = ROOT / "build" / "performance_samples.csv"
-AFTER_PATH = ROOT / "build" / "performance_samples_after_opt.csv"
+CSV_PATH = ROOT / "build" / "performance_samples.csv"
 OUT_DIR = ROOT / "build" / "performance_charts"
 
 
@@ -23,19 +22,23 @@ def to_int(value, default=0):
         return default
 
 
-def find(rows, stage, row_count=None):
-    matches = [row for row in rows if row.get("stage") == stage]
-    if row_count is not None:
-        matches = [row for row in matches if row.get("row_count") == str(row_count)]
-    if not matches:
-        return None
-    return to_int(matches[-1].get("elapsed_ms"))
+def metric_value(rows, test_id, stage, row_count, variant="", metric="elapsed_ms"):
+    matches = [
+        row
+        for row in rows
+        if row.get("test_id") == test_id
+        and row.get("stage") == stage
+        and row.get("row_count") == str(row_count)
+        and row.get("variant", "") == variant
+        and row.get("metric") == metric
+    ]
+    return to_int(matches[-1].get("value")) if matches else 0
 
 
 def svg_wrap(width, height, body):
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <style>
-text {{ font-family: Arial, "Microsoft YaHei", sans-serif; fill: #202124; }}
+text {{ font-family: Arial, sans-serif; fill: #202124; }}
 .title {{ font-size: 20px; font-weight: 700; }}
 .axis {{ font-size: 12px; fill: #5f6368; }}
 .label {{ font-size: 12px; }}
@@ -49,8 +52,8 @@ text {{ font-family: Arial, "Microsoft YaHei", sans-serif; fill: #202124; }}
 """
 
 
-def bar_chart(path, title, labels, series, width=980, height=560, y_label="elapsed_ms"):
-    margin = {"left": 78, "right": 35, "top": 70, "bottom": 120}
+def bar_chart(path, title, labels, series, width=980, height=560, y_label="ms"):
+    margin = {"left": 78, "right": 42, "top": 70, "bottom": 118}
     plot_w = width - margin["left"] - margin["right"]
     plot_h = height - margin["top"] - margin["bottom"]
     max_v = max([value for _, values, _ in series for value in values] + [1])
@@ -67,9 +70,9 @@ def bar_chart(path, title, labels, series, width=980, height=560, y_label="elaps
     parts.append(f'<line x1="{margin["left"]}" y1="{margin["top"] + plot_h}" x2="{width - margin["right"]}" y2="{margin["top"] + plot_h}" class="axis-line"/>')
     parts.append(f'<text x="20" y="{margin["top"] + plot_h / 2}" transform="rotate(-90 20 {margin["top"] + plot_h / 2})" text-anchor="middle" class="axis">{escape(y_label)}</text>')
 
-    group_w = plot_w / len(labels)
+    group_w = plot_w / max(1, len(labels))
     bar_gap = 8
-    bar_w = min(38, (group_w - 24) / max(1, len(series)) - bar_gap)
+    bar_w = min(34, max(6, (group_w - 24) / max(1, len(series)) - bar_gap))
     for label_index, label in enumerate(labels):
         group_x = margin["left"] + label_index * group_w
         total_bar_w = len(series) * bar_w + (len(series) - 1) * bar_gap
@@ -88,20 +91,17 @@ def bar_chart(path, title, labels, series, width=980, height=560, y_label="elaps
     for name, _, color in series:
         parts.append(f'<rect x="{legend_x}" y="{legend_y - 11}" width="14" height="14" fill="{color}" rx="2"/>')
         parts.append(f'<text x="{legend_x + 20}" y="{legend_y}" class="label">{escape(name)}</text>')
-        legend_x += 140
+        legend_x += max(140, len(name) * 8 + 42)
 
     path.write_text(svg_wrap(width, height, "\n".join(parts)), encoding="utf-8")
 
 
-def line_chart(path, title, rows, stages, width=980, height=560):
-    margin = {"left": 78, "right": 155, "top": 70, "bottom": 80}
+def line_chart(path, title, counts, series, width=980, height=560, y_label="ms"):
+    margin = {"left": 78, "right": 165, "top": 70, "bottom": 80}
     plot_w = width - margin["left"] - margin["right"]
     plot_h = height - margin["top"] - margin["bottom"]
-    counts = sorted({to_int(row.get("row_count")) for row in rows if row.get("stage") in stages and row.get("row_count")})
-    data = {stage: [find(rows, stage, count) or 0 for count in counts] for stage in stages}
-    max_v = max([value for values in data.values() for value in values] + [1])
+    max_v = max([value for _, values, _ in series for value in values] + [1])
     y_max = max_v * 1.18
-    colors = ["#1a73e8", "#188038", "#f29900", "#d93025", "#9334e6", "#00897b"]
     parts = [f'<text x="{width / 2}" y="34" text-anchor="middle" class="title">{escape(title)}</text>']
 
     for index in range(6):
@@ -116,80 +116,97 @@ def line_chart(path, title, rows, stages, width=980, height=560):
         x = margin["left"] + (index / max(1, len(counts) - 1)) * plot_w
         parts.append(f'<text x="{x:.1f}" y="{height - 45}" text-anchor="middle" class="axis">{count}</text>')
     parts.append(f'<text x="{margin["left"] + plot_w / 2}" y="{height - 18}" text-anchor="middle" class="axis">row_count</text>')
-    parts.append(f'<text x="20" y="{margin["top"] + plot_h / 2}" transform="rotate(-90 20 {margin["top"] + plot_h / 2})" text-anchor="middle" class="axis">elapsed_ms</text>')
+    parts.append(f'<text x="20" y="{margin["top"] + plot_h / 2}" transform="rotate(-90 20 {margin["top"] + plot_h / 2})" text-anchor="middle" class="axis">{escape(y_label)}</text>')
 
-    for series_index, stage in enumerate(stages):
+    for series_index, (name, values, color) in enumerate(series):
         points = []
-        for index, value in enumerate(data[stage]):
+        for index, value in enumerate(values):
             x = margin["left"] + (index / max(1, len(counts) - 1)) * plot_w
             y = margin["top"] + plot_h - (value / y_max) * plot_h
             points.append((x, y, value))
-        color = colors[series_index % len(colors)]
-        point_text = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in points)
-        parts.append(f'<polyline points="{point_text}" fill="none" stroke="{color}" stroke-width="2.5"/>')
+        parts.append(f'<polyline points="{" ".join(f"{x:.1f},{y:.1f}" for x, y, _ in points)}" fill="none" stroke="{color}" stroke-width="2.5"/>')
         for x, y, value in points:
             parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
             parts.append(f'<text x="{x:.1f}" y="{y - 8:.1f}" text-anchor="middle" class="value">{value}</text>')
         legend_y = margin["top"] + series_index * 24
         parts.append(f'<rect x="{width - margin["right"] + 20}" y="{legend_y - 10}" width="14" height="14" fill="{color}" rx="2"/>')
-        parts.append(f'<text x="{width - margin["right"] + 40}" y="{legend_y + 1}" class="label">{escape(stage.replace("perf.sample.", ""))}</text>')
+        parts.append(f'<text x="{width - margin["right"] + 40}" y="{legend_y + 1}" class="label">{escape(name)}</text>')
 
     path.write_text(svg_wrap(width, height, "\n".join(parts)), encoding="utf-8")
 
 
+def values(rows, test_id, stage, counts, variant="", metric="elapsed_ms"):
+    return [metric_value(rows, test_id, stage, count, variant, metric) for count in counts]
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    before = read_rows(BEFORE_PATH)
-    after = read_rows(AFTER_PATH)
-
-    labels = ["CRUD insert", "Delete+select", "CRUD total", "Sample insert", "Sample update"]
-    before_values = [
-        find(before, "stress.massive_data_crud.insert", 200) or 0,
-        find(before, "stress.massive_data_crud.delete_then_select", 199) or 0,
-        find(before, "stress.massive_data_crud", 200) or 0,
-        find(before, "perf.sample.insert", 200) or 0,
-        find(before, "perf.sample.update_one", 200) or 0,
-    ]
-    after_values = [
-        find(after, "stress.massive_data_crud.insert", 200) or 0,
-        find(after, "stress.massive_data_crud.delete_then_select", 199) or 0,
-        find(after, "stress.massive_data_crud", 200) or 0,
-        find(after, "perf.sample.insert", 200) or 0,
-        find(after, "perf.sample.update_one", 200) or 0,
-    ]
-    bar_chart(
-        OUT_DIR / "01_before_after_200_rows.svg",
-        "200 行场景索引健康校验优化前后耗时对比",
-        labels,
-        [("before", before_values, "#9aa0a6"), ("after", after_values, "#1a73e8")],
-    )
+    rows = read_rows(CSV_PATH)
+    counts = [50, 100, 200, 500]
+    index_order_counts = [50, 100, 200, 500, 1000, 5000]
+    colors = ["#1a73e8", "#188038", "#f29900", "#d93025", "#9334e6", "#00897b"]
 
     line_chart(
-        OUT_DIR / "02_perf_sample_trends_after_opt.svg",
-        "多数据规模下核心操作耗时趋势",
-        after,
+        OUT_DIR / "04_02_index_order_by_impact.svg",
+        "Index Impact on ORDER BY",
+        index_order_counts,
         [
-            "perf.sample.insert",
-            "perf.sample.select_all",
-            "perf.sample.update_one",
-            "perf.sample.create_index",
-            "perf.sample.indexed_select",
+            ("ASC without index", values(rows, "index_order_by_impact", "index_order_by_impact.order_by_asc", index_order_counts, "without_secondary_index"), colors[0]),
+            ("ASC with index", values(rows, "index_order_by_impact", "index_order_by_impact.order_by_asc", index_order_counts, "with_secondary_index"), colors[1]),
+            ("DESC without index", values(rows, "index_order_by_impact", "index_order_by_impact.order_by_desc", index_order_counts, "without_secondary_index"), colors[3]),
+            ("DESC with index", values(rows, "index_order_by_impact", "index_order_by_impact.order_by_desc", index_order_counts, "with_secondary_index"), colors[4]),
         ],
     )
 
-    crud_labels = ["insert", "select_all", "update+select", "delete+select"]
-    crud_values = [
-        find(after, "stress.massive_data_crud.insert", 200) or 0,
-        find(after, "stress.massive_data_crud.select_all", 200) or 0,
-        find(after, "stress.massive_data_crud.update_then_select", 1) or 0,
-        find(after, "stress.massive_data_crud.delete_then_select", 199) or 0,
+    line_chart(
+        OUT_DIR / "04_03_concurrent_crud.svg",
+        "Sequential vs Four-Client CRUD",
+        counts,
+        [
+            ("single total", values(rows, "concurrent_crud", "concurrent_crud.total", counts, "single_client_sequential"), colors[0]),
+            ("parallel total", values(rows, "concurrent_crud", "concurrent_crud.total", counts, "four_client_parallel"), colors[3]),
+        ],
+    )
+
+    massive_crud_stages = [
+        ("insert", "massive_crud.insert", colors[0]),
+        ("select_all", "massive_crud.select_all", colors[1]),
+        ("update_one", "massive_crud.update_one", colors[2]),
+        ("delete_one", "massive_crud.delete_one", colors[3]),
+        ("select_after_delete", "massive_crud.select_after_delete", colors[4]),
     ]
-    bar_chart(
-        OUT_DIR / "03_massive_crud_components_after_opt.svg",
-        "200 行大批量 CRUD 链路阶段耗时拆分",
-        crud_labels,
-        [("elapsed_ms", crud_values, "#188038")],
-        width=860,
+    line_chart(
+        OUT_DIR / "04_04_massive_crud_breakdown.svg",
+        "Massive CRUD Stage Time",
+        counts,
+        [(name, values(rows, "massive_crud", stage, counts, "row_count"), color) for name, stage, color in massive_crud_stages],
+    )
+
+    line_chart(
+        OUT_DIR / "04_05_index_build_cost.svg",
+        "Index Build Cost",
+        counts,
+        [("create_index", values(rows, "index_build", "index_build.create_index", counts, "row_count"), colors[0])],
+    )
+
+    line_chart(
+        OUT_DIR / "04_06_index_repair_cost.svg",
+        "Index Runtime Repair Cost",
+        counts,
+        [
+            ("healthy index file", values(rows, "index_repair", "index_repair.update", counts, "healthy_index_file"), colors[1]),
+            ("deleted index file", values(rows, "index_repair", "index_repair.update", counts, "deleted_index_file"), colors[3]),
+        ],
+    )
+
+    line_chart(
+        OUT_DIR / "04_07_foreign_key_cascade.svg",
+        "Foreign Key Cascade Cost",
+        counts,
+        [
+            ("cascade_update", values(rows, "foreign_key_cascade", "foreign_key_cascade.cascade_update", counts, "row_count"), colors[0]),
+            ("cascade_delete", values(rows, "foreign_key_cascade", "foreign_key_cascade.cascade_delete", counts, "row_count"), colors[3]),
+        ],
     )
 
     (OUT_DIR / "README.md").write_text(
@@ -197,14 +214,16 @@ def main():
 
 | File | Purpose |
 | --- | --- |
-| `01_before_after_200_rows.svg` | Before/after comparison for 200-row insert/delete/update scenarios. |
-| `02_perf_sample_trends_after_opt.svg` | Line chart for multi-scale CSV performance samples. |
-| `03_massive_crud_components_after_opt.svg` | Breakdown of massive CRUD stages after optimization. |
+| `04_02_index_order_by_impact.svg` | Indexed vs non-indexed ORDER BY comparison from 50 to 5000 rows. |
+| `04_03_concurrent_crud.svg` | Sequential vs four-client CRUD totals. |
+| `04_04_massive_crud_breakdown.svg` | CRUD stage trends across row counts. |
+| `04_05_index_build_cost.svg` | Index build cost across row counts. |
+| `04_06_index_repair_cost.svg` | Healthy index update vs repair-after-ablation cost. |
+| `04_07_foreign_key_cascade.svg` | Cascade update/delete cost across row counts. |
 
-Source CSV files:
+Source CSV:
 
 - `../performance_samples.csv`
-- `../performance_samples_after_opt.csv`
 """,
         encoding="utf-8",
     )

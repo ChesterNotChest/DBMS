@@ -352,104 +352,113 @@
 
 ## 4. 压力与性能测试
 
-### 4.1 多客户端并行压力测试
+### 4.1 压力与性能测试总原则
 
 #### 4.1.1 测试目标
 
-验证多个 CLI 进程并行执行时系统仍能保持数据隔离和稳定执行。
+统一压力与性能测试的数据规模和结果记录方式，使不同压测项可以在同一套 CSV 与图表流程中对照分析。
 
 #### 4.1.2 用例描述
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| 4 个 CLI 进程分别在独立数据库中建表、插入、更新、删除、查询。 | 每个进程正常退出并输出更新后的目标值。 | 所有进程 exit code 为 0，输出包含 `999`。 |
+| 所有压力/性能测试统一使用 `50,100,200,500` 四个规模；设置 `DBMS_PERF_CSV_PATH` 后运行全量测试。 | CSV 记录 `test_id,stage,row_count,variant,metric,value,unit,started_at_utc,ended_at_utc`。 | 各压测项 SQL 断言通过，CSV 中存在对应规模、变量和指标行。 |
 
-### 4.2 大批量数据 CRUD 压力测试
+### 4.2 索引对排序查询的影响
 
 #### 4.2.1 测试目标
 
-验证大数据量下插入、全表查询、更新和删除的稳定性，并量化各阶段耗时。该测试用于确认系统在批量数据写入、全表扫描、单行更新和删除后查询场景下的性能边界。
+验证普通二级索引对非主键、非唯一字段升序和降序排序查询的影响。除统一规模外，该压测额外增加 1000 行和 5000 行索引排序专项样本，用于观察较大数据量下的排序查询表现。
 
 #### 4.2.2 用例描述
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| 默认 row_count 为 500，可由 `DBMS_STRESS_ROW_COUNT` 调整。 | 插入后行数等于 row_count，更新值正确，删除后剩余 row_count - 1 行。 | 各阶段 SQL 成功，行数和值符合断言。 |
+| 先插入指定规模的确定性乱序 `sort_key` 数据；在未创建普通索引时分别执行 `ORDER BY sort_key ASC` 和 `ORDER BY sort_key DESC`；随后在 `sort_key` 上创建普通索引并再次执行相同排序查询。 | 两种变量下排序查询均成功，CSV 分别记录 `order_by_asc` 和 `order_by_desc` 耗时；图表展示 50 到 5000 行规模下的收益对比。 | 升序结果按 `sort_key` 递增，降序结果按 `sort_key` 递减，返回行数等于数据规模。 |
 
 #### 4.2.3 统计图表
 
-图 4-1 展示优化后 200 行数据压力测试中各 CRUD 阶段的耗时拆分。图中可以看出，删除后查询阶段仍是该链路中的主要耗时来源，说明该阶段包含删除匹配、约束检查、数据写回、索引维护和后续查询等多项工作，不是单纯查询耗时。
+![索引对排序查询的影响](../build/performance_charts/04_02_index_order_by_impact.svg)
 
-![图 4-1 大批量 CRUD 各阶段耗时拆分](../build/performance_charts/03_massive_crud_components_after_opt.svg)
-
-### 4.3 大批量索引构建压力测试
+### 4.3 多客户端并发 CRUD
 
 #### 4.3.1 测试目标
 
-验证大量数据上创建索引并按索引列查询的能力。
+验证多客户端并发下数据库隔离、锁机制和写入稳定性。
 
 #### 4.3.2 用例描述
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| 插入 row_count 行，创建索引后按 code 查询。 | 查询返回唯一目标行。 | 索引创建成功，查询结果 id 正确。 |
+| 对每个规模分别执行单客户端顺序 CRUD 和 4 个 CLI 客户端并发 CRUD。 | CSV 记录总耗时、各客户端耗时和成功客户端数量。 | 每个客户端正常退出，输出包含更新后的目标值 `999`，并发成功数为 4。 |
 
-### 4.4 索引消融与修复压力测试
+#### 4.3.3 统计图表
+
+![多客户端并发 CRUD](../build/performance_charts/04_03_concurrent_crud.svg)
+
+### 4.4 大批量 CRUD 阶段拆分
 
 #### 4.4.1 测试目标
 
-验证索引文件丢失后系统能够在写路径中自动修复。
+验证批量数据下核心 CRUD 链路各阶段耗时分布。
 
 #### 4.4.2 用例描述
 
 | 测试输入 | 预期输出 | 通过真值 |
 | --- | --- | --- |
-| 创建索引后删除索引文件，再执行写操作和查询。 | 写操作触发索引修复，查询返回更新后的值。 | 索引文件重新存在，查询值为预期值。 |
+| 对每个规模执行批量插入、全表查询、单行更新、单行删除和删除后查询。 | CSV 记录 `insert`、`select_all`、`update_one`、`delete_one`、`select_after_delete` 耗时。 | 插入后行数等于规模值；删除后剩余规模值减 1 行。 |
 
-### 4.5 多规模性能数据采样
+#### 4.4.3 统计图表
+
+![大批量 CRUD 阶段拆分](../build/performance_charts/04_04_massive_crud_breakdown.svg)
+
+### 4.5 索引构建成本
 
 #### 4.5.1 测试目标
 
-产出不同数据规模下可直接用于画图的性能数据。该测试固定执行建库建表、批量插入、全表查询、单行更新、创建索引和索引列查询等阶段，并将每个阶段的 `row_count` 与 `elapsed_ms` 写入 CSV。
+验证普通索引创建成本随数据规模变化的趋势。
 
 #### 4.5.2 用例描述
 
-| 测试输入 | 预期输出 | 通过真值 | 建议图表 |
-| --- | --- | --- | --- |
-| 默认 `100,500,1000` 行，可由 `DBMS_PERF_ROW_COUNTS` 调整。 | CSV 记录 `perf.sample.*` 阶段在不同 row_count 下的耗时。 | 每个规模的 SQL 断言通过，CSV 有对应行。 | 折线图：横轴 row_count，纵轴 elapsed_ms，按 stage 分组。 |
+| 测试输入 | 预期输出 | 通过真值 |
+| --- | --- | --- |
+| 对每个规模先插入数据，再在 `code` 列创建普通索引。 | CSV 记录 `create_index` 耗时。 | 索引创建成功，按索引列查询返回唯一目标行。 |
 
 #### 4.5.3 统计图表
 
-图 4-2 展示优化后不同数据规模下各性能采样阶段的耗时趋势。横轴为 `row_count`，纵轴为 `elapsed_ms`，每条折线对应一个固定阶段。该图用于比较数据规模增长时插入、全表查询、单行更新、索引构建和索引查询的耗时变化。
+![索引构建成本](../build/performance_charts/04_05_index_build_cost.svg)
 
-![图 4-2 多规模性能采样趋势](../build/performance_charts/02_perf_sample_trends_after_opt.svg)
-
-#### 4.5.4 图表数据说明
-
-| 图表名称 | 数据筛选 | 横轴 | 纵轴 | 说明 |
-| --- | --- | --- | --- | --- |
-| 批量插入性能趋势图 | `stage = perf.sample.insert` | `row_count` | `elapsed_ms` | 展示数据规模增长时插入耗时变化。 |
-| 全表查询性能趋势图 | `stage = perf.sample.select_all` | `row_count` | `elapsed_ms` | 展示全表扫描查询耗时变化。 |
-| 索引构建性能趋势图 | `stage = perf.sample.create_index` | `row_count` | `elapsed_ms` | 展示索引构建耗时与数据规模关系。 |
-| 索引查询性能趋势图 | `stage = perf.sample.indexed_select` | `row_count` | `elapsed_ms` | 展示索引查询在不同规模下的耗时。 |
-
-### 4.6 索引健康校验优化对比
+### 4.6 索引运行时修复
 
 #### 4.6.1 测试目标
 
-验证索引健康校验优化对插入、删除后查询和单行更新等场景的耗时影响。优化前，索引一致性校验会对表中每一行重复调用索引查询接口，导致索引 JSON 文件被重复读取和解析；优化后，系统单次读取索引文件，并在内存中构建索引键到行标识的映射完成校验。
+验证索引文件缺失后写路径修复能力和修复成本。
 
 #### 4.6.2 用例描述
 
-| 测试输入 | 预期输出 | 通过真值 | 建议图表 |
-| --- | --- | --- | --- |
-| 使用优化前 CSV `performance_samples.csv` 与优化后 CSV `performance_samples_after_opt.csv`，对比 200 行数据下的插入、删除后查询、总 CRUD、采样插入和采样更新耗时。 | 优化后对应阶段耗时低于优化前，且全量测试仍保持通过。 | 优化后全量测试 exit code 为 0；CSV 中同名阶段 `elapsed_ms` 下降。 | 柱状图：优化前后 200 行场景耗时对比。 |
+| 测试输入 | 预期输出 | 通过真值 |
+| --- | --- | --- |
+| 分别在正常索引文件和删除索引文件后写入两种变量下执行更新。 | CSV 记录正常索引文件更新耗时和删除索引文件后触发修复的更新耗时。 | 删除索引文件后写操作成功，索引文件重新存在，按索引列查询结果正确。 |
 
 #### 4.6.3 统计图表
 
-图 4-3 展示索引健康校验优化前后的 200 行数据场景耗时对比。图中的 `before` 来自 `build/performance_samples.csv`，`after` 来自 `build/performance_samples_after_opt.csv`。优化后，`stress.massive_data_crud.insert` 由 950 ms 降至 518 ms，`stress.massive_data_crud.delete_then_select` 由 2578 ms 降至 1317 ms，整体 CRUD 链路由 3881 ms 降至 1974 ms。该结果说明重复索引文件读取和解析是原插入、删除链路中的主要额外开销之一。
+![索引运行时修复](../build/performance_charts/04_06_index_repair_cost.svg)
 
-![图 4-3 索引健康校验优化前后对比](../build/performance_charts/01_before_after_200_rows.svg)
+### 4.7 外键级联成本
+
+#### 4.7.1 测试目标
+
+验证外键级联更新和级联删除在不同规模下的成本。
+
+#### 4.7.2 用例描述
+
+| 测试输入 | 预期输出 | 通过真值 |
+| --- | --- | --- |
+| 对每个规模创建父子表并插入父子行，随后更新父表主键并删除父表目标行。 | CSV 记录 `cascade_update` 和 `cascade_delete` 耗时。 | 子表外键列随父表更新；父表删除后对应子表行被级联删除。 |
+
+#### 4.7.3 统计图表
+
+![外键级联成本](../build/performance_charts/04_07_foreign_key_cascade.svg)
 
 ## 5. 功能测试
 
@@ -565,7 +574,7 @@ $env:PATH='E:\Qt\6.9.2\msvc2022_64\bin;' + $env:PATH
 $env:QT_QPA_PLATFORM='offscreen'
 $env:PATH='E:\Qt\6.9.2\msvc2022_64\bin;' + $env:PATH
 $env:DBMS_PERF_CSV_PATH='E:\Qt-projects\DBMS\build\performance_samples.csv'
-$env:DBMS_PERF_ROW_COUNTS='100,500,1000'
+$env:DBMS_STRESS_ROW_COUNTS='50,100,200,500'
 .\build\codex-vs-debug\Debug\DBMS.exe --run-tests
 ```
 

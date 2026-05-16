@@ -1,6 +1,7 @@
 #include "repo.h"
 
 #include <algorithm>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -18,6 +19,8 @@ struct IndexEntry
     QStringList rowLocators;
 };
 
+QVector<IndexEntry> loadEntriesFromDocument(const QJsonObject &document);
+
 struct BPlusNode
 {
     int id = -1;
@@ -27,6 +30,24 @@ struct BPlusNode
     QList<int> children;
     int next = -1;
 };
+
+QMap<QString, QJsonObject> &indexDocumentCache()
+{
+    static QMap<QString, QJsonObject> cache;
+    return cache;
+}
+
+QMap<QString, QMap<QString, QStringList>> &indexLookupCache()
+{
+    static QMap<QString, QMap<QString, QStringList>> cache;
+    return cache;
+}
+
+QMap<QString, QVector<IndexEntry>> &indexEntriesCache()
+{
+    static QMap<QString, QVector<IndexEntry>> cache;
+    return cache;
+}
 
 QString keySignature(const QStringList &values)
 {
@@ -359,6 +380,9 @@ bool writeIndexDocument(const QString &path, const QJsonObject &document, QStrin
         return false;
     }
 
+    indexDocumentCache().insert(path, document);
+    indexLookupCache().remove(path);
+    indexEntriesCache().insert(path, loadEntriesFromDocument(document));
     return true;
 }
 
@@ -374,13 +398,24 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
         return false;
     }
 
-    QFile file(path);
-    if (!file.exists()) {
+    QFileInfo fileInfo(path);
+    if (!fileInfo.exists()) {
+        indexDocumentCache().remove(path);
+        indexLookupCache().remove(path);
+        indexEntriesCache().remove(path);
         if (error != nullptr) {
             *error = QStringLiteral("index file '%1' does not exist").arg(path);
         }
         return false;
     }
+
+    const auto cached = indexDocumentCache().constFind(path);
+    if (cached != indexDocumentCache().constEnd()) {
+        *document = cached.value();
+        return true;
+    }
+
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         if (error != nullptr) {
             *error = QStringLiteral("failed to open '%1' for reading").arg(path);
@@ -398,6 +433,7 @@ bool readIndexDocument(const QString &path, QJsonObject *document, QString *erro
     }
 
     *document = parsed.object();
+    indexDocumentCache().insert(path, *document);
     return true;
 }
 
@@ -703,6 +739,28 @@ QStringList searchEntries(const QJsonObject &document, const QStringList &keyVal
     return matches;
 }
 
+QMap<QString, QStringList> buildLookupMap(const QJsonObject &document)
+{
+    QMap<QString, QStringList> lookup;
+    const QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    for (const IndexEntry &entry : entries) {
+        QStringList &rowLocators = lookup[keySignature(entry.keyValues)];
+        rowLocators.append(entry.rowLocators);
+    }
+    return lookup;
+}
+
+QVector<IndexEntry> orderedEntriesForPath(const QString &path, const QJsonObject &document)
+{
+    const auto cached = indexEntriesCache().constFind(path);
+    if (cached != indexEntriesCache().constEnd()) {
+        return cached.value();
+    }
+    QVector<IndexEntry> entries = loadEntriesFromDocument(document);
+    indexEntriesCache().insert(path, entries);
+    return entries;
+}
+
 } // namespace
 
 namespace repo {
@@ -809,6 +867,9 @@ RepositoryResult SortIndexRepo::createIndex(const tabledef::IndexMeta &index,
 
 RepositoryResult SortIndexRepo::dropIndex() const
 {
+    indexDocumentCache().remove(getIndexFilePath());
+    indexLookupCache().remove(getIndexFilePath());
+    indexEntriesCache().remove(getIndexFilePath());
     return m_store.removeFile(getIndexFilePath());
 }
 
@@ -1010,11 +1071,73 @@ RepositoryResult SortIndexRepo::updateIndexEntry(const QStringList &oldKeyValues
 
 QStringList SortIndexRepo::search(const QStringList &keyValues, QString *error) const
 {
+    if (error != nullptr) {
+        error->clear();
+    }
+    const QString path = getIndexFilePath();
+    const QString key = keySignature(keyValues);
+    const auto lookupCacheIt = indexLookupCache().constFind(path);
+    if (lookupCacheIt != indexLookupCache().constEnd()) {
+        return lookupCacheIt.value().value(key);
+    }
+
     QJsonObject document;
-    if (!readIndexDocument(getIndexFilePath(), &document, error)) {
+    if (!readIndexDocument(path, &document, error)) {
         return {};
     }
-    return searchEntries(document, keyValues, error);
+    QMap<QString, QStringList> lookup = buildLookupMap(document);
+    const QStringList matches = lookup.value(key);
+    indexLookupCache().insert(path, std::move(lookup));
+    return matches;
+}
+
+QList<QStringList> SortIndexRepo::orderedKeyValues(bool descending, QString *error) const
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QString path = getIndexFilePath();
+    QJsonObject document;
+    if (!readIndexDocument(path, &document, error)) {
+        return {};
+    }
+
+    QVector<IndexEntry> entries = orderedEntriesForPath(path, document);
+    if (descending) {
+        std::reverse(entries.begin(), entries.end());
+    }
+
+    QList<QStringList> keyValuesList;
+    for (const IndexEntry &entry : entries) {
+        for (int rowIndex = 0; rowIndex < entry.rowLocators.size(); ++rowIndex) {
+            keyValuesList.append(entry.keyValues);
+        }
+    }
+    return keyValuesList;
+}
+
+QStringList SortIndexRepo::orderedRowLocators(bool descending, QString *error) const
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+
+    const QString path = getIndexFilePath();
+    QJsonObject document;
+    if (!readIndexDocument(path, &document, error)) {
+        return {};
+    }
+
+    QVector<IndexEntry> entries = orderedEntriesForPath(path, document);
+    if (descending) {
+        std::reverse(entries.begin(), entries.end());
+    }
+    QStringList locators;
+    for (const IndexEntry &entry : entries) {
+        locators.append(entry.rowLocators);
+    }
+    return locators;
 }
 
 bool SortIndexRepo::validateUniqueKeys(QString *error) const

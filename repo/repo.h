@@ -312,6 +312,8 @@ public:
                                       const QString &rowLocator) const;
     RepositoryResult deleteIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
     QStringList search(const QStringList &keyValues, QString *error = nullptr) const;
+    QList<QStringList> orderedKeyValues(bool descending = false, QString *error = nullptr) const;
+    QStringList orderedRowLocators(bool descending = false, QString *error = nullptr) const;
     bool validateUniqueKeys(QString *error = nullptr) const;
     QString getIndexFilePath() const;
 

@@ -324,6 +324,187 @@ bool tryBuildIndexedCandidateTable(const QString &databaseName,
     return true;
 }
 
+bool tryFindIndexedRowIndexes(const QString &databaseName,
+                              const QString &tableName,
+                              const tabledef::TableSchema &schema,
+                              const repo::TableData &table,
+                              const QStringList &rowIds,
+                              const QList<service::SimpleCondition> &conditions,
+                              QList<int> *rowIndexes,
+                              QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (rowIndexes != nullptr) {
+        rowIndexes->clear();
+    }
+
+    QMap<QString, QString> conditionValues;
+    const tabledef::IndexMeta *index = bestIndexForConditions(schema, conditions, &conditionValues);
+    if (index == nullptr || rowIndexes == nullptr) {
+        return false;
+    }
+
+    QStringList keyValues;
+    keyValues.reserve(index->columnNames.size());
+    for (const QString &columnName : index->columnNames) {
+        keyValues.append(conditionValues.value(columnName));
+    }
+
+    Q_UNUSED(databaseName);
+    Q_UNUSED(tableName);
+    if (rowIds.size() != table.rows.size()) {
+        return false;
+    }
+
+    QString searchError;
+    const QStringList matches =
+        repo::SortIndexRepo(databaseName, index->indexName, tableName, currentDataRoot)
+            .search(keyValues, &searchError);
+    if (!searchError.isEmpty() || matches.isEmpty()) {
+        return false;
+    }
+
+    QMap<QString, int> rowIndexById;
+    for (int rowIndex = 0; rowIndex < rowIds.size(); ++rowIndex) {
+        rowIndexById.insert(rowIds.at(rowIndex), rowIndex);
+    }
+
+    QSet<int> matchedIndexes;
+    for (const QString &rowId : matches) {
+        const int rowIndex = rowIndexById.value(rowId, -1);
+        if (rowIndex >= 0 && rowIndex < table.rows.size()) {
+            matchedIndexes.insert(rowIndex);
+        }
+    }
+
+    *rowIndexes = matchedIndexes.values();
+    std::sort(rowIndexes->begin(), rowIndexes->end());
+    return !rowIndexes->isEmpty();
+}
+
+const tabledef::IndexMeta *singleColumnIndexForOrderBy(const tabledef::TableSchema &schema,
+                                                       const service::OrderByClause &orderBy)
+{
+    if (orderBy.columnName.trimmed().isEmpty()) {
+        return nullptr;
+    }
+    for (const tabledef::IndexMeta &index : schema.indexes) {
+        if (index.columnNames.size() == 1 && index.columnNames.first() == orderBy.columnName) {
+            return &index;
+        }
+    }
+    return nullptr;
+}
+
+bool tryBuildIndexOrderedTable(const QString &databaseName,
+                               const QString &tableName,
+                               const tabledef::TableSchema &schema,
+                               const repo::TableData &table,
+                               const service::OrderByClause &orderBy,
+                               repo::TableData *orderedTable,
+                               QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (orderedTable != nullptr) {
+        orderedTable->columns = table.columns;
+        orderedTable->rows.clear();
+    }
+
+    const tabledef::IndexMeta *index = singleColumnIndexForOrderBy(schema, orderBy);
+    if (index == nullptr || orderedTable == nullptr) {
+        return false;
+    }
+
+    QString rowIdError;
+    const QStringList rowIds = loadRowIdsWithoutSideEffects(databaseName, tableName, table, &rowIdError);
+    if (!rowIdError.isEmpty() || rowIds.size() != table.rows.size()) {
+        return false;
+    }
+
+    QString orderError;
+    const QStringList orderedRowIds =
+        repo::SortIndexRepo(databaseName, index->indexName, tableName, currentDataRoot)
+            .orderedRowLocators(orderBy.descending, &orderError);
+    if (!orderError.isEmpty() || orderedRowIds.isEmpty()) {
+        return false;
+    }
+
+    QMap<QString, int> rowIndexById;
+    for (int rowIndex = 0; rowIndex < rowIds.size(); ++rowIndex) {
+        rowIndexById.insert(rowIds.at(rowIndex), rowIndex);
+    }
+
+    QSet<int> appended;
+    for (const QString &rowId : orderedRowIds) {
+        const int rowIndex = rowIndexById.value(rowId, -1);
+        if (rowIndex >= 0 && rowIndex < table.rows.size() && !appended.contains(rowIndex)) {
+            orderedTable->rows.append(table.rows.at(rowIndex));
+            appended.insert(rowIndex);
+        }
+    }
+    return orderedTable->rows.size() == table.rows.size();
+}
+
+bool tryBuildIndexOnlyOrderByResult(const QString &databaseName,
+                                    const QString &tableName,
+                                    service::TargetTableKind targetTableKind,
+                                    const tabledef::TableSchema &schema,
+                                    const QStringList &projectionColumns,
+                                    const QList<service::SimpleCondition> &simpleConditions,
+                                    int limit,
+                                    const service::OrderByClause &orderBy,
+                                    repo::TableData *resultTable,
+                                    QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (resultTable != nullptr) {
+        resultTable->columns.clear();
+        resultTable->rows.clear();
+    }
+    if (targetTableKind != service::TargetTableKind::TableDat
+        || resultTable == nullptr
+        || limit < -1
+        || !simpleConditions.isEmpty()
+        || projectionColumns.size() != 1
+        || projectionColumns.first() != orderBy.columnName) {
+        return false;
+    }
+
+    const tabledef::IndexMeta *index = singleColumnIndexForOrderBy(schema, orderBy);
+    if (index == nullptr) {
+        return false;
+    }
+
+    QString orderError;
+    const QList<QStringList> keyValuesList =
+        repo::SortIndexRepo(databaseName, index->indexName, tableName, currentDataRoot)
+            .orderedKeyValues(orderBy.descending, &orderError);
+    if (!orderError.isEmpty() || keyValuesList.isEmpty()) {
+        return false;
+    }
+
+    resultTable->columns = projectionColumns;
+    for (const QStringList &keyValues : keyValuesList) {
+        if (limit >= 0 && resultTable->rows.size() >= limit) {
+            break;
+        }
+        if (keyValues.size() != 1) {
+            if (error != nullptr) {
+                *error = QStringLiteral("index key does not match order by projection");
+            }
+            return false;
+        }
+        resultTable->rows.append(repo::TableRow{keyValues.first()});
+    }
+    return true;
+}
+
 logic::LogicRowContext buildRowContext(const tabledef::TableSchema &schema,
                                        const repo::TableData &table,
                                        int rowIndex);
@@ -2502,6 +2683,44 @@ repo::TableData projectRows(const repo::TableData &table,
     return result;
 }
 
+bool applyOrderBy(repo::TableData *table,
+                  const service::OrderByClause &orderBy,
+                  const tabledef::TableSchema &schema,
+                  QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (table == nullptr || orderBy.columnName.trimmed().isEmpty()) {
+        return true;
+    }
+
+    const int columnIndex = table->columns.indexOf(orderBy.columnName);
+    if (columnIndex < 0) {
+        if (error != nullptr) {
+            *error = QStringLiteral("ORDER BY column '%1' does not exist").arg(orderBy.columnName);
+        }
+        return false;
+    }
+
+    const tabledef::ColumnType columnType = columnTypeForName(schema, orderBy.columnName);
+    std::stable_sort(table->rows.begin(), table->rows.end(), [columnIndex, columnType, &orderBy](const repo::TableRow &lhs,
+                                                                                                const repo::TableRow &rhs) {
+        const QString left = lhs.value(columnIndex);
+        const QString right = rhs.value(columnIndex);
+        bool less = false;
+        if (columnType == tabledef::ColumnType::Int) {
+            less = left.toLongLong() < right.toLongLong();
+        } else if (columnType == tabledef::ColumnType::Float) {
+            less = left.toDouble() < right.toDouble();
+        } else {
+            less = left < right;
+        }
+        return orderBy.descending ? !less && left != right : less;
+    });
+    return true;
+}
+
 repo::TableData deleteMatchedRows(const repo::TableData &table, const QList<int> &matchedIndexes)
 {
     repo::TableData result = table;
@@ -2592,7 +2811,8 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
                                              const tabledef::TableSchema &targetSchema,
                                              const QStringList &projectionColumns,
                                              const QList<SimpleCondition> &simpleConditions,
-                                             int limit) const
+                                             int limit,
+                                             const service::OrderByClause &orderBy) const
 {
     SelectRowsResult result;
 
@@ -2604,6 +2824,29 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
     const QString databaseName = effectiveDatabaseName(targetDatabaseName);
     if (databaseName.isEmpty() && targetTableKind != TargetTableKind::RootDbf) {
         result.errorMessage = QStringLiteral("database name cannot be empty");
+        return result;
+    }
+
+    repo::TableData indexOnlyResult;
+    QString indexOnlyError;
+    if (!orderBy.columnName.trimmed().isEmpty()
+        && tryBuildIndexOnlyOrderByResult(databaseName,
+                                          targetTableName,
+                                          targetTableKind,
+                                          targetSchema,
+                                          projectionColumns,
+                                          simpleConditions,
+                                          limit,
+                                          orderBy,
+                                          &indexOnlyResult,
+                                          &indexOnlyError)) {
+        result.resultTable = indexOnlyResult;
+        result.success = true;
+        result.affectedRowCount = result.resultTable.rows.size();
+        return result;
+    }
+    if (!indexOnlyError.isEmpty()) {
+        result.errorMessage = indexOnlyError;
         return result;
     }
 
@@ -2623,6 +2866,7 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
     repo::TableData sourceTable = table;
     repo::TableData indexedCandidateTable;
     if (targetTableKind == TargetTableKind::TableDat
+        && orderBy.columnName.trimmed().isEmpty()
         && tryBuildIndexedCandidateTable(databaseName,
                                          targetTableName,
                                          targetSchema,
@@ -2637,7 +2881,32 @@ SelectRowsResult TableDmlService::selectRows(const QString &targetDatabaseName,
         return result;
     }
 
-    result.resultTable = projectRows(sourceTable, projectionColumns, simpleConditions, limit, &error);
+    repo::TableData orderedSourceTable = sourceTable;
+    if (!orderBy.columnName.trimmed().isEmpty()) {
+        repo::TableData indexOrderedTable;
+        if (targetTableKind == TargetTableKind::TableDat
+            && simpleConditions.isEmpty()
+            && tryBuildIndexOrderedTable(databaseName,
+                                         targetTableName,
+                                         targetSchema,
+                                         table,
+                                         orderBy,
+                                         &indexOrderedTable,
+                                         &error)) {
+            orderedSourceTable = indexOrderedTable;
+        } else {
+            if (!error.isEmpty()) {
+                result.errorMessage = error;
+                return result;
+            }
+            if (!applyOrderBy(&orderedSourceTable, orderBy, targetSchema, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+        }
+    }
+
+    result.resultTable = projectRows(orderedSourceTable, projectionColumns, simpleConditions, limit, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
         return result;
@@ -2889,8 +3158,29 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         }
     }
 
+    QList<int> candidateMatchIndexes;
+    if (targetTableKind == TargetTableKind::TableDat
+        && complexWhereAst == nullptr
+        && !tryFindIndexedRowIndexes(databaseName,
+                                     targetTableName,
+                                     targetSchema,
+                                     currentTable,
+                                     currentRowIds,
+                                     simpleConditions,
+                                     &candidateMatchIndexes,
+                                     &error)) {
+        candidateMatchIndexes = allRowIndexes(currentTable);
+    }
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+    if (targetTableKind != TargetTableKind::TableDat || complexWhereAst != nullptr) {
+        candidateMatchIndexes = allRowIndexes(currentTable);
+    }
+
     QList<int> matchedRowIndexes;
-    for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
+    for (int rowIndex : candidateMatchIndexes) {
         QString matchError;
         bool includeRow = false;
         if (complexWhereAst != nullptr) {
@@ -3176,8 +3466,29 @@ TableDmlResult TableDmlService::deleteRows(const QString &targetDatabaseName,
         currentRowIds = rootState->candidateRowIds;
     }
 
+    QList<int> candidateMatchIndexes;
+    if (targetTableKind == TargetTableKind::TableDat
+        && complexWhereAst == nullptr
+        && !tryFindIndexedRowIndexes(databaseName,
+                                     targetTableName,
+                                     targetSchema,
+                                     currentTable,
+                                     currentRowIds,
+                                     simpleConditions,
+                                     &candidateMatchIndexes,
+                                     &error)) {
+        candidateMatchIndexes = allRowIndexes(currentTable);
+    }
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+    if (targetTableKind != TargetTableKind::TableDat || complexWhereAst != nullptr) {
+        candidateMatchIndexes = allRowIndexes(currentTable);
+    }
+
     QList<int> matchedRowIndexes;
-    for (int rowIndex = 0; rowIndex < currentTable.rows.size(); ++rowIndex) {
+    for (int rowIndex : candidateMatchIndexes) {
         QString matchError;
         bool includeRow = false;
         if (complexWhereAst != nullptr) {

@@ -37,11 +37,15 @@ QString csvEscape(QString value)
     return value;
 }
 
-void appendPerformanceCsvRow(const QString &stageName,
-                             int rowCount,
-                             qint64 elapsedMs,
-                             const QDateTime &startedAt,
-                             const QDateTime &endedAt)
+void appendPerformanceMetricRow(const QString &testId,
+                                const QString &stageName,
+                                int rowCount,
+                                const QString &variant,
+                                const QString &metric,
+                                qint64 value,
+                                const QString &unit,
+                                const QDateTime &startedAt,
+                                const QDateTime &endedAt)
 {
     const QString csvPath = QString::fromLocal8Bit(qgetenv("DBMS_PERF_CSV_PATH")).trimmed();
     if (csvPath.isEmpty()) {
@@ -64,21 +68,42 @@ void appendPerformanceCsvRow(const QString &stageName,
 
     QTextStream out(&file);
     if (writeHeader) {
-        out << "stage,row_count,elapsed_ms,started_at_utc,ended_at_utc" << Qt::endl;
+        out << "test_id,stage,row_count,variant,metric,value,unit,started_at_utc,ended_at_utc" << Qt::endl;
     }
-    out << csvEscape(stageName) << ','
+    out << csvEscape(testId) << ','
+        << csvEscape(stageName) << ','
         << (rowCount >= 0 ? QString::number(rowCount) : QString()) << ','
-        << elapsedMs << ','
+        << csvEscape(variant) << ','
+        << csvEscape(metric) << ','
+        << value << ','
+        << csvEscape(unit) << ','
         << startedAt.toUTC().toString(Qt::ISODateWithMs) << ','
         << endedAt.toUTC().toString(Qt::ISODateWithMs) << Qt::endl;
+}
+
+void appendPerformanceMetricRow(const QString &testId,
+                                const QString &stageName,
+                                int rowCount,
+                                const QString &variant,
+                                const QString &metric,
+                                qint64 value,
+                                const QString &unit)
+{
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    appendPerformanceMetricRow(testId, stageName, rowCount, variant, metric, value, unit, now, now);
 }
 
 class ScopedStageTimer
 {
 public:
-    ScopedStageTimer(QString stageName, int rowCount = -1)
+    ScopedStageTimer(QString stageName,
+                     int rowCount = -1,
+                     QString variant = QString(),
+                     QString testId = QString())
         : m_stageName(std::move(stageName))
         , m_rowCount(rowCount)
+        , m_variant(std::move(variant))
+        , m_testId(std::move(testId))
         , m_startedAt(QDateTime::currentDateTimeUtc())
     {
         m_timer.start();
@@ -93,7 +118,15 @@ public:
         QTextStream(stdout) << "[integration-stress] END " << m_stageName
                             << rowCountText()
                             << " elapsed_ms=" << elapsedMs << Qt::endl;
-        appendPerformanceCsvRow(m_stageName, m_rowCount, elapsedMs, m_startedAt, endedAt);
+        appendPerformanceMetricRow(m_testId,
+                                   m_stageName,
+                                   m_rowCount,
+                                   m_variant,
+                                   QStringLiteral("elapsed_ms"),
+                                   elapsedMs,
+                                   QStringLiteral("ms"),
+                                   m_startedAt,
+                                   endedAt);
     }
 
 private:
@@ -104,6 +137,8 @@ private:
 
     QString m_stageName;
     int m_rowCount = -1;
+    QString m_variant;
+    QString m_testId;
     QDateTime m_startedAt;
     QElapsedTimer m_timer;
 };
@@ -152,11 +187,11 @@ int stressRowCount(int defaultValue)
     return (ok && configured > 0) ? configured : defaultValue;
 }
 
-QList<int> performanceSampleRowCounts()
+QList<int> stressScaleRowCounts()
 {
-    const QString configured = QString::fromLocal8Bit(qgetenv("DBMS_PERF_ROW_COUNTS")).trimmed();
+    const QString configured = QString::fromLocal8Bit(qgetenv("DBMS_STRESS_ROW_COUNTS")).trimmed();
     if (configured.isEmpty()) {
-        return {100, 500, 1000};
+        return {50, 100, 200, 500};
     }
 
     QList<int> rowCounts;
@@ -169,7 +204,20 @@ QList<int> performanceSampleRowCounts()
             rowCounts.append(value);
         }
     }
-    return rowCounts.isEmpty() ? QList<int>{100, 500, 1000} : rowCounts;
+    return rowCounts.isEmpty() ? QList<int>{50, 100, 200, 500} : rowCounts;
+}
+
+QList<int> indexOrderByRowCounts()
+{
+    QList<int> rowCounts = stressScaleRowCounts();
+    if (!rowCounts.contains(1000)) {
+        rowCounts.append(1000);
+    }
+    if (!rowCounts.contains(5000)) {
+        rowCounts.append(5000);
+    }
+    std::sort(rowCounts.begin(), rowCounts.end());
+    return rowCounts;
 }
 
 bool execOk(client::SqlClientEngine &engine,
@@ -252,17 +300,24 @@ QString firstIndexPath(const QString &databaseName, const QString &tableName)
         .getIndexFilePath();
 }
 
-QStringList parallelClientArguments(const QString &dataRoot, int clientIndex)
+QString clientCrudSql(const QString &databaseName, int rowCount)
 {
-    const QString databaseName = QStringLiteral("stress_parallel_%1").arg(clientIndex);
-    const QString sql = QStringLiteral("USE %1;"
-                                       "CREATE TABLE events (id INT PRIMARY KEY, code VARCHAR(32), value INT);"
-                                       "%2"
-                                       "UPDATE events SET value = 999 WHERE id = 20;"
-                                       "DELETE FROM events WHERE id = 1;"
-                                       "SELECT value FROM events WHERE id = 20;")
-                            .arg(databaseName, makeInsertBatch(QStringLiteral("events"), 1, 40));
+    const int targetId = std::min(20, rowCount);
+    return QStringLiteral("USE %1;"
+                          "CREATE TABLE events (id INT PRIMARY KEY, code VARCHAR(32), value INT);"
+                          "%2"
+                          "UPDATE events SET value = 999 WHERE id = %3;"
+                          "DELETE FROM events WHERE id = 1;"
+                          "SELECT value FROM events WHERE id = %3;")
+        .arg(databaseName, makeInsertBatch(QStringLiteral("events"), 1, rowCount))
+        .arg(targetId);
+}
 
+QStringList parallelClientArguments(const QString &dataRoot,
+                                    const QString &databaseName,
+                                    int rowCount)
+{
+    const QString sql = clientCrudSql(databaseName, rowCount);
     return {QStringLiteral("--data-root"),
             dataRoot,
             QStringLiteral("-u"),
@@ -553,52 +608,118 @@ protected:
         if (!stressEnabled()) {
             QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
         }
-        ScopedStageTimer timer(QStringLiteral("stress.multi_client_parallel"), 4);
-
-        client::ClientSessionPool setupPool;
-        client::SqlClientEngine setupEngine(&setupPool);
-        const QString setupClient = setupPool.createSession(m_dataRoot);
-        service::SqlExecResult setupResult = setupEngine.login(setupClient, QStringLiteral("root"), QString());
-        QVERIFY2(setupResult.success, qPrintable(setupResult.errorMessage));
 
         const QString cliPath = cliExecutablePath();
         QVERIFY2(!cliPath.isEmpty(), "DBMS_CLI executable is required for multi-client stress tests.");
-        for (int i = 0; i < 4; ++i) {
-            QVERIFY2(execOk(setupEngine,
-                            setupClient,
-                            QStringLiteral("CREATE DATABASE stress_parallel_%1;").arg(i + 1),
-                            "prepare parallel database",
-                            &setupResult),
-                     qPrintable(setupResult.errorMessage));
-        }
 
-        QVector<QProcess *> processes;
-        for (int i = 0; i < 4; ++i) {
-            QProcess *process = new QProcess;
-            process->setProgram(cliPath);
-            process->setArguments(parallelClientArguments(m_dataRoot, i + 1));
-            process->start();
-            QVERIFY2(process->waitForStarted(10000),
-                     qPrintable(QStringLiteral("failed to start DBMS_CLI: %1").arg(process->errorString())));
-            process->write("\n");
-            process->closeWriteChannel();
-            processes.append(process);
-        }
+        for (const int rowCount : stressScaleRowCounts()) {
+            {
+                client::ClientSessionPool pool;
+                client::SqlClientEngine engine(&pool);
+                const QString clientId = pool.createSession(m_dataRoot);
+                service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
+                QVERIFY2(result.success, qPrintable(result.errorMessage));
+                const QString databaseName = QStringLiteral("stress_p2_sequential_%1").arg(rowCount);
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("CREATE DATABASE %1;").arg(databaseName),
+                                "prepare sequential CRUD database",
+                                &result),
+                         qPrintable(result.errorMessage));
+                {
+                    ScopedStageTimer timer(QStringLiteral("concurrent_crud.total"),
+                                           rowCount,
+                                           QStringLiteral("single_client_sequential"),
+                                           QStringLiteral("concurrent_crud"));
+                    QVERIFY2(execOk(engine,
+                                    clientId,
+                                    clientCrudSql(databaseName, rowCount),
+                                    "single-client sequential CRUD",
+                                    &result),
+                             qPrintable(result.errorMessage));
+                }
+                appendPerformanceMetricRow(QStringLiteral("concurrent_crud"),
+                                           QStringLiteral("concurrent_crud.success_count"),
+                                           rowCount,
+                                           QStringLiteral("single_client_sequential"),
+                                           QStringLiteral("success_count"),
+                                           1,
+                                           QStringLiteral("count"));
+            }
 
-        for (QProcess *process : processes) {
-            QVERIFY2(process->waitForFinished(60000),
-                     qPrintable(QStringLiteral("DBMS_CLI timed out: %1").arg(process->errorString())));
+            client::ClientSessionPool setupPool;
+            client::SqlClientEngine setupEngine(&setupPool);
+            const QString setupClient = setupPool.createSession(m_dataRoot);
+            service::SqlExecResult setupResult = setupEngine.login(setupClient, QStringLiteral("root"), QString());
+            QVERIFY2(setupResult.success, qPrintable(setupResult.errorMessage));
+            for (int i = 0; i < 4; ++i) {
+                QVERIFY2(execOk(setupEngine,
+                                setupClient,
+                                QStringLiteral("CREATE DATABASE stress_parallel_%1_%2;").arg(rowCount).arg(i + 1),
+                                "prepare parallel database",
+                                &setupResult),
+                         qPrintable(setupResult.errorMessage));
+            }
 
-            const QString output = QString::fromLocal8Bit(process->readAllStandardOutput());
-            const QString errorOutput = QString::fromLocal8Bit(process->readAllStandardError());
-            QVERIFY2(process->exitStatus() == QProcess::NormalExit && process->exitCode() == 0,
-                     qPrintable(QStringLiteral("DBMS_CLI failed with code %1: %2 %3")
-                                    .arg(process->exitCode())
-                                    .arg(output, errorOutput)));
-            QVERIFY2(output.contains(QStringLiteral("999")),
-                     qPrintable(QStringLiteral("DBMS_CLI output did not contain updated value: %1 %2")
-                                    .arg(output, errorOutput)));
-            delete process;
+            QVector<QProcess *> processes;
+            QVector<QElapsedTimer> clientTimers(4);
+            {
+                ScopedStageTimer timer(QStringLiteral("concurrent_crud.total"),
+                                       rowCount,
+                                       QStringLiteral("four_client_parallel"),
+                                       QStringLiteral("concurrent_crud"));
+                for (int i = 0; i < 4; ++i) {
+                    QProcess *process = new QProcess;
+                    process->setProgram(cliPath);
+                    process->setArguments(parallelClientArguments(
+                        m_dataRoot,
+                        QStringLiteral("stress_parallel_%1_%2").arg(rowCount).arg(i + 1),
+                        rowCount));
+                    clientTimers[i].start();
+                    process->start();
+                    QVERIFY2(process->waitForStarted(10000),
+                             qPrintable(QStringLiteral("failed to start DBMS_CLI: %1").arg(process->errorString())));
+                    process->write("\n");
+                    process->closeWriteChannel();
+                    processes.append(process);
+                }
+
+                int successCount = 0;
+                for (int i = 0; i < processes.size(); ++i) {
+                    QProcess *process = processes[i];
+                    QVERIFY2(process->waitForFinished(60000),
+                             qPrintable(QStringLiteral("DBMS_CLI timed out: %1").arg(process->errorString())));
+
+                    const qint64 perClientMs = clientTimers[i].elapsed();
+                    const QString output = QString::fromLocal8Bit(process->readAllStandardOutput());
+                    const QString errorOutput = QString::fromLocal8Bit(process->readAllStandardError());
+                    const bool ok = process->exitStatus() == QProcess::NormalExit
+                                    && process->exitCode() == 0
+                                    && output.contains(QStringLiteral("999"));
+                    if (ok) {
+                        ++successCount;
+                    }
+                    appendPerformanceMetricRow(QStringLiteral("concurrent_crud"),
+                                               QStringLiteral("concurrent_crud.per_client"),
+                                               rowCount,
+                                               QStringLiteral("four_client_parallel"),
+                                               QStringLiteral("per_client_elapsed_ms"),
+                                               perClientMs,
+                                               QStringLiteral("ms"));
+                    QVERIFY2(ok,
+                             qPrintable(QStringLiteral("DBMS_CLI failed with code %1: %2 %3")
+                                            .arg(process->exitCode())
+                                            .arg(output, errorOutput)));
+                    delete process;
+                }
+                appendPerformanceMetricRow(QStringLiteral("concurrent_crud"),
+                                           QStringLiteral("concurrent_crud.success_count"),
+                                           rowCount,
+                                           QStringLiteral("four_client_parallel"),
+                                           QStringLiteral("success_count"),
+                                           successCount,
+                                           QStringLiteral("count"));
+            }
         }
     }
 
@@ -608,71 +729,89 @@ protected:
             QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
         }
 
-        const int rowCount = stressRowCount(500);
-        ScopedStageTimer timer(QStringLiteral("stress.massive_data_crud"), rowCount);
         client::ClientSessionPool pool;
         client::SqlClientEngine engine(&pool);
         const QString clientId = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE DATABASE stress_data_db;"
-                                       "USE stress_data_db;"
-                                       "CREATE TABLE bulk_rows (id INT PRIMARY KEY, code VARCHAR(32), value INT);"),
-                        "prepare bulk table",
-                        &result),
-                 qPrintable(result.errorMessage));
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.massive_data_crud.insert"), rowCount);
-            insertBulkRows(engine, clientId, QStringLiteral("bulk_rows"), rowCount, 100);
-        }
 
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.massive_data_crud.select_all"), rowCount);
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT * FROM bulk_rows;"),
-                             "select bulk rows",
-                             &result),
-                     qPrintable(result.errorMessage));
-            QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
-        }
-
-        const int targetId = std::min(777, rowCount);
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.massive_data_crud.update_then_select"), 1);
+        for (const int rowCount : stressScaleRowCounts()) {
+            const QString databaseName = QStringLiteral("stress_p3_crud_%1").arg(rowCount);
+            const QString tableName = QStringLiteral("bulk_rows_%1").arg(rowCount);
             QVERIFY2(execOk(engine,
                             clientId,
-                            QStringLiteral("UPDATE bulk_rows SET value = 4242 WHERE id = %1;").arg(targetId),
-                            "update bulk row",
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, code VARCHAR(32), value INT);")
+                                .arg(databaseName, tableName),
+                            "prepare bulk table",
                             &result),
                      qPrintable(result.errorMessage));
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT value FROM bulk_rows WHERE id = %1;").arg(targetId),
-                             "select updated bulk row",
-                             &result),
-                     qPrintable(result.errorMessage));
-            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("4242"));
-        }
+            {
+                ScopedStageTimer stepTimer(QStringLiteral("massive_crud.insert"),
+                                           rowCount,
+                                           QStringLiteral("row_count"),
+                                           QStringLiteral("massive_crud"));
+                insertBulkRows(engine, clientId, tableName, rowCount, 100);
+            }
 
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.massive_data_crud.delete_then_select"), rowCount - 1);
-            QVERIFY2(execOk(engine,
-                            clientId,
-                            QStringLiteral("DELETE FROM bulk_rows WHERE id = %1;").arg(targetId),
-                            "delete bulk row",
-                            &result),
-                     qPrintable(result.errorMessage));
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT * FROM bulk_rows;"),
-                             "select after bulk delete",
-                             &result),
-                     qPrintable(result.errorMessage));
-            QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount - 1);
+            {
+                ScopedStageTimer stepTimer(QStringLiteral("massive_crud.select_all"),
+                                           rowCount,
+                                           QStringLiteral("row_count"),
+                                           QStringLiteral("massive_crud"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT * FROM %1;").arg(tableName),
+                                 "select bulk rows",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+            }
+
+            const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
+            {
+                ScopedStageTimer stepTimer(QStringLiteral("massive_crud.update_one"),
+                                           rowCount,
+                                           QStringLiteral("row_count"),
+                                           QStringLiteral("massive_crud"));
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("UPDATE %1 SET value = 4242 WHERE id = %2;")
+                                    .arg(tableName)
+                                    .arg(targetId),
+                                "update bulk row",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+
+            {
+                ScopedStageTimer stepTimer(QStringLiteral("massive_crud.delete_one"),
+                                           rowCount,
+                                           QStringLiteral("row_count"),
+                                           QStringLiteral("massive_crud"));
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("DELETE FROM %1 WHERE id = %2;").arg(tableName).arg(targetId),
+                                "delete bulk row",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+
+            {
+                ScopedStageTimer stepTimer(QStringLiteral("massive_crud.select_after_delete"),
+                                           rowCount,
+                                           QStringLiteral("row_count"),
+                                           QStringLiteral("massive_crud"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT * FROM %1;").arg(tableName),
+                                 "select after bulk delete",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount - 1);
+            }
         }
     }
 
@@ -682,39 +821,51 @@ protected:
             QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
         }
 
-        const int rowCount = stressRowCount(500);
-        ScopedStageTimer timer(QStringLiteral("stress.massive_index_build"), rowCount);
         client::ClientSessionPool pool;
         client::SqlClientEngine engine(&pool);
         const QString clientId = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE DATABASE stress_index_db;"
-                                       "USE stress_index_db;"
-                                       "CREATE TABLE indexed_rows (id INT PRIMARY KEY, code VARCHAR(32), value INT);"),
-                        "prepare indexed table",
-                        &result),
-                 qPrintable(result.errorMessage));
-        insertBulkRows(engine, clientId, QStringLiteral("indexed_rows"), rowCount, 100);
 
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE INDEX idx_indexed_rows_code ON indexed_rows(code);"),
-                        "create massive index",
-                        &result),
-                 qPrintable(result.errorMessage));
-        const int targetId = std::min(999, rowCount);
-        QVERIFY2(queryOk(engine,
-                         clientId,
-                         QStringLiteral("SELECT id, value FROM indexed_rows WHERE code = 'code_%1';").arg(targetId),
-                         "select massive index row",
-                         &result),
-                 qPrintable(result.errorMessage));
-        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
-        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
+        for (const int rowCount : stressScaleRowCounts()) {
+            const QString databaseName = QStringLiteral("stress_p4_index_%1").arg(rowCount);
+            const QString tableName = QStringLiteral("indexed_rows_%1").arg(rowCount);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, code VARCHAR(32), value INT);")
+                                .arg(databaseName, tableName),
+                            "prepare indexed table",
+                            &result),
+                     qPrintable(result.errorMessage));
+            insertBulkRows(engine, clientId, tableName, rowCount, 100);
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_build.create_index"),
+                                       rowCount,
+                                       QStringLiteral("row_count"),
+                                       QStringLiteral("index_build"));
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("CREATE INDEX idx_%1_code ON %1(code);").arg(tableName),
+                                "create massive index",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+            const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
+            QVERIFY2(queryOk(engine,
+                             clientId,
+                             QStringLiteral("SELECT id, value FROM %1 WHERE code = 'code_%2';")
+                                 .arg(tableName)
+                                 .arg(targetId),
+                             "select massive index row",
+                             &result),
+                     qPrintable(result.errorMessage));
+            QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
+        }
     }
 
     void test_stressIndexAblation()
@@ -723,56 +874,100 @@ protected:
             QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
         }
 
-        const int rowCount = stressRowCount(500);
-        ScopedStageTimer timer(QStringLiteral("stress.index_ablation"), rowCount);
-        const QString databaseName = QStringLiteral("stress_ablation_db");
-        const QString tableName = QStringLiteral("ablation_rows");
         client::ClientSessionPool pool;
         client::SqlClientEngine engine(&pool);
         const QString clientId = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE DATABASE %1;"
-                                       "USE %1;"
-                                       "CREATE TABLE %2 (id INT PRIMARY KEY, code VARCHAR(32), value INT);")
-                            .arg(databaseName, tableName),
-                        "prepare ablation table",
-                        &result),
-                 qPrintable(result.errorMessage));
-        insertBulkRows(engine, clientId, tableName, rowCount, 100);
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE INDEX idx_ablation_code ON %1(code);").arg(tableName),
-                        "create ablation index",
-                        &result),
-                 qPrintable(result.errorMessage));
 
-        service::setDataRoot(m_dataRoot);
-        service::currentDatabase = databaseName;
-        const QString indexPath = firstIndexPath(databaseName, tableName);
-        QVERIFY2(!indexPath.isEmpty(), "index path should be available");
-        QVERIFY(QFile::exists(indexPath));
-        QVERIFY2(QFile::remove(indexPath), qPrintable(QStringLiteral("failed to remove %1").arg(indexPath)));
+        for (const int rowCount : stressScaleRowCounts()) {
+            const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
+            const QString healthyDatabase = QStringLiteral("stress_p5_healthy_%1").arg(rowCount);
+            const QString healthyTable = QStringLiteral("healthy_rows_%1").arg(rowCount);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, code VARCHAR(32), value INT);")
+                                .arg(healthyDatabase, healthyTable),
+                            "prepare healthy index table",
+                            &result),
+                     qPrintable(result.errorMessage));
+            insertBulkRows(engine, clientId, healthyTable, rowCount, 100);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE INDEX idx_%1_code ON %1(code);").arg(healthyTable),
+                            "create healthy index",
+                            &result),
+                     qPrintable(result.errorMessage));
+            {
+                ScopedStageTimer timer(QStringLiteral("index_repair.update"),
+                                       rowCount,
+                                       QStringLiteral("healthy_index_file"),
+                                       QStringLiteral("index_repair"));
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("UPDATE %1 SET value = 31337 WHERE id = %2;")
+                                    .arg(healthyTable)
+                                    .arg(targetId),
+                                "update with healthy index",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
 
-        const int targetId = std::min(400, rowCount);
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("UPDATE %1 SET value = 31337 WHERE id = %2;").arg(tableName).arg(targetId),
-                        "trigger index repair after ablation",
-                        &result),
-                 qPrintable(result.errorMessage));
-        QVERIFY2(queryOk(engine,
-                         clientId,
-                         QStringLiteral("SELECT value FROM %1 WHERE code = 'code_%2';").arg(tableName).arg(targetId),
-                         "select after index ablation repair",
-                         &result),
-                 qPrintable(result.errorMessage));
-        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
-        QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("31337"));
-        QVERIFY(QFile::exists(indexPath));
+            const QString ablatedDatabase = QStringLiteral("stress_p5_ablated_%1").arg(rowCount);
+            const QString ablatedTable = QStringLiteral("ablated_rows_%1").arg(rowCount);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, code VARCHAR(32), value INT);")
+                                .arg(ablatedDatabase, ablatedTable),
+                            "prepare ablation table",
+                            &result),
+                     qPrintable(result.errorMessage));
+            insertBulkRows(engine, clientId, ablatedTable, rowCount, 100);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE INDEX idx_%1_code ON %1(code);").arg(ablatedTable),
+                            "create ablation index",
+                            &result),
+                     qPrintable(result.errorMessage));
+
+            service::setDataRoot(m_dataRoot);
+            service::currentDatabase = ablatedDatabase;
+            const QString indexPath = firstIndexPath(ablatedDatabase, ablatedTable);
+            QVERIFY2(!indexPath.isEmpty(), "index path should be available");
+            QVERIFY(QFile::exists(indexPath));
+            QVERIFY2(QFile::remove(indexPath), qPrintable(QStringLiteral("failed to remove %1").arg(indexPath)));
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_repair.update"),
+                                       rowCount,
+                                       QStringLiteral("deleted_index_file"),
+                                       QStringLiteral("index_repair"));
+                QVERIFY2(execOk(engine,
+                                clientId,
+                                QStringLiteral("UPDATE %1 SET value = 31337 WHERE id = %2;")
+                                    .arg(ablatedTable)
+                                    .arg(targetId),
+                                "trigger index repair after ablation",
+                                &result),
+                         qPrintable(result.errorMessage));
+            }
+            QVERIFY2(queryOk(engine,
+                             clientId,
+                             QStringLiteral("SELECT value FROM %1 WHERE code = 'code_%2';")
+                                 .arg(ablatedTable)
+                                 .arg(targetId),
+                             "select after index ablation repair",
+                             &result),
+                     qPrintable(result.errorMessage));
+            QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("31337"));
+            QVERIFY(QFile::exists(indexPath));
+        }
     }
 
     void test_stressIndexLookupBenefit()
@@ -781,83 +976,126 @@ protected:
             QSKIP("Stress tests are disabled by DBMS_SKIP_STRESS_TESTS or --skip-stress-tests.");
         }
 
-        const int rowCount = stressRowCount(500);
-        ScopedStageTimer timer(QStringLiteral("stress.index_lookup_benefit"), rowCount);
         client::ClientSessionPool pool;
         client::SqlClientEngine engine(&pool);
         const QString clientId = pool.createSession(m_dataRoot);
 
         service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
         QVERIFY2(result.success, qPrintable(result.errorMessage));
-        QVERIFY2(execOk(engine,
-                        clientId,
-                        QStringLiteral("CREATE DATABASE stress_lookup_db;"
-                                       "USE stress_lookup_db;"
-                                       "CREATE TABLE lookup_rows (id INT PRIMARY KEY, code VARCHAR(32), value INT);"),
-                        "prepare lookup table",
-                        &result),
-                 qPrintable(result.errorMessage));
-        insertBulkRows(engine, clientId, QStringLiteral("lookup_rows"), rowCount, 100);
 
-        const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.index_lookup_benefit.unindexed_select_indexed_column"),
-                                       rowCount);
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT id, value FROM lookup_rows WHERE code = 'code_%1';").arg(targetId),
-                             "select indexed column before index",
-                             &result),
-                     qPrintable(result.errorMessage));
-            QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
-            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
-        }
-
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.index_lookup_benefit.unindexed_select_non_indexed_column"),
-                                       rowCount);
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT id, code FROM lookup_rows WHERE value = %1;").arg(targetId % 100),
-                             "select non-indexed column before index",
-                             &result),
-                     qPrintable(result.errorMessage));
-            QVERIFY(!result.selectResult.resultTable.rows.isEmpty());
-        }
-
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.index_lookup_benefit.create_index"), rowCount);
+        for (const int rowCount : indexOrderByRowCounts()) {
+            const QString databaseName = QStringLiteral("stress_index_order_by_%1").arg(rowCount);
+            const QString tableName = QStringLiteral("ordered_rows_%1").arg(rowCount);
             QVERIFY2(execOk(engine,
                             clientId,
-                            QStringLiteral("CREATE INDEX idx_lookup_rows_code ON lookup_rows(code);"),
-                            "create lookup index",
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, sort_key VARCHAR(32), value INT);")
+                                .arg(databaseName, tableName),
+                            "prepare index ORDER BY table",
                             &result),
                      qPrintable(result.errorMessage));
-        }
 
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.index_lookup_benefit.indexed_select_indexed_column"),
-                                       rowCount);
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT id, value FROM lookup_rows WHERE code = 'code_%1';").arg(targetId),
-                             "select indexed column after index",
-                             &result),
+            QStringList rows;
+            rows.reserve(rowCount);
+            for (int id = 1; id <= rowCount; ++id) {
+                const int sortKey = ((id * 37) % rowCount) + 1;
+                rows.append(QStringLiteral("(%1, 'key_%2', %3)")
+                                .arg(id)
+                                .arg(sortKey, 6, 10, QLatin1Char('0'))
+                                .arg(id % 100));
+            }
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("INSERT INTO %1 (id, sort_key, value) VALUES %2;")
+                                .arg(tableName, rows.join(QStringLiteral(", "))),
+                            "insert ORDER BY rows",
+                            &result),
                      qPrintable(result.errorMessage));
-            QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
-            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
-        }
 
-        {
-            ScopedStageTimer stepTimer(QStringLiteral("stress.index_lookup_benefit.indexed_select_non_indexed_column"),
-                                       rowCount);
-            QVERIFY2(queryOk(engine,
-                             clientId,
-                             QStringLiteral("SELECT id, code FROM lookup_rows WHERE value = %1;").arg(targetId % 100),
-                             "select non-indexed column after index",
-                             &result),
+            auto assertAscending = [](const service::SqlExecResult &queryResult) {
+                QString previous;
+                for (const repo::TableRow &row : queryResult.selectResult.resultTable.rows) {
+                    const QString current = row.value(0);
+                    QVERIFY(current >= previous);
+                    previous = current;
+                }
+            };
+            auto assertDescending = [](const service::SqlExecResult &queryResult) {
+                QString previous = QStringLiteral("key_999999");
+                for (const repo::TableRow &row : queryResult.selectResult.resultTable.rows) {
+                    const QString current = row.value(0);
+                    QVERIFY(current <= previous);
+                    previous = current;
+                }
+            };
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_order_by_impact.order_by_asc"),
+                                       rowCount,
+                                       QStringLiteral("without_secondary_index"),
+                                       QStringLiteral("index_order_by_impact"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT sort_key FROM %1 ORDER BY sort_key ASC;").arg(tableName),
+                                 "select ORDER BY ASC without index",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+                assertAscending(result);
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_order_by_impact.order_by_desc"),
+                                       rowCount,
+                                       QStringLiteral("without_secondary_index"),
+                                       QStringLiteral("index_order_by_impact"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT sort_key FROM %1 ORDER BY sort_key DESC;").arg(tableName),
+                                 "select ORDER BY DESC without index",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+                assertDescending(result);
+            }
+
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE INDEX idx_%1_sort_key ON %1(sort_key);").arg(tableName),
+                            "create ORDER BY secondary index",
+                            &result),
                      qPrintable(result.errorMessage));
-            QVERIFY(!result.selectResult.resultTable.rows.isEmpty());
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_order_by_impact.order_by_asc"),
+                                       rowCount,
+                                       QStringLiteral("with_secondary_index"),
+                                       QStringLiteral("index_order_by_impact"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT sort_key FROM %1 ORDER BY sort_key ASC;").arg(tableName),
+                                 "select ORDER BY ASC with index",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+                assertAscending(result);
+            }
+
+            {
+                ScopedStageTimer timer(QStringLiteral("index_order_by_impact.order_by_desc"),
+                                       rowCount,
+                                       QStringLiteral("with_secondary_index"),
+                                       QStringLiteral("index_order_by_impact"));
+                QVERIFY2(queryOk(engine,
+                                 clientId,
+                                 QStringLiteral("SELECT sort_key FROM %1 ORDER BY sort_key DESC;").arg(tableName),
+                                 "select ORDER BY DESC with index",
+                                 &result),
+                         qPrintable(result.errorMessage));
+                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
+                assertDescending(result);
+            }
         }
     }
 
@@ -874,78 +1112,93 @@ protected:
         service::SqlExecResult result = engine.login(clientId, QStringLiteral("root"), QString());
         QVERIFY2(result.success, qPrintable(result.errorMessage));
 
-        for (const int rowCount : performanceSampleRowCounts()) {
-            const QString databaseName = QStringLiteral("stress_perf_sample_%1").arg(rowCount);
-            const QString tableName = QStringLiteral("sample_rows_%1").arg(rowCount);
+        for (const int rowCount : stressScaleRowCounts()) {
+            const QString databaseName = QStringLiteral("stress_p6_fk_%1").arg(rowCount);
+            const QString parentTable = QStringLiteral("parent_%1").arg(rowCount);
+            const QString childTable = QStringLiteral("child_%1").arg(rowCount);
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("CREATE DATABASE %1;"
+                                           "USE %1;"
+                                           "CREATE TABLE %2 (id INT PRIMARY KEY, name VARCHAR(32));"
+                                           "CREATE TABLE %3 ("
+                                           "id INT PRIMARY KEY, "
+                                           "parent_id INT, "
+                                           "note VARCHAR(32), "
+                                           "CONSTRAINT fk_%3_%2 FOREIGN KEY (parent_id) "
+                                           "REFERENCES %2(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+                                .arg(databaseName, parentTable, childTable),
+                            "prepare cascade tables",
+                            &result),
+                     qPrintable(result.errorMessage));
 
-            {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.prepare"), rowCount);
-                QVERIFY2(execOk(engine,
-                                clientId,
-                                QStringLiteral("CREATE DATABASE %1;"
-                                               "USE %1;"
-                                               "CREATE TABLE %2 ("
-                                               "id INT PRIMARY KEY, "
-                                               "code VARCHAR(32), "
-                                               "value INT);")
-                                    .arg(databaseName, tableName),
-                                "prepare performance sample",
-                                &result),
-                         qPrintable(result.errorMessage));
+            QStringList parentRows;
+            QStringList childRows;
+            parentRows.reserve(rowCount);
+            childRows.reserve(rowCount);
+            for (int id = 1; id <= rowCount; ++id) {
+                parentRows.append(QStringLiteral("(%1, 'p_%1')").arg(id));
+                childRows.append(QStringLiteral("(%1, %1, 'c_%1')").arg(id));
             }
-
-            {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.insert"), rowCount);
-                insertBulkRows(engine, clientId, tableName, rowCount, 100);
-            }
-
-            {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.select_all"), rowCount);
-                QVERIFY2(queryOk(engine,
-                                 clientId,
-                                 QStringLiteral("SELECT * FROM %1;").arg(tableName),
-                                 "select all performance sample rows",
-                                 &result),
-                         qPrintable(result.errorMessage));
-                QCOMPARE(result.selectResult.resultTable.rows.size(), rowCount);
-            }
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("INSERT INTO %1 (id, name) VALUES %2;")
+                                .arg(parentTable, parentRows.join(QStringLiteral(", "))),
+                            "insert cascade parents",
+                            &result),
+                     qPrintable(result.errorMessage));
+            QVERIFY2(execOk(engine,
+                            clientId,
+                            QStringLiteral("INSERT INTO %1 (id, parent_id, note) VALUES %2;")
+                                .arg(childTable, childRows.join(QStringLiteral(", "))),
+                            "insert cascade children",
+                            &result),
+                     qPrintable(result.errorMessage));
 
             const int targetId = std::min(rowCount, std::max(1, rowCount / 2));
+            const int updatedId = rowCount + targetId;
             {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.update_one"), rowCount);
+                ScopedStageTimer timer(QStringLiteral("foreign_key_cascade.cascade_update"),
+                                       rowCount,
+                                       QStringLiteral("row_count"),
+                                       QStringLiteral("foreign_key_cascade"));
                 QVERIFY2(execOk(engine,
                                 clientId,
-                                QStringLiteral("UPDATE %1 SET value = 777 WHERE id = %2;")
-                                    .arg(tableName)
+                                QStringLiteral("UPDATE %1 SET id = %2 WHERE id = %3;")
+                                    .arg(parentTable)
+                                    .arg(updatedId)
                                     .arg(targetId),
-                                "update performance sample row",
+                                "cascade parent update",
                                 &result),
                          qPrintable(result.errorMessage));
             }
+            QVERIFY2(queryOk(engine,
+                             clientId,
+                             QStringLiteral("SELECT parent_id FROM %1 WHERE id = %2;").arg(childTable).arg(targetId),
+                             "select cascade update result",
+                             &result),
+                     qPrintable(result.errorMessage));
+            QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(updatedId));
 
             {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.create_index"), rowCount);
+                ScopedStageTimer timer(QStringLiteral("foreign_key_cascade.cascade_delete"),
+                                       rowCount,
+                                       QStringLiteral("row_count"),
+                                       QStringLiteral("foreign_key_cascade"));
                 QVERIFY2(execOk(engine,
                                 clientId,
-                                QStringLiteral("CREATE INDEX idx_%1_code ON %1(code);").arg(tableName),
-                                "create performance sample index",
+                                QStringLiteral("DELETE FROM %1 WHERE id = %2;").arg(parentTable).arg(updatedId),
+                                "cascade parent delete",
                                 &result),
                          qPrintable(result.errorMessage));
             }
-
-            {
-                ScopedStageTimer timer(QStringLiteral("perf.sample.indexed_select"), rowCount);
-                QVERIFY2(queryOk(engine,
-                                 clientId,
-                                 QStringLiteral("SELECT id, value FROM %1 WHERE code = 'code_%2';")
-                                     .arg(tableName)
-                                     .arg(targetId),
-                                 "indexed select performance sample row",
-                                 &result),
-                         qPrintable(result.errorMessage));
-                QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
-                QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QString::number(targetId));
-            }
+            QVERIFY2(queryOk(engine,
+                             clientId,
+                             QStringLiteral("SELECT * FROM %1 WHERE id = %2;").arg(childTable).arg(targetId),
+                             "select cascade delete result",
+                             &result),
+                     qPrintable(result.errorMessage));
+            QCOMPARE(result.selectResult.resultTable.rows.size(), 0);
         }
     }
 

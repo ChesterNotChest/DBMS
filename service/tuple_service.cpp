@@ -37,7 +37,8 @@ namespace service::tuple_service {
 SelectRowsResult selectRows(const QString &tableName,
                             const QStringList &projectionColumns,
                             const QList<SimpleCondition> &conditions,
-                            int limit)
+                            int limit,
+                            const OrderByClause &orderBy)
 {
     SelectRowsResult result;
     const QString databaseName = normalizeDatabaseName(QString());
@@ -68,7 +69,8 @@ SelectRowsResult selectRows(const QString &tableName,
                                  schema,
                                  projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
                                  conditions,
-                                 limit);
+                                 limit,
+                                 orderBy);
 }
 
 TaskResult insertRows(const QString &tableName,

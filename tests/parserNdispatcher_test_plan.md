@@ -29,7 +29,7 @@
 ### parser 失败路径
 
 - `test_parseSelectLimitAndSimpleWhere`
-  验证 `ORDER BY` 等未支持子句仍被拒绝。
+  验证 `SELECT ... ORDER BY ...` 能输出排序列和升降序 payload。
 - `test_parseUpdateAndDeleteSupportSimpleWhere`
   验证 `>` 这类非等值谓词被拒绝。
 - `test_parseWhereRejectsUnsupportedForms`

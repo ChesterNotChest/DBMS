@@ -234,9 +234,11 @@ private slots:
         QCOMPARE(qualified.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
         QVERIFY(!qualified.payload.contains(QStringLiteral("conditions")));
 
-        const sqlparser::ParseResult ordered = sqlparser::parseSql(QStringLiteral("SELECT * FROM student ORDER BY id"));
-        QVERIFY(!ordered.success);
-        QVERIFY(ordered.errorMessage.contains(QStringLiteral("unsupported clause")));
+        const sqlparser::ParseResult ordered = sqlparser::parseSql(
+            QStringLiteral("SELECT * FROM student ORDER BY id DESC"));
+        QVERIFY2(ordered.success, qPrintable(ordered.errorMessage));
+        QCOMPARE(ordered.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("id"));
+        QCOMPARE(ordered.payload.value(QStringLiteral("orderByDescending")).toBool(), true);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
