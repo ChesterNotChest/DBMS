@@ -69,6 +69,16 @@ void appendLocalPrefixesFromSource(const QVariantMap &source, QStringList *local
     }
 }
 
+bool isLocalQualifiedReference(const QString &name, const QStringList &localPrefixes)
+{
+    for (const QString &prefix : localPrefixes) {
+        if (!prefix.isEmpty() && name.startsWith(prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool collectOuterNamesFromNode(const LogicNode &node,
                                const QStringList &localPrefixes,
                                QStringList *names,
@@ -76,21 +86,16 @@ bool collectOuterNamesFromNode(const LogicNode &node,
                                const QString &expressionText)
 {
     for (const QString &referencedName : node.referencedOuterNames) {
-        appendOuterName(names, referencedName);
+        if (!isLocalQualifiedReference(referencedName, localPrefixes)) {
+            appendOuterName(names, referencedName);
+        }
     }
 
     if (node.type == LogicNodeType::ColumnRef) {
         if (node.reference.scope == LogicReferenceScope::Outer) {
             appendOuterName(names, node.reference.name);
         } else if (node.reference.name.contains(QLatin1Char('.'))) {
-            bool localReference = false;
-            for (const QString &prefix : localPrefixes) {
-                if (!prefix.isEmpty() && node.reference.name.startsWith(prefix)) {
-                    localReference = true;
-                    break;
-                }
-            }
-            if (localReference) {
+            if (isLocalQualifiedReference(node.reference.name, localPrefixes)) {
                 return true;
             }
             appendOuterName(names, node.reference.name);
@@ -216,10 +221,7 @@ LogicNode makeColumnNode(const LogicToken &token)
     LogicNode node;
     node.type = LogicNodeType::ColumnRef;
     node.rawText = token.rawText;
-    if (token.rawText.startsWith(QStringLiteral("outer."))) {
-        node.reference.scope = LogicReferenceScope::Outer;
-        node.reference.name = token.rawText;
-    } else if (token.rawText.contains(QLatin1Char('.'))) {
+    if (token.rawText.contains(QLatin1Char('.'))) {
         node.reference.scope = LogicReferenceScope::Local;
         node.reference.name = token.rawText;
     } else {

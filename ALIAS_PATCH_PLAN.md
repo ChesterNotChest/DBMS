@@ -1,4 +1,4 @@
-# ALIAS_PATCH_PLAN
+﻿# ALIAS_PATCH_PLAN
 
 目标：在不扩展 SELECT 查询能力边界的前提下，为现有单表 SELECT 能力补齐表别名、限定列名、投影别名和相关子查询外层别名引用。
 
@@ -13,8 +13,10 @@
 1. parser 输出单表 `tableAlias`、`projectionItems`、限定列名和投影别名 payload。
 2. dispatcher 将投影列、限定列名、`ORDER BY` 列名和投影别名归一化为真实列名后下推 service。
 3. 查询执行器为本地行上下文补充裸列名、表名限定列和表别名限定列。
-4. 相关子查询支持外层表别名引用，例如 `p.id`，并保留旧 `outer.id` 兼容路径。
+4. 相关子查询支持外层表别名引用，例如 `p.id`。
 5. 本地作用域优先于外层作用域，外层 binding merge 不覆盖本地同名限定列。
+
+后续收口更新：`outer` 不再是特殊相关引用前缀；它只按普通表名/表别名限定符处理，相关子查询必须使用外层表名或表别名限定引用。
 
 最近验证：
 
@@ -929,3 +931,4 @@ SELECT * FROM a JOIN b ON a.id = b.id;
 3. 旧 `SELECT id FROM t ORDER BY id DESC`。
 4. 旧 `outer.id` 相关子查询。
 5. 索引排序专项压测。
+

@@ -1,4 +1,4 @@
-#include "../controller/nest_query.h"
+﻿#include "../controller/nest_query.h"
 #include "../service/service.h"
 #include "../utils/logic/logic.h"
 
@@ -96,6 +96,8 @@ logic::LogicRowContext makeOuterRow(const QString &idValue)
     rowContext.tableName = QStringLiteral("parent");
     rowContext.cellsByName.insert(QStringLiteral("id"),
                                   logic::LogicCellValue{idValue, tabledef::ColumnType::Int, false});
+    rowContext.cellsByName.insert(QStringLiteral("parent.id"),
+                                  logic::LogicCellValue{idValue, tabledef::ColumnType::Int, false});
     return rowContext;
 }
 
@@ -165,10 +167,10 @@ private slots:
 
         QueryExecutor executor;
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(
-            QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)"));
+            QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)"));
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(
-            QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)"),
+            QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)"),
             tokenized.tokens);
         QVERIFY2(parsed.success, qPrintable(parsed.error.message));
 
@@ -190,7 +192,7 @@ private slots:
         seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
 
         QueryExecutor executor;
-        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -216,7 +218,7 @@ private slots:
 
         QueryExecutor executor;
         const QString expression = QStringLiteral(
-            "id IN (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+            "id IN (SELECT parent_id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -345,7 +347,7 @@ private slots:
         const logic::CorrelationBindings bindings;
         const service::QueryExecuteContext context{databaseName, m_dataRoot};
         const QueryExecuteResult result = executor.executeCorrelatedSelect(
-            QStringLiteral("SELECT id FROM child WHERE child.parent_id = outer.id"),
+            QStringLiteral("SELECT id FROM child WHERE child.parent_id = parent.id"),
             bindings,
             context);
 
@@ -364,14 +366,14 @@ private slots:
 
         QueryExecutor executor;
         logic::CorrelationBindings bindings;
-        bindings.items.append(logic::CorrelatedBinding{QStringLiteral("outer.id"),
+        bindings.items.append(logic::CorrelatedBinding{QStringLiteral("parent.id"),
                                                        QStringLiteral("10"),
                                                        tabledef::ColumnType::Int,
                                                        false});
 
         const service::QueryExecuteContext context{databaseName, m_dataRoot};
         const QueryExecuteResult result = executor.executeCorrelatedSelect(
-            QStringLiteral("SELECT id FROM child WHERE child.parent_id = outer.id"),
+            QStringLiteral("SELECT id FROM child WHERE child.parent_id = parent.id"),
             bindings,
             context);
 
@@ -402,8 +404,8 @@ private slots:
         const QueryExecuteResult result = executor.executeSql(
             QStringLiteral(
                 "SELECT id FROM parent WHERE EXISTS ("
-                "SELECT id FROM child WHERE EXISTS ("
-                "SELECT id FROM grandchild WHERE grandchild.child_id = outer.id))"),
+                "SELECT c.id FROM child c WHERE EXISTS ("
+                "SELECT id FROM grandchild WHERE grandchild.child_id = c.parent_id))"),
             context);
 
         QVERIFY2(result.success, qPrintable(result.errorMessage));
@@ -428,7 +430,7 @@ private slots:
         seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
 
         QueryExecutor executor;
-        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -455,7 +457,7 @@ private slots:
         seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
 
         QueryExecutor executor;
-        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -464,6 +466,8 @@ private slots:
         logic::LogicRowContext outerRow;
         outerRow.tableName = QStringLiteral("parent");
         outerRow.cellsByName.insert(QStringLiteral("id"),
+                                    logic::LogicCellValue{QString(), tabledef::ColumnType::Int, true});
+        outerRow.cellsByName.insert(QStringLiteral("parent.id"),
                                     logic::LogicCellValue{QString(), tabledef::ColumnType::Int, true});
 
         const logic::LogicEvalResult result = logic::evaluateLogicExpression(parsed.root,
@@ -478,7 +482,7 @@ private slots:
     void test_correlatedSubqueryExecutesPerRowWithoutCache()
     {
         CountingSubqueryExecutor executor;
-        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -515,3 +519,4 @@ int service_tests::runQueryExecutorTests()
 }
 
 #include "test_query_executor.moc"
+

@@ -1,6 +1,8 @@
-# FROM_MULTI_PLAN
+﻿# FROM_MULTI_PLAN
 
 目标：在现有单表 `SELECT`、表别名、限定列名、投影别名和相关子查询别名绑定能力基础上，补齐多表 `FROM` 查询能力。
+
+当前收口更新：`outer` 不再是特殊相关引用前缀；它只按普通表名/表别名限定符处理，所有外层引用必须使用外层表名或表别名限定列名。
 
 本文同时规划两种语法：
 
@@ -1341,3 +1343,4 @@ SELECT * FROM a, a;
 3. 单表投影别名 `SELECT id AS sid FROM student ORDER BY sid DESC`。
 4. 旧 `outer.id` 相关子查询。
 5. 现有索引排序专项压测。
+

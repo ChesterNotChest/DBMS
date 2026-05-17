@@ -1,6 +1,7 @@
 #include "nest_query.h"
 
 #include "../utils/logic/logic.h"
+#include "../utils/logic/logic_ast.h"
 #include "../utils/service_common/service_common.h"
 
 #include <algorithm>
@@ -88,19 +89,68 @@ bool simpleConditionsFromPayload(const QVariantList &conditionsPayload,
     return true;
 }
 
-QStringList requiredOuterReferences(const logic::LogicNode &node)
+void appendRequiredReference(QStringList *names, const QString &name)
+{
+    if (names == nullptr || name.trimmed().isEmpty() || names->contains(name)) {
+        return;
+    }
+    names->append(name);
+}
+
+QStringList selectLocalPrefixes(const QVariantMap &payload)
+{
+    QStringList prefixes;
+    auto appendSource = [&](const QVariantMap &source) {
+        const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
+        const QString tableAlias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
+        if (!tableName.isEmpty() && !prefixes.contains(tableName + QLatin1Char('.'))) {
+            prefixes.append(tableName + QLatin1Char('.'));
+        }
+        if (!tableAlias.isEmpty() && !prefixes.contains(tableAlias + QLatin1Char('.'))) {
+            prefixes.append(tableAlias + QLatin1Char('.'));
+        }
+    };
+
+    const QVariantList sources = payload.value(QStringLiteral("fromSources")).toList();
+    if (!sources.isEmpty()) {
+        for (const QVariant &sourceValue : sources) {
+            appendSource(sourceValue.toMap());
+        }
+        return prefixes;
+    }
+
+    appendSource(payload);
+    return prefixes;
+}
+
+bool isLocalQualifiedReference(const QString &name, const QStringList &localPrefixes)
+{
+    for (const QString &prefix : localPrefixes) {
+        if (!prefix.isEmpty() && name.startsWith(prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QStringList requiredOuterReferences(const logic::LogicNode &node, const QStringList &localPrefixes)
 {
     QStringList names;
-    if (node.type == logic::LogicNodeType::ColumnRef
-        && node.reference.scope == logic::LogicReferenceScope::Outer) {
-        names.append(node.reference.name);
+    if (logic::isSubqueryNodeType(node.type)) {
+        return names;
+    }
+    if (node.type == logic::LogicNodeType::ColumnRef) {
+        if (node.reference.scope == logic::LogicReferenceScope::Outer) {
+            appendRequiredReference(&names, node.reference.name);
+        } else if (node.reference.name.contains(QLatin1Char('.'))
+                   && !isLocalQualifiedReference(node.reference.name, localPrefixes)) {
+            appendRequiredReference(&names, node.reference.name);
+        }
     }
     for (const logic::LogicNode &child : node.children) {
-        const QStringList childNames = requiredOuterReferences(child);
+        const QStringList childNames = requiredOuterReferences(child, localPrefixes);
         for (const QString &name : childNames) {
-            if (!names.contains(name)) {
-                names.append(name);
-            }
+            appendRequiredReference(&names, name);
         }
     }
     return names;
@@ -1079,7 +1129,7 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     }
 
     if (bindings != nullptr && hasWhereAst) {
-        const QStringList requiredReferences = requiredOuterReferences(whereAst);
+        const QStringList requiredReferences = requiredOuterReferences(whereAst, selectLocalPrefixes(parsed.payload));
         for (const QString &requiredReference : requiredReferences) {
             const bool hasBinding = std::any_of(bindings->items.cbegin(), bindings->items.cend(), [&](const logic::CorrelatedBinding &binding) {
                 return binding.name == requiredReference;
