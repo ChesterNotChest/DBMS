@@ -47,34 +47,63 @@ bool appendOuterName(QStringList *names, const QString &name)
     return true;
 }
 
+void appendLocalPrefixesFromSource(const QVariantMap &source, QStringList *localPrefixes)
+{
+    if (localPrefixes == nullptr) {
+        return;
+    }
+
+    const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
+    const QString tableAlias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
+    if (!tableName.isEmpty()) {
+        const QString prefix = tableName + QLatin1Char('.');
+        if (!localPrefixes->contains(prefix)) {
+            localPrefixes->append(prefix);
+        }
+    }
+    if (!tableAlias.isEmpty()) {
+        const QString prefix = tableAlias + QLatin1Char('.');
+        if (!localPrefixes->contains(prefix)) {
+            localPrefixes->append(prefix);
+        }
+    }
+}
+
+bool isLocalQualifiedReference(const QString &name, const QStringList &localPrefixes)
+{
+    for (const QString &prefix : localPrefixes) {
+        if (!prefix.isEmpty() && name.startsWith(prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool collectOuterNamesFromNode(const LogicNode &node,
-                               const QString &allowedTablePrefix,
+                               const QStringList &localPrefixes,
                                QStringList *names,
                                LogicError *error,
                                const QString &expressionText)
 {
     for (const QString &referencedName : node.referencedOuterNames) {
-        appendOuterName(names, referencedName);
+        if (!isLocalQualifiedReference(referencedName, localPrefixes)) {
+            appendOuterName(names, referencedName);
+        }
     }
 
     if (node.type == LogicNodeType::ColumnRef) {
         if (node.reference.scope == LogicReferenceScope::Outer) {
             appendOuterName(names, node.reference.name);
         } else if (node.reference.name.contains(QLatin1Char('.'))) {
-            if (!allowedTablePrefix.isEmpty() && node.reference.name.startsWith(allowedTablePrefix)) {
+            if (isLocalQualifiedReference(node.reference.name, localPrefixes)) {
                 return true;
             }
-            if (error != nullptr) {
-                error->message = QStringLiteral("only outer.xxx is allowed in correlated subqueries");
-                const int position = expressionText.indexOf(node.reference.name);
-                error->position = position >= 0 ? position : -1;
-            }
-            return false;
+            appendOuterName(names, node.reference.name);
         }
     }
 
     for (const LogicNode &child : node.children) {
-        if (!collectOuterNamesFromNode(child, allowedTablePrefix, names, error, expressionText)) {
+        if (!collectOuterNamesFromNode(child, localPrefixes, names, error, expressionText)) {
             return false;
         }
     }
@@ -138,13 +167,30 @@ bool collectOuterNamesFromText(const QString &text, QStringList *names, LogicErr
         names->clear();
     }
 
-    const QString allowedTablePrefix = parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed().isEmpty()
-                                           ? QString()
-                                           : parsedSql.payload.value(QStringLiteral("tableName")).toString().trimmed() + QLatin1Char('.');
+    QStringList localPrefixes;
+    const QVariantList sources = parsedSql.payload.value(QStringLiteral("fromSources")).toList();
+    for (const QVariant &sourceValue : sources) {
+        appendLocalPrefixesFromSource(sourceValue.toMap(), &localPrefixes);
+    }
+    if (localPrefixes.isEmpty()) {
+        appendLocalPrefixesFromSource(parsedSql.payload, &localPrefixes);
+    }
 
     if (parsedSql.payload.contains(QStringLiteral("whereAst"))) {
         const LogicNode whereAst = parsedSql.payload.value(QStringLiteral("whereAst")).value<LogicNode>();
-        if (!collectOuterNamesFromNode(whereAst, allowedTablePrefix, names, error, text)) {
+        if (!collectOuterNamesFromNode(whereAst, localPrefixes, names, error, text)) {
+            return false;
+        }
+    }
+
+    const QVariantList joins = parsedSql.payload.value(QStringLiteral("joins")).toList();
+    for (const QVariant &joinValue : joins) {
+        const QVariantMap joinMap = joinValue.toMap();
+        if (!joinMap.contains(QStringLiteral("onAst"))) {
+            continue;
+        }
+        const LogicNode onAst = joinMap.value(QStringLiteral("onAst")).value<LogicNode>();
+        if (!collectOuterNamesFromNode(onAst, localPrefixes, names, error, text)) {
             return false;
         }
     }
@@ -175,10 +221,7 @@ LogicNode makeColumnNode(const LogicToken &token)
     LogicNode node;
     node.type = LogicNodeType::ColumnRef;
     node.rawText = token.rawText;
-    if (token.rawText.startsWith(QStringLiteral("outer."))) {
-        node.reference.scope = LogicReferenceScope::Outer;
-        node.reference.name = token.rawText;
-    } else if (token.rawText.contains(QLatin1Char('.'))) {
+    if (token.rawText.contains(QLatin1Char('.'))) {
         node.reference.scope = LogicReferenceScope::Local;
         node.reference.name = token.rawText;
     } else {

@@ -12,19 +12,6 @@ using service::QueryExecuteContext;
 using service::QueryExecuteResult;
 using service::QueryExecutor;
 
-namespace {
-
-QString bindingKeyToLocalName(const QString &bindingName)
-{
-    const int dotIndex = bindingName.indexOf(QLatin1Char('.'));
-    if (dotIndex >= 0 && dotIndex + 1 < bindingName.size()) {
-        return bindingName.mid(dotIndex + 1);
-    }
-    return bindingName;
-}
-
-} // namespace
-
 LogicSubqueryExecutorAdapter::LogicSubqueryExecutorAdapter(QueryExecutor *executor)
     : m_executor(executor)
 {
@@ -48,13 +35,9 @@ CorrelationBindings buildCorrelationBindings(const LogicRowContext &outerRowCont
 {
     CorrelationBindings bindings;
     for (const QString &outerName : referencedOuterNames) {
-        const QString localName = bindingKeyToLocalName(outerName);
         auto it = outerRowContext.cellsByName.constFind(outerName);
         if (it == outerRowContext.cellsByName.constEnd()) {
-            it = outerRowContext.cellsByName.constFind(localName);
-            if (it == outerRowContext.cellsByName.constEnd()) {
-                continue;
-            }
+            continue;
         }
         bindings.items.append(CorrelatedBinding{outerName, it.value().value, it.value().type, it.value().isNull});
     }

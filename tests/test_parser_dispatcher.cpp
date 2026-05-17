@@ -252,6 +252,65 @@ private slots:
         const sqlparser::ParseResult trailingAfterLimit = sqlparser::parseSql(
             QStringLiteral("SELECT * FROM student LIMIT 2 garbage"));
         QVERIFY(!trailingAfterLimit.success);
+
+        const sqlparser::ParseResult aliasedTable = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id AS sid FROM student AS s ORDER BY sid DESC"));
+        QVERIFY2(aliasedTable.success, qPrintable(aliasedTable.errorMessage));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("tableAlias")).toString(), QStringLiteral("s"));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("projection")).toStringList(),
+                 QStringList({QStringLiteral("s.id")}));
+        const QVariantMap projectionItem = aliasedTable.payload.value(QStringLiteral("projectionItems")).toList().first().toMap();
+        QCOMPARE(projectionItem.value(QStringLiteral("sourceColumn")).toString(), QStringLiteral("s.id"));
+        QCOMPARE(projectionItem.value(QStringLiteral("outputColumn")).toString(), QStringLiteral("sid"));
+        QCOMPARE(aliasedTable.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("sid"));
+
+        const sqlparser::ParseResult starAlias = sqlparser::parseSql(
+            QStringLiteral("SELECT * AS x FROM student"));
+        QVERIFY(!starAlias.success);
+
+        const sqlparser::ParseResult extraAlias = sqlparser::parseSql(
+            QStringLiteral("SELECT id FROM student s extra"));
+        QVERIFY(!extraAlias.success);
+
+        const sqlparser::ParseResult multiOrder = sqlparser::parseSql(
+            QStringLiteral("SELECT id FROM student ORDER BY a, b"));
+        QVERIFY(!multiOrder.success);
+
+        const sqlparser::ParseResult commaFrom = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id, c.name FROM student s, class c WHERE s.class_id = c.id"));
+        QVERIFY2(commaFrom.success, qPrintable(commaFrom.errorMessage));
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("isMultiTable")).toBool(), true);
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("fromSources")).toList().size(), 2);
+        QCOMPARE(commaFrom.payload.value(QStringLiteral("joins")).toList().size(), 0);
+
+        const sqlparser::ParseResult leftJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s LEFT JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(leftJoin.success, qPrintable(leftJoin.errorMessage));
+        QCOMPARE(leftJoin.payload.value(QStringLiteral("fromSources")).toList().size(), 2);
+        const QVariantMap leftJoinPayload = leftJoin.payload.value(QStringLiteral("joins")).toList().first().toMap();
+        QCOMPARE(leftJoinPayload.value(QStringLiteral("joinType")).toString(), QStringLiteral("left"));
+        QVERIFY(leftJoinPayload.contains(QStringLiteral("onAst")));
+
+        const sqlparser::ParseResult rightJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s RIGHT JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(rightJoin.success, qPrintable(rightJoin.errorMessage));
+        QCOMPARE(rightJoin.payload.value(QStringLiteral("joins")).toList().first().toMap().value(QStringLiteral("joinType")).toString(),
+                 QStringLiteral("right"));
+
+        const sqlparser::ParseResult fullJoin = sqlparser::parseSql(
+            QStringLiteral("SELECT s.id FROM student s FULL JOIN class c ON s.class_id = c.id"));
+        QVERIFY2(fullJoin.success, qPrintable(fullJoin.errorMessage));
+        QCOMPARE(fullJoin.payload.value(QStringLiteral("joins")).toList().first().toMap().value(QStringLiteral("joinType")).toString(),
+                 QStringLiteral("full"));
+
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a NATURAL JOIN b")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b ON a.id = b.id, c")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a, b JOIN c ON b.id = c.id")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT INT FROM student")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT id FROM INT")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT id FROM student INT")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM student s, class student")).success);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
@@ -367,6 +426,203 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("1"));
+    }
+
+    void test_dispatchSelectAliasAndQualifiedColumns()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_select_alias_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_select_alias_table");
+
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT s.id AS sid FROM %1 AS s ORDER BY sid DESC").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("sid")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("2"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("1"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT * FROM %1 s WHERE s.id = 1").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().value(1), QStringLiteral("alice"));
+    }
+
+    void test_dispatchCorrelatedSubqueryUsesOuterAlias()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_correlated_alias_db");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema parentSchema;
+        parentSchema.tableName = QStringLiteral("parent_alias");
+        parentSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        parentSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_parent_alias_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(parentSchema.tableName, parentSchema);
+
+        tabledef::TableSchema childSchema;
+        childSchema.tableName = QStringLiteral("child_alias");
+        childSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("parent_id"), tabledef::ColumnType::Int),
+        };
+        childSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_child_alias_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(childSchema.tableName, childSchema);
+
+        seedRows(parentSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                           {QStringLiteral("name"), QStringLiteral("alice")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                           {QStringLiteral("name"), QStringLiteral("bob")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                           {QStringLiteral("name"), QStringLiteral("carol")}})});
+        seedRows(childSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                           {QStringLiteral("parent_id"), QStringLiteral("1")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("11")},
+                           {QStringLiteral("parent_id"), QStringLiteral("1")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("12")},
+                           {QStringLiteral("parent_id"), QStringLiteral("3")}})});
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT p.id FROM parent_alias p "
+                           "WHERE EXISTS (SELECT c.id FROM child_alias c WHERE c.parent_id = p.id)"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("3"));
+    }
+
+    void test_dispatchMultiTableFromAndJoins()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_multi_from_db");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema studentSchema;
+        studentSchema.tableName = QStringLiteral("student_multi");
+        studentSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("class_id"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        studentSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_student_multi_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(studentSchema.tableName, studentSchema);
+
+        tabledef::TableSchema classSchema;
+        classSchema.tableName = QStringLiteral("class_multi");
+        classSchema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 32),
+        };
+        classSchema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_class_multi_id"), {QStringLiteral("id")}),
+        };
+        ensureTable(classSchema.tableName, classSchema);
+
+        seedRows(studentSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                           {QStringLiteral("class_id"), QStringLiteral("10")},
+                           {QStringLiteral("name"), QStringLiteral("alice")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                           {QStringLiteral("class_id"), QStringLiteral("20")},
+                           {QStringLiteral("name"), QStringLiteral("bob")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                           {QStringLiteral("class_id"), QStringLiteral("99")},
+                           {QStringLiteral("name"), QStringLiteral("carol")}})});
+        seedRows(classSchema.tableName,
+                 {makeRow({{QStringLiteral("id"), QStringLiteral("10")},
+                           {QStringLiteral("name"), QStringLiteral("cs")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("20")},
+                           {QStringLiteral("name"), QStringLiteral("math")}}),
+                  makeRow({{QStringLiteral("id"), QStringLiteral("30")},
+                           {QStringLiteral("name"), QStringLiteral("art")}})});
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s, class_multi c "
+                           "WHERE s.class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(1), QStringLiteral("cs"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("2"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(1), QStringLiteral("math"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id AS sid, c.name FROM student_multi s "
+                           "JOIN class_multi c ON s.class_id = c.id ORDER BY sid DESC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns.first(), QStringLiteral("sid"));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("2"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "JOIN class_multi c ON class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "LEFT JOIN class_multi c ON s.class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(0), QStringLiteral("3"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(1), QString());
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "RIGHT JOIN class_multi c ON s.class_id = c.id ORDER BY c.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(0), QString());
+        QCOMPARE(result.selectResult.resultTable.rows.at(2).value(1), QStringLiteral("art"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "FULL JOIN class_multi c ON s.class_id = c.id ORDER BY c.name ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 4);
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT id FROM student_multi s JOIN class_multi c ON s.class_id = c.id"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("ambiguous column")));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT student_multi.id FROM student_multi x "
+                           "JOIN student_multi y ON x.id = y.id"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("duplicate table qualifier"))
+                || result.errorMessage.contains(QStringLiteral("unknown table or alias")));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT x.id, y.name FROM student_multi x "
+                           "JOIN student_multi y ON x.id = y.id ORDER BY x.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
     }
 
     void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()
@@ -553,6 +809,55 @@ private slots:
         QCOMPARE(dropIndex.commandType, QStringLiteral("DROP_INDEX"));
         QCOMPARE(dropIndex.payload.value(QStringLiteral("indexName")).toString(), QStringLiteral("idx_student_name"));
         QCOMPARE(dropIndex.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("student"));
+
+        const sqlparser::ParseResult setDefault = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student ALTER COLUMN age SET DEFAULT 18"));
+        QVERIFY2(setDefault.success, qPrintable(setDefault.errorMessage));
+        QCOMPARE(setDefault.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("ALTER_COLUMN_SET_DEFAULT"));
+        QCOMPARE(setDefault.payload.value(QStringLiteral("columnName")).toString(), QStringLiteral("age"));
+        QCOMPARE(setDefault.payload.value(QStringLiteral("defaultValue")).toString(), QStringLiteral("18"));
+
+        const sqlparser::ParseResult dropDefault = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student ALTER COLUMN age DROP DEFAULT"));
+        QVERIFY2(dropDefault.success, qPrintable(dropDefault.errorMessage));
+        QCOMPARE(dropDefault.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("ALTER_COLUMN_DROP_DEFAULT"));
+
+        const sqlparser::ParseResult setNotNull = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student ALTER COLUMN name SET NOT NULL"));
+        QVERIFY2(setNotNull.success, qPrintable(setNotNull.errorMessage));
+        QCOMPARE(setNotNull.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("ALTER_COLUMN_SET_NOT_NULL"));
+
+        const sqlparser::ParseResult dropNotNull = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student ALTER COLUMN name DROP NOT NULL"));
+        QVERIFY2(dropNotNull.success, qPrintable(dropNotNull.errorMessage));
+        QCOMPARE(dropNotNull.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("ALTER_COLUMN_DROP_NOT_NULL"));
+
+        const sqlparser::ParseResult renameColumn = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student RENAME COLUMN old_name TO new_name"));
+        QVERIFY2(renameColumn.success, qPrintable(renameColumn.errorMessage));
+        QCOMPARE(renameColumn.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("RENAME_COLUMN"));
+        QCOMPARE(renameColumn.payload.value(QStringLiteral("columnName")).toString(), QStringLiteral("old_name"));
+        QCOMPARE(renameColumn.payload.value(QStringLiteral("newColumnName")).toString(), QStringLiteral("new_name"));
+
+        const sqlparser::ParseResult setType = sqlparser::parseSql(
+            QStringLiteral("ALTER TABLE student ALTER COLUMN name TYPE VARCHAR(64)"));
+        QVERIFY2(setType.success, qPrintable(setType.errorMessage));
+        QCOMPARE(setType.payload.value(QStringLiteral("alterAction")).toString(),
+                 QStringLiteral("ALTER_COLUMN_SET_TYPE"));
+        QCOMPARE(setType.payload.value(QStringLiteral("type")).toString(), QStringLiteral("VARCHAR"));
+        QCOMPARE(setType.payload.value(QStringLiteral("length")).toInt(), 64);
+
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age SET DEFAULT 18 garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age DROP DEFAULT garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age TYPE VARCHAR(64) garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age TYPE VARCHAR(64, 2)")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student RENAME COLUMN old_name TO new_name extra")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student DROP COLUMN age extra")).success);
     }
 
     void test_parseAlterForeignKeyAndMultiColumnIndexPayload()
@@ -656,6 +961,132 @@ private slots:
         QCOMPARE(uniqueConstraint.columns, QStringList({QStringLiteral("name"), QStringLiteral("age")}));
     }
 
+    void test_dispatcherPartialAlterColumnPreservesAttributes()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_partial_alter_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_partial_alter_table");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 20, true),
+            makeColumn(QStringLiteral("age"), tabledef::ColumnType::Int, 0, false, QStringLiteral("18")),
+        };
+        schema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+        };
+        ensureTable(tableName, schema);
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 ALTER COLUMN name SET DEFAULT 'anonymous'").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        tabledef::TableSchema loaded = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        tabledef::Column nameColumn = findColumn(loaded, QStringLiteral("name"));
+        QCOMPARE(nameColumn.length, 20);
+        QVERIFY(nameColumn.notNull);
+        QCOMPARE(nameColumn.defaultValue, QStringLiteral("anonymous"));
+
+        result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 ALTER COLUMN age DROP DEFAULT").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        loaded = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        tabledef::Column ageColumn = findColumn(loaded, QStringLiteral("age"));
+        QCOMPARE(ageColumn.type, tabledef::ColumnType::Int);
+        QVERIFY(!ageColumn.notNull);
+        QVERIFY(ageColumn.defaultValue.isEmpty());
+
+        result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 ALTER COLUMN name DROP NOT NULL").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        loaded = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        nameColumn = findColumn(loaded, QStringLiteral("name"));
+        QVERIFY(!nameColumn.notNull);
+        QCOMPARE(nameColumn.defaultValue, QStringLiteral("anonymous"));
+
+        result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 ALTER COLUMN name TYPE VARCHAR(64)").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        loaded = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        nameColumn = findColumn(loaded, QStringLiteral("name"));
+        QCOMPARE(nameColumn.type, tabledef::ColumnType::Varchar);
+        QCOMPARE(nameColumn.length, 64);
+        QCOMPARE(nameColumn.defaultValue, QStringLiteral("anonymous"));
+    }
+
+    void test_dispatcherPartialAlterSetNotNullRejectsExistingEmptyValues()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_partial_not_null_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_partial_not_null_table");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("nickname"), tabledef::ColumnType::Varchar, 20, false),
+        };
+        schema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+        };
+        ensureTable(tableName, schema);
+        seedRows(tableName, {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                      {QStringLiteral("nickname"), QString()}})});
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 ALTER COLUMN nickname SET NOT NULL").arg(tableName));
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("cannot be null")),
+                 qPrintable(result.errorMessage));
+    }
+
+    void test_dispatcherRenameColumnPreservesDataAndIndexMetadata()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_rename_column_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_rename_column_table");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, baseSchema(tableName));
+        seedRows(tableName, {makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                                      {QStringLiteral("name"), QStringLiteral("alice")}})});
+
+        SqlDispatcher dispatcher;
+        SqlExecResult result = dispatcher.execute(
+            QStringLiteral("CREATE INDEX idx_%1_name ON %1(name)").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = dispatcher.execute(
+            QStringLiteral("ALTER TABLE %1 RENAME COLUMN name TO full_name").arg(tableName));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        QString error;
+        const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(tabledef::hasColumn(schema, QStringLiteral("full_name")));
+        QVERIFY(!tabledef::hasColumn(schema, QStringLiteral("name")));
+
+        const tabledef::IndexMeta index = findIndexMeta(databaseName,
+                                                        tableName,
+                                                        service::getDataRoot(),
+                                                        QStringLiteral("idx_%1_name").arg(tableName),
+                                                        &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(index.columnNames, QStringList({QStringLiteral("full_name")}));
+
+        const SelectRowsResult rows = selectAllRows(tableName);
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.columns, QStringList({QStringLiteral("id"), QStringLiteral("full_name")}));
+        QCOMPARE(rows.resultTable.rows.at(0), QStringList({QStringLiteral("1"), QStringLiteral("alice")}));
+    }
+
     void test_dispatcherAlterRejectsIncompletePayload()
     {
         const QString databaseName = QStringLiteral("test_parser_dispatcher_alter_incomplete_db");
@@ -682,6 +1113,27 @@ private slots:
         const SqlExecResult addConstraintResult = dispatcher.dispatch(addConstraintParsed);
         QVERIFY(!addConstraintResult.success);
         QVERIFY(addConstraintResult.errorMessage.contains(QStringLiteral("complete constraint payload")));
+
+        sqlparser::ParseResult setDefaultParsed;
+        setDefaultParsed.success = true;
+        setDefaultParsed.commandType = QStringLiteral("ALTER_TABLE");
+        setDefaultParsed.payload.insert(QStringLiteral("tableName"), tableName);
+        setDefaultParsed.payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_DEFAULT"));
+        setDefaultParsed.payload.insert(QStringLiteral("columnName"), QStringLiteral("name"));
+        const SqlExecResult setDefaultResult = dispatcher.dispatch(setDefaultParsed);
+        QVERIFY(!setDefaultResult.success);
+        QVERIFY(setDefaultResult.errorMessage.contains(QStringLiteral("defaultValue")));
+
+        sqlparser::ParseResult setTypeParsed;
+        setTypeParsed.success = true;
+        setTypeParsed.commandType = QStringLiteral("ALTER_TABLE");
+        setTypeParsed.payload.insert(QStringLiteral("tableName"), tableName);
+        setTypeParsed.payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_TYPE"));
+        setTypeParsed.payload.insert(QStringLiteral("columnName"), QStringLiteral("name"));
+        setTypeParsed.payload.insert(QStringLiteral("type"), QStringLiteral("VARCHAR"));
+        const SqlExecResult setTypeResult = dispatcher.dispatch(setTypeParsed);
+        QVERIFY(!setTypeResult.success);
+        QVERIFY(setTypeResult.errorMessage.contains(QStringLiteral("length")));
     }
 
     void test_dispatcherRejectsMalformedConditionsPayload()

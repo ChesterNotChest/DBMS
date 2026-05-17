@@ -39,6 +39,14 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "CONSTRAINT")     return TokenType::CONSTRAINT;
     if (w == "INDEX")          return TokenType::INDEX;
     if (w == "ON")             return TokenType::ON;
+    if (w == "JOIN")           return TokenType::JOIN;
+    if (w == "INNER")          return TokenType::INNER;
+    if (w == "LEFT")           return TokenType::LEFT;
+    if (w == "RIGHT")          return TokenType::RIGHT;
+    if (w == "FULL")           return TokenType::FULL;
+    if (w == "NATURAL")        return TokenType::NATURAL;
+    if (w == "CROSS")          return TokenType::CROSS;
+    if (w == "USING")          return TokenType::USING;
     if (w == "USER")           return TokenType::USER;
     if (w == "IDENTIFIED")     return TokenType::IDENTIFIED;
     if (w == "BY")             return TokenType::BY;
