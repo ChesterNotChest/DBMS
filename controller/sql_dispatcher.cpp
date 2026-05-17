@@ -161,6 +161,9 @@ SqlExecResult execPartialAlterColumn(const QString &tableName,
 
     QString oldColumnName = columnName;
     if (action == QStringLiteral("ALTER_COLUMN_SET_DEFAULT")) {
+        if (!p.payload.contains(QStringLiteral("defaultValue"))) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN SET DEFAULT requires defaultValue")};
+        }
         definition.column.defaultValue = p.payload.value(QStringLiteral("defaultValue")).toString();
     } else if (action == QStringLiteral("ALTER_COLUMN_DROP_DEFAULT")) {
         definition.column.defaultValue.clear();
@@ -173,11 +176,13 @@ SqlExecResult execPartialAlterColumn(const QString &tableName,
         if (typeName.isEmpty()) {
             return {false, QStringLiteral("ALTER TABLE ALTER COLUMN TYPE requires type")};
         }
+        if (typeName.compare(QStringLiteral("VARCHAR"), Qt::CaseInsensitive) == 0
+            && !p.payload.contains(QStringLiteral("length"))) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN TYPE requires length")};
+        }
         definition.column.type = columnTypeFromSql(typeName);
         if (definition.column.type == tabledef::ColumnType::Varchar) {
-            definition.column.length = p.payload.contains(QStringLiteral("length"))
-                                           ? p.payload.value(QStringLiteral("length")).toInt()
-                                           : 255;
+            definition.column.length = p.payload.value(QStringLiteral("length")).toInt();
         } else {
             definition.column.length = 0;
         }

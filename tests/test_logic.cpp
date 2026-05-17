@@ -264,6 +264,18 @@ private slots:
         QCOMPARE(bindings.items.first().value, QStringLiteral("10"));
     }
 
+    void test_correlatedSubqueryDoesNotFallbackQualifiedOuterAlias()
+    {
+        logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        outerRowContext.cellsByName.insert(QStringLiteral("id"),
+                                           logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+
+        const logic::CorrelationBindings bindings = logic::buildCorrelationBindings(outerRowContext,
+                                                                                   {QStringLiteral("typo.id")});
+
+        QCOMPARE(bindings.items.size(), 0);
+    }
+
     void test_correlatedSubqueryUsesExactOuterBindingDuringEvaluation()
     {
         const QString expression = QStringLiteral(

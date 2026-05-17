@@ -579,6 +579,13 @@ private slots:
 
         result = dispatcher.execute(
             QStringLiteral("SELECT s.id, c.name FROM student_multi s "
+                           "JOIN class_multi c ON class_id = c.id ORDER BY s.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT s.id, c.name FROM student_multi s "
                            "LEFT JOIN class_multi c ON s.class_id = c.id ORDER BY s.id ASC"));
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
@@ -1106,6 +1113,27 @@ private slots:
         const SqlExecResult addConstraintResult = dispatcher.dispatch(addConstraintParsed);
         QVERIFY(!addConstraintResult.success);
         QVERIFY(addConstraintResult.errorMessage.contains(QStringLiteral("complete constraint payload")));
+
+        sqlparser::ParseResult setDefaultParsed;
+        setDefaultParsed.success = true;
+        setDefaultParsed.commandType = QStringLiteral("ALTER_TABLE");
+        setDefaultParsed.payload.insert(QStringLiteral("tableName"), tableName);
+        setDefaultParsed.payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_DEFAULT"));
+        setDefaultParsed.payload.insert(QStringLiteral("columnName"), QStringLiteral("name"));
+        const SqlExecResult setDefaultResult = dispatcher.dispatch(setDefaultParsed);
+        QVERIFY(!setDefaultResult.success);
+        QVERIFY(setDefaultResult.errorMessage.contains(QStringLiteral("defaultValue")));
+
+        sqlparser::ParseResult setTypeParsed;
+        setTypeParsed.success = true;
+        setTypeParsed.commandType = QStringLiteral("ALTER_TABLE");
+        setTypeParsed.payload.insert(QStringLiteral("tableName"), tableName);
+        setTypeParsed.payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_TYPE"));
+        setTypeParsed.payload.insert(QStringLiteral("columnName"), QStringLiteral("name"));
+        setTypeParsed.payload.insert(QStringLiteral("type"), QStringLiteral("VARCHAR"));
+        const SqlExecResult setTypeResult = dispatcher.dispatch(setTypeParsed);
+        QVERIFY(!setTypeResult.success);
+        QVERIFY(setTypeResult.errorMessage.contains(QStringLiteral("length")));
     }
 
     void test_dispatcherRejectsMalformedConditionsPayload()

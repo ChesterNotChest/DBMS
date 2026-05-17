@@ -573,6 +573,7 @@ QVector<logic::LogicRowContext> rowsForSource(const SelectTableSource &source)
 QVector<logic::LogicRowContext> joinRowsets(const QVector<logic::LogicRowContext> &leftRows,
                                             const SelectTableSource &rightSource,
                                             const QString &joinType,
+                                            const MultiNameResolution &resolution,
                                             const logic::LogicNode *onAst,
                                             const logic::CorrelationBindings *bindings,
                                             const logic::LogicEvalContext &evalContext,
@@ -588,6 +589,8 @@ QVector<logic::LogicRowContext> joinRowsets(const QVector<logic::LogicRowContext
         bool matchedLeft = false;
         for (int rightIndex = 0; rightIndex < rightRows.size(); ++rightIndex) {
             logic::LogicRowContext combined = mergeRowContexts(leftRow, rightRows.at(rightIndex));
+            removeAmbiguousBareColumns(&combined, resolution);
+            addUniqueBareColumns(&combined, resolution);
             QString evalError;
             const bool matched = evaluateFilter(onAst, combined, bindings, evalContext, &evalError);
             if (!evalError.isEmpty()) {
@@ -806,6 +809,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
             joinedRows = joinRowsets(joinedRows,
                                      sources.at(sourceIndex),
                                      QStringLiteral("inner"),
+                                     resolution,
                                      nullptr,
                                      bindings,
                                      evalContext,
@@ -833,6 +837,7 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
             joinedRows = joinRowsets(joinedRows,
                                      sources.at(rightIndex),
                                      joinMap.value(QStringLiteral("joinType"), QStringLiteral("inner")).toString(),
+                                     resolution,
                                      &onAst,
                                      bindings,
                                      evalContext,
