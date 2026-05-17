@@ -305,6 +305,7 @@ private slots:
 
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a NATURAL JOIN b")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b ON a.id = b.id, c")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a, b JOIN c ON b.id = c.id")).success);
     }
 
@@ -598,6 +599,12 @@ private slots:
             QStringLiteral("SELECT id FROM student_multi s JOIN class_multi c ON s.class_id = c.id"));
         QVERIFY(!result.success);
         QVERIFY(result.errorMessage.contains(QStringLiteral("ambiguous column")));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT student_multi.id FROM student_multi x "
+                           "JOIN student_multi y ON x.id = y.id"));
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("unknown table or alias")));
     }
 
     void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()
@@ -830,6 +837,7 @@ private slots:
         QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age SET DEFAULT 18 garbage")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age DROP DEFAULT garbage")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age TYPE VARCHAR(64) garbage")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student ALTER COLUMN age TYPE VARCHAR(64, 2)")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student RENAME COLUMN old_name TO new_name extra")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("ALTER TABLE student DROP COLUMN age extra")).success);
     }

@@ -582,9 +582,11 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
                     if (right < end) {
                         return {false, "ALTER TABLE ALTER COLUMN TYPE: unsupported trailing syntax", cmdType, {}};
                     }
-                    if (operationIndex + 3 < right && tokens[operationIndex + 3].type == TokenType::INTEGER_LIT) {
-                        payload.insert(QStringLiteral("length"), tokens[operationIndex + 3].lexeme.toInt());
+                    if (right != operationIndex + 4
+                        || tokens[operationIndex + 3].type != TokenType::INTEGER_LIT) {
+                        return {false, "ALTER TABLE ALTER COLUMN TYPE: expected single integer length", cmdType, {}};
                     }
+                    payload.insert(QStringLiteral("length"), tokens[operationIndex + 3].lexeme.toInt());
                 } else if (operationIndex + 2 <= end) {
                     return {false, "ALTER TABLE ALTER COLUMN TYPE: unsupported trailing syntax", cmdType, {}};
                 }

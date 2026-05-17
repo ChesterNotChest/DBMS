@@ -217,6 +217,13 @@ static bool isFromItemTerminator(TokenType type)
            || type == TokenType::ON;
 }
 
+static bool isOnExpressionTerminator(TokenType type)
+{
+    return isClauseTerminator(type)
+           || type == TokenType::COMMA
+           || isJoinStart(type);
+}
+
 static bool isAliasForbidden(TokenType type)
 {
     return isFromItemTerminator(type)
@@ -505,8 +512,14 @@ static bool parseFromClause(const QString &sql,
 
         const int onStart = index + 1;
         int onEndExclusive = onStart;
-        while (onEndExclusive < endExclusive && !isJoinStart(tokens[onEndExclusive].type)) {
+        while (onEndExclusive < endExclusive && !isOnExpressionTerminator(tokens[onEndExclusive].type)) {
             ++onEndExclusive;
+        }
+        if (onEndExclusive < endExclusive && tokens[onEndExclusive].type == TokenType::COMMA) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: cannot mix comma FROM and JOIN in the same FROM clause");
+            }
+            return false;
         }
         logic::LogicNode onAst;
         QString onError;

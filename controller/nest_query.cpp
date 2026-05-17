@@ -272,9 +272,15 @@ bool buildMultiNameResolution(const QList<SelectTableSource> &sources,
     QMap<QString, QString> firstBareColumnKey;
     QSet<QString> prefixes;
     QSet<QString> unaliasedTables;
+    QMap<QString, int> tableNameCounts;
+
+    for (const SelectTableSource &source : sources) {
+        tableNameCounts[source.tableName.trimmed()] += 1;
+    }
 
     for (const SelectTableSource &source : sources) {
         const QString prefix = canonicalPrefix(source);
+        const bool tableNameIsUnique = tableNameCounts.value(source.tableName.trimmed()) == 1;
         if (prefix.isEmpty()) {
             if (error != nullptr) {
                 *error = QStringLiteral("SELECT: expected table name");
@@ -305,7 +311,9 @@ bool buildMultiNameResolution(const QList<SelectTableSource> &sources,
             resolution->starOutputColumns.append(key);
 
             resolution->visibleNameToKey.insert(prefix + QLatin1Char('.') + column.name, key);
-            resolution->visibleNameToKey.insert(source.tableName + QLatin1Char('.') + column.name, key);
+            if (tableNameIsUnique) {
+                resolution->visibleNameToKey.insert(source.tableName + QLatin1Char('.') + column.name, key);
+            }
             if (!source.tableAlias.trimmed().isEmpty()) {
                 resolution->visibleNameToKey.insert(source.tableAlias + QLatin1Char('.') + column.name, key);
             }
