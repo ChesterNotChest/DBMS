@@ -16,7 +16,7 @@ namespace sqlparser {
 enum class TokenType {
     // 关键字
     CREATE, DROP, TABLE, DATABASE, DATABASES,
-    USE, SHOW, DESC, SELECT, FROM, WHERE, ORDER, LIMIT,
+    USE, SHOW, DESC, SELECT, FROM, WHERE, GROUP, HAVING, ORDER, LIMIT,
     INSERT, INTO, VALUES, UPDATE, SET, DELETE,
     ALTER, ADD, COLUMN, MODIFY, CONSTRAINT, INDEX, ON,
     JOIN, INNER, LEFT, RIGHT, FULL, NATURAL, CROSS, USING,
@@ -29,6 +29,7 @@ enum class TokenType {
     // 运算符
     EQ, NE, LT, GT, LE, GE,
     AND, OR, IN, LIKE, BETWEEN, IS,
+    COUNT, SUM, AVG, MIN, MAX,
 
     // 标识符与字面量
     IDENTIFIER,

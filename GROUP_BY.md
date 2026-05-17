@@ -42,7 +42,7 @@ GROUP BY class_id
 HAVING COUNT(*) > 3;
 ```
 
-5. 投影别名：
+5. 投影别名与聚合排序：
 
 ```sql
 SELECT class_id, COUNT(*) AS n
@@ -104,6 +104,11 @@ FROM / JOIN
    - 全表聚合在 WHERE 过滤后无行时仍产生一行：
      - `COUNT(*) = 0`
      - 其他聚合结果为空字符串 / NULL-like。
+10. 聚合查询的 `ORDER BY` 支持：
+   - 投影别名，例如 `ORDER BY n DESC`。
+   - 分组列，例如 `ORDER BY class_id ASC`。
+   - 直接聚合函数调用，例如 `ORDER BY COUNT(*) DESC`、`ORDER BY AVG(score) DESC`。
+   - 直接聚合函数即使未出现在 SELECT 投影中，也必须参与 aggregate spec 构建并可用于排序。
 
 ---
 
@@ -968,8 +973,9 @@ aggregate row contexts
 
 1. 优先匹配 projection output alias。
 2. 再匹配 group column。
-3. 再匹配 aggregate source text，例如 `COUNT(*)`。
-4. 不支持多列 ORDER BY。
+3. 再匹配 aggregate source text，例如 `COUNT(*)` / `AVG(score)`。
+4. 如果 `ORDER BY` 中的聚合函数未出现在 SELECT / HAVING 中，parser 必须将它追加到 `aggregateItems`，使执行层可以先计算再排序。
+5. 不支持多列 ORDER BY。
 
 #### 3.2 `emitAggregateSelectResult(...)`
 
@@ -1019,6 +1025,24 @@ FROM child
 GROUP BY parent_id
 ORDER BY n DESC
 LIMIT 1;
+```
+
+4. ORDER BY direct aggregate source text：
+
+```sql
+SELECT parent_id, COUNT(*) AS n
+FROM child
+GROUP BY parent_id
+ORDER BY COUNT(*) DESC;
+```
+
+5. ORDER BY aggregate not projected：
+
+```sql
+SELECT parent_id
+FROM child
+GROUP BY parent_id
+ORDER BY COUNT(*) DESC;
 ```
 
 ---
@@ -1221,6 +1245,13 @@ HAVING n >= 2
 ORDER BY n DESC;
 ```
 
+```sql
+SELECT class_id
+FROM student
+GROUP BY class_id
+ORDER BY COUNT(*) DESC;
+```
+
 期望：
 
 ```text
@@ -1244,7 +1275,23 @@ ORDER BY n DESC;
 COUNT(s.id) 统计匹配学生数
 ```
 
-#### 8. 多表 + WHERE + GROUP BY + HAVING + ORDER BY alias + LIMIT
+#### 8. ORDER BY 直接使用聚合函数
+
+```sql
+SELECT class_id
+FROM student
+GROUP BY class_id
+ORDER BY COUNT(*) DESC;
+```
+
+期望：
+
+```text
+COUNT(*) 不必出现在 SELECT 投影中，也可以作为聚合排序 key
+行数最多的 class_id 排在前面
+```
+
+#### 9. 多表 + WHERE + GROUP BY + HAVING + ORDER BY alias + LIMIT
 
 ```sql
 SELECT c.name AS class_name, COUNT(s.id) AS n, AVG(s.score) AS avg_score
