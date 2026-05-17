@@ -398,8 +398,34 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
                 ++listState.index;
                 continue;
             }
-            break;
+            // No break here, let loop continue until EndOfInput
+            // to parse all comma-separated values
         }
+        return {true, node, {}};
+    }
+
+    if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Between) {
+        ++state.index;
+        LogicNode lower;
+        LogicError error;
+        if (!parseLiteralOrReference(state, &lower, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        if (isAtEnd(state) || peekToken(state).type != LogicTokenType::Keyword
+            || peekToken(state).keywordType != LogicKeywordType::And) {
+            return makeParseError(QStringLiteral("BETWEEN requires AND"), token.position);
+        }
+        ++state.index;
+        LogicNode upper;
+        if (!parseLiteralOrReference(state, &upper, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        LogicNode node;
+        node.type = LogicNodeType::Between;
+        node.children.append(lhs);
+        node.children.append(lower);
+        node.children.append(upper);
+        node.rawText = token.rawText;
         return {true, node, {}};
     }
 
@@ -497,7 +523,8 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
                 ++listState.index;
                 continue;
             }
-            break;
+            // No break here, let loop continue until EndOfInput
+            // to parse all comma-separated values
         }
         return {true, node, {}};
     }

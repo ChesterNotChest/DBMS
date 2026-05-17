@@ -1,4 +1,5 @@
 #include "result_panel.h"
+#include "add_column_dialog.h"
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QCheckBox>
@@ -7,6 +8,8 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QComboBox>
+#include <QDialog>
+#include <QListView>
 
 ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     auto* rootLayout = new QVBoxLayout(this);
@@ -29,10 +32,9 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     auto* delRowBtn = new QPushButton("- 行", this);
     auto* addColBtn = new QPushButton("+ 列", this);
     auto* delColBtn = new QPushButton("- 列", this);
-    auto* saveBtn = new QPushButton("💾 保存", this);
     auto* undoBtn = new QPushButton("↩ 撤销", this);
 
-    for (QPushButton* btn : {addRowBtn, delRowBtn, addColBtn, delColBtn, saveBtn, undoBtn}) {
+    for (QPushButton* btn : {addRowBtn, delRowBtn, addColBtn, delColBtn, undoBtn}) {
         btn->setStyleSheet("QPushButton { background:#F0F0F0; color:#333; border:1px solid #DDD; border-radius:3px; padding:4px 12px; font-size:12px; } "
                            "QPushButton:hover { background:#E0E0E0; }");
         topLayout->addWidget(btn);
@@ -52,7 +54,7 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     resultLayout->setContentsMargins(0, 0, 0, 0);
     resultLayout->setSpacing(0);
 
-    m_table = new QTableWidget(this);
+    m_table = new QTableWidget(resultWidget);
     m_table->setStyleSheet(
         // 基础背景：浅蓝色
         "QTableWidget { background:#E3F2FD; border:none; gridline-color:#BBDEFB; }"
@@ -149,7 +151,6 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     connect(delRowBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteRow);
     connect(addColBtn, &QPushButton::clicked, this, &ResultPanel::onAddColumn);
     connect(delColBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteColumn);
-    connect(saveBtn, &QPushButton::clicked, this, &ResultPanel::onSave);
     connect(undoBtn, &QPushButton::clicked, this, &ResultPanel::undoLastChange);
     connect(m_logToggleBtn, &QPushButton::clicked, this, &ResultPanel::onToggleLogFooter);
     connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
@@ -353,160 +354,67 @@ bool ResultPanel::isNewRow(int r) const { return m_newRowIds.contains(r); }
 bool ResultPanel::isRowDirty(int r) const { return m_dirtyRowIds.contains(r); }
 
 void ResultPanel::onAddColumn() {
-    QDialog dlg(this);
-    dlg.setWindowTitle("➕ 新增列");
-    dlg.setMinimumWidth(480);
-    dlg.setStyleSheet(R"(
-        QDialog { background-color:#E3F2FD; border:none; }
-        QLabel { font-size:14px; font-weight:bold; color:#1565C0; padding:4px; }
-        QLineEdit { border:2px solid #90CAF9; border-radius:6px; padding:10px; background:#FFFFFF; font-size:14px; color:#1A237E; min-height:32px; }
-        QLineEdit:focus { border-color:#1E88E5; }
-        QComboBox { border:2px solid #90CAF9; border-radius:6px; padding:8px; background:#FFFFFF; font-size:14px; color:#1A237E; min-height:32px; }
-        QComboBox::drop-down { border:none; width:28px; }
-        QComboBox::down-arrow { border-left:6px solid transparent; border-right:6px solid transparent; border-top:7px solid #1565C0; }
-        QComboBox QAbstractItemView { background:#FFFFFF; border:1px solid #E0E0E0; }
-        QPushButton { background-color:#BBDEFB; color:#1565C0; border:2px solid #90CAF9; border-radius:6px; padding:10px 24px; font-size:14px; font-weight:bold; min-height:36px; }
-        QPushButton:hover { background-color:#90CAF9; }
-        QCheckBox { color:#1565C0; font-size:14px; font-weight:600; spacing:10px; }
-        QCheckBox::indicator { width:22px; height:22px; border:2px solid #90CAF9; border-radius:4px; background:#FFFFFF; }
-        QCheckBox::indicator:hover { border-color:#2196F3; }
-        QCheckBox::indicator:checked { background-color:#90CAF9; border-color:#2196F3; }
-    )");
+    if (!m_table) {
+        QMessageBox::warning(this, "错误", "请先打开表！");
+        return;
+    }
 
-    static const QStringList TYPES = {"INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME", "TIME", "BLOB", "BOOLEAN"};
+    AddColumnDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
 
-    QVBoxLayout* root = new QVBoxLayout(&dlg);
-    root->setContentsMargins(24,24,24,24);
-    root->setSpacing(16);
-
-    QLabel* titleLabel = new QLabel("📝 请填写新列信息");
-    titleLabel->setStyleSheet("font-size:20px; font-weight:bold; color:#0D47A1; padding:0;");
-    root->addWidget(titleLabel);
-
-    QHBoxLayout* row1 = new QHBoxLayout();
-    row1->setSpacing(12);
-    QLabel* lblName = new QLabel("列名：", &dlg);
-    QLineEdit* nameEdit = new QLineEdit(&dlg);
-    nameEdit->setPlaceholderText("请输入列名，如：student_name");
-    row1->addWidget(lblName);
-    row1->addWidget(nameEdit, 1);
-    root->addLayout(row1);
-
-    QHBoxLayout* row2 = new QHBoxLayout();
-    row2->setSpacing(12);
-    QLabel* lblType = new QLabel("数据类型：", &dlg);
-    QComboBox* typeCombo = new QComboBox(&dlg);
-    typeCombo->addItems(TYPES);
-    typeCombo->setCurrentText("VARCHAR");
-    QLabel* lblLen = new QLabel("长度：", &dlg);
-    QLineEdit* lenEdit = new QLineEdit("255", &dlg);
-    lenEdit->setAlignment(Qt::AlignCenter);
-    lenEdit->setMaximumWidth(100);
-    row2->addWidget(lblType);
-    row2->addWidget(typeCombo, 1);
-    row2->addWidget(lblLen);
-    row2->addWidget(lenEdit);
-    root->addLayout(row2);
-
-    QLabel* constraintLabel = new QLabel("设置约束：", &dlg);
-    root->addWidget(constraintLabel);
-
-    QGridLayout* chkGrid = new QGridLayout();
-    chkGrid->setSpacing(12);
-    chkGrid->setContentsMargins(8,4,8,4);
-    QCheckBox* chkNotNull = new QCheckBox("📌 非空 NOT NULL", &dlg);
-    QCheckBox* chkPK = new QCheckBox("🔑 主键 PRIMARY KEY", &dlg);
-    QCheckBox* chkUnique = new QCheckBox("🔒 唯一 UNIQUE", &dlg);
-    QCheckBox* chkAutoInc = new QCheckBox("⚡ 自增 AUTO_INCREMENT", &dlg);
-    chkGrid->addWidget(chkNotNull, 0, 0);
-    chkGrid->addWidget(chkPK, 0, 1);
-    chkGrid->addWidget(chkUnique, 1, 0);
-    chkGrid->addWidget(chkAutoInc, 1, 1);
-    root->addLayout(chkGrid);
-
-    QLabel* hintLabel = new QLabel("<i style='color:#757575; font-size:12px'>💡 提示：同一表只能有一个主键；VARCHAR/CHAR 需要设置长度</i>", &dlg);
-    root->addWidget(hintLabel);
-
-    root->addStretch();
-
-    QHBoxLayout* btnRow = new QHBoxLayout();
-    btnRow->setSpacing(12);
-    btnRow->addStretch();
-    QPushButton* cancelBtn = new QPushButton("取消", &dlg);
-    cancelBtn->setStyleSheet("QPushButton { background-color:#E0E0E0; color:#666666; border:2px solid #BDBDBD; border-radius:6px; padding:10px 24px; font-size:14px; font-weight:bold; min-height:36px; } QPushButton:hover { background-color:#BDBDBD; }");
-    connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
-    btnRow->addWidget(cancelBtn);
-    QPushButton* okBtn = new QPushButton("确定", &dlg);
-    okBtn->setStyleSheet("QPushButton { background-color:#90CAF9; color:#1565C0; border:2px solid #2196F3; border-radius:6px; padding:10px 24px; font-size:14px; font-weight:bold; min-height:36px; } QPushButton:hover { background-color:#64B5F6; }");
-    connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
-    btnRow->addWidget(okBtn);
-    root->addLayout(btnRow);
-
-    nameEdit->setFocus();
-
-    connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) {
-        QString type = typeCombo->currentText().toUpper();
-        bool needsLen = (type == "VARCHAR" || type == "CHAR");
-        lenEdit->setEnabled(needsLen);
-        lenEdit->setStyleSheet(needsLen ? "" : "background-color:#ECEFF1; color:#9E9E9E;");
-    });
-    typeCombo->currentIndexChanged(0);
-
-    if (dlg.exec() != QDialog::Accepted) return;
-
-    QString colName = nameEdit->text().trimmed();
-    if (colName.isEmpty()) {
+    ColumnConfig cfg = dlg.getConfig();
+    if (cfg.name.isEmpty()) {
         QMessageBox::warning(this, "错误", "列名不能为空！");
         return;
     }
 
     for (int c = 0; c < m_table->columnCount(); ++c) {
-        if (m_table->horizontalHeaderItem(c)->text() == colName) {
+        QTableWidgetItem* headerItem = m_table->horizontalHeaderItem(c);
+        if (headerItem && headerItem->text() == cfg.name) {
             QMessageBox::warning(this, "错误", "列名已存在！");
             return;
         }
     }
 
-    QString type = typeCombo->currentText().toUpper();
-    QString typeStr;
-    if (type == "VARCHAR" || type == "CHAR") {
-        QString len = lenEdit->text().trimmed();
-        if (len.isEmpty()) len = "255";
-        typeStr = QString("%1(%2)").arg(type).arg(len);
-    } else {
-        typeStr = type;
+    QString typeStr = cfg.type;
+    if ((cfg.type == "VARCHAR" || cfg.type == "CHAR") && cfg.length > 0) {
+        typeStr = QString("%1(%2)").arg(cfg.type).arg(cfg.length);
     }
 
-    QStringList constraints;
-    if (chkNotNull->isChecked()) constraints << "NOT NULL";
-    if (chkPK->isChecked()) constraints << "PRIMARY KEY";
-    if (chkUnique->isChecked()) constraints << "UNIQUE";
-    if (chkAutoInc->isChecked()) constraints << "AUTO_INCREMENT";
-    QString constrStr = constraints.join(" ");
-
-    QString stored = colName + ":" + typeStr + (constrStr.isEmpty() ? "" : ":" + constrStr);
-
     int col = m_table->columnCount();
+    
+    // 先更新数据模型，再操作表格（避免 cellChanged 信号访问未更新的数据）
+    for (auto it = m_currentRows.begin(); it != m_currentRows.end(); ++it) {
+        it.value().append("");
+    }
+    for (auto it = m_originalRows.begin(); it != m_originalRows.end(); ++it) {
+        it.value().append("");
+    }
+    
+    // 临时断开 cellChanged 信号，防止 setItem 触发回调
+    disconnect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
+    
     m_table->insertColumn(col);
-    m_table->setHorizontalHeaderItem(col, new QTableWidgetItem(colName));
+    m_table->setHorizontalHeaderItem(col, new QTableWidgetItem(cfg.name));
 
+    // 为现有行添加新列的单元格
     for (int r = 0; r < m_table->rowCount(); ++r) {
         QTableWidgetItem* item = new QTableWidgetItem("");
         item->setTextAlignment(Qt::AlignCenter);
         m_table->setItem(r, col, item);
     }
+    
+    // 重新连接 cellChanged 信号
+    connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
 
-    for (auto it = m_currentRows.begin(); it != m_currentRows.end(); ++it) {
-        it.value().append("");
+    m_addedColumns.append(cfg.name + ":" + typeStr);
+    m_lastColumns.append(cfg.name);
+
+    if (m_statsLabel) {
+        int totalColChanges = m_addedColumns.size() + m_deletedColumnNames.size();
+        m_statsLabel->setText(QString("列已变更（%1 列待保存）").arg(totalColChanges));
     }
-
-    m_addedColumns.append(stored);
-    m_lastColumns.append(colName);
-
-    expandLogFooter();
-    appendLog(QString("➕ 新增列：%1 %2（待保存）").arg(colName).arg(typeStr), "#00695C");
-    int totalColChanges = m_addedColumns.size() + m_deletedColumnNames.size();
-    m_statsLabel->setText(QString("列已变更（%1 列待保存）").arg(totalColChanges));
 }
 
 // ── 删除选中列 ──

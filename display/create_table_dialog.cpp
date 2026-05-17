@@ -8,101 +8,109 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
     setMinimumSize(980, 720);
     setStyleSheet(R"(
         QDialog {
-            background-color: #E3F2FD;
+            background-color: #F7F8FA;
         }
         QLabel {
             font-size: 14px;
             font-weight: 600;
-            color: #1565C0;
+            color: #4A5568;
             padding: 4px;
         }
         QLineEdit {
-            border: 1px solid #E0E0E0;
+            border: 1px solid #DDE1E6;
             border-radius: 4px;
-            padding: 6px 8px;
+            padding: 6px 10px;
             background-color: white;
             font-size: 13px;
-            color: #212121;
-            min-height: 28px;
+            color: #333;
+            min-height: 30px;
         }
         QLineEdit:focus {
-            border-color: #1890ff;
+            border-color: #A0B0C0;
             outline: none;
         }
         QLineEdit:disabled {
-            background-color: #FAFAFA;
-            color: #9E9E9E;
+            background-color: #F5F6F7;
+            color: #B0B5BA;
         }
         QComboBox {
-            border: 1px solid #E0E0E0;
-            border-radius: 4px;
-            padding: 4px 8px;
+            border: 1px solid #DDE1E6;
+            border-radius: 3px;
+            padding: 2px 8px;
             background-color: white;
             font-size: 13px;
-            color: #212121;
-            min-height: 28px;
-            max-height: 28px;
+            color: #333;
+            min-height: 22px;
+            max-height: 26px;
         }
         QComboBox:focus {
-            border-color: #1890ff;
+            border-color: #A0B0C0;
             outline: none;
         }
         QComboBox::drop-down {
-            border: none;
-            width: 24px;
+            subcontrol-origin: padding;
+            subcontrol-position: center right;
+            width: 20px;
+            border-left: none;
+            border-top-right-radius: 3px;
+            border-bottom-right-radius: 3px;
         }
         QComboBox::down-arrow {
             image: none;
             border-left: 4px solid transparent;
             border-right: 4px solid transparent;
-            border-top: 4px solid #666;
+            border-top: 5px solid #888;
+            margin-right: 3px;
+        }
+        QComboBox::down-arrow:hover {
+            border-top-color: #555;
         }
         QComboBox QAbstractItemView {
             background-color: white;
-            border: 1px solid #E0E0E0;
+            border: 1px solid #DDE1E6;
             font-size: 13px;
-            color: #212121;
-            selection-background-color: #E6F7FF;
-            selection-color: #1890ff;
+            color: #333;
+            selection-background-color: #EEF0F3;
+            selection-color: #555;
         }
         QComboBox QAbstractItemView::item {
             padding: 6px 12px;
-            color: #212121;
+            color: #333;
         }
         QComboBox QAbstractItemView::item:hover {
-            background-color: #E6F7FF;
-            color: #1890ff;
+            background-color: #EEF0F3;
+            color: #444;
         }
         QComboBox QAbstractItemView::item:selected {
-            background-color: #E6F7FF;
-            color: #1890ff;
+            background-color: #EEF0F3;
+            color: #444;
         }
         QTableWidget {
             background-color: white;
-            border: 1px solid #E0E0E0;
-            border-radius: 8px;
-            gridline-color: #F0F0F0;
-            font-size: 14px;
-            color: #212121;
-            selection-background-color: #E6F7FF;
-            selection-color: #1890ff;
-            alternate-background-color: #FAFAFA;
+            border: 1px solid #DDE1E6;
+            border-radius: 6px;
+            gridline-color: #EEE;
+            font-size: 13px;
+            color: #333;
+            selection-background-color: #EEF0F3;
+            selection-color: #444;
+            alternate-background-color: #FAFBFC;
         }
         QTableWidget::item {
-            padding: 8px 6px;
+            padding: 6px 8px;
             text-align: center;
         }
         QTableWidget::item:selected {
-            background-color: #E6F7FF;
-            color: #1890ff;
+            background-color: #EEF0F3;
+            color: #444;
         }
         QHeaderView::section {
-            background-color: #F5F5F5;
-            padding: 8px 6px;
+            background-color: #F0F1F3;
+            padding: 8px 8px;
             border: none;
-            border-right: 1px solid #E0E0E0;
-            border-bottom: 2px solid #E0E0E0;
-            font-weight: bold;
+            border-right: 1px solid #E5E8EB;
+            border-bottom: 2px solid #DDE1E6;
+            font-weight: 600;
             font-size: 13px;
             color: #555;
             min-height: 36px;
@@ -111,73 +119,75 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
             border-right: none;
         }
         QHeaderView::section:vertical {
-            background-color: #F5F5F5;
+            background-color: white;
             border: none;
-            border-bottom: 1px solid #E0E0E0;
-            font-weight: bold;
+            border-bottom: 1px solid #EEE;
+            border-right: 1px solid #EEE;
+            font-weight: 500;
             font-size: 12px;
-            color: #555;
+            color: #999;
         }
         QTableCornerButton::section {
-            background-color: #F5F5F5;
+            background-color: #F0F1F3;
             border: none;
-            border-right: 1px solid #E0E0E0;
-            border-bottom: 2px solid #E0E0E0;
+            border-right: 1px solid #E5E8EB;
+            border-bottom: 2px solid #DDE1E6;
         }
         QPushButton {
-            background-color: #F0F0F0;
-            color: #666;
-            border: 1px solid #E0E0E0;
-            border-radius: 4px;
-            padding: 10px 20px;
-            font-size: 14px;
-            font-weight: 600;
-            min-height: 36px;
+            background-color: #F0F1F3;
+            color: #555;
+            border: 1px solid #DDE1E6;
+            border-radius: 6px;
+            padding: 9px 20px;
+            font-size: 13px;
+            font-weight: 500;
+            min-height: 34px;
         }
         QPushButton:hover {
-            background-color: #E8E8E8;
-            border-color: #D0D0D0;
+            background-color: #E5E7EA;
+            border-color: #C8CCD1;
         }
         QPushButton:pressed {
-            background-color: #D8D8D8;
+            background-color: #DDDDE0;
         }
         QPushButton.primary {
-            background-color: #1890ff;
+            background-color: #607080;
             color: white;
-            border-color: #1890ff;
+            border-color: #607080;
         }
         QPushButton.primary:hover {
-            background-color: #40A9ff;
-            border-color: #40A9ff;
+            background-color: #708090;
+            border-color: #708090;
         }
         QPushButton.danger {
-            background-color: #FF4D4F;
+            background-color: #B85C50;
             color: white;
-            border-color: #FF4D4F;
+            border-color: #B85C50;
         }
         QPushButton.danger:hover {
-            background-color: #FF7875;
-            border-color: #FF7875;
+            background-color: #C86B5E;
+            border-color: #C86B5E;
         }
         QCheckBox {
             color: #555;
             font-size: 13px;
-            font-weight: 500;
-            spacing: 8px;
+            font-weight: 400;
+            spacing: 6px;
         }
         QCheckBox::indicator {
             width: 18px;
             height: 18px;
-            border: 2px solid #D9D9D9;
-            border-radius: 4px;
+            border: 1.5px solid #BCC0C6;
+            border-radius: 3px;
             background-color: white;
         }
         QCheckBox::indicator:hover {
-            border-color: #1890ff;
+            border-color: #909999;
         }
         QCheckBox::indicator:checked {
-            background-color: #1890ff;
-            border-color: #1890ff;
+            background-color: white;
+            border-color: #4A5568;
+            border-width: 1.8px;
         }
         QCheckBox::indicator:checked::after {
             content: "✓";
@@ -185,7 +195,8 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
             text-align: center;
             font-size: 12px;
             font-weight: bold;
-            color: white;
+            color: #2D3748;
+            margin-top: -1px;
         }
     )");
 
@@ -200,7 +211,7 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
 
     // 标题区域
     auto *titleLabel = new QLabel("📋 创建新数据表");
-    titleLabel->setStyleSheet("font-size: 24px; font-weight: bold; color: #1565C0; padding: 0;");
+    titleLabel->setStyleSheet("font-size: 22px; font-weight: 700; color: #374151; padding: 0; letter-spacing: 0.5px;");
     mainLayout->addWidget(titleLabel);
 
     // 数据库与表名区域
@@ -220,8 +231,9 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
         "字段名称", "数据类型", "长度", "NOT NULL", "主键", "唯一", "自增", "默认值", "备注"
     });
     m_fieldTable->horizontalHeader()->setStretchLastSection(true);
-    m_fieldTable->verticalHeader()->setDefaultSectionSize(38);
-    m_fieldTable->verticalHeader()->setMinimumSectionSize(36);
+    m_fieldTable->verticalHeader()->setDefaultSectionSize(34);
+    m_fieldTable->verticalHeader()->setMinimumSectionSize(32);
+    m_fieldTable->verticalHeader()->setVisible(false);
     m_fieldTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_fieldTable->setAlternatingRowColors(true);
 
@@ -242,7 +254,7 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     btnLayout->setSpacing(12);
 
     auto *addBtn = new QPushButton("➕ 添加字段");
-    connect(addBtn, &QPushButton::clicked, this, &CreateTableDialog::onAddColumn);
+    connect(addBtn, &QPushButton::clicked, this, &CreateTableDialog::onAddColumnDialog);
 
     auto *delBtn = new QPushButton("➖ 删除选中");
     connect(delBtn, &QPushButton::clicked, this, &CreateTableDialog::onDeleteColumn);
@@ -279,6 +291,110 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     }
 }
 
+void CreateTableDialog::onAddColumnDialog()
+{
+    AddColumnDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    ColumnConfig cfg = dlg.getConfig();
+    if (cfg.name.isEmpty()) {
+        QMessageBox::warning(this, "警告", "列名不能为空！");
+        return;
+    }
+
+    int row = m_fieldTable->rowCount();
+    m_fieldTable->insertRow(row);
+
+    // 字段名称
+    auto *nameItem = new QTableWidgetItem(cfg.name);
+    nameItem->setTextAlignment(Qt::AlignCenter);
+    m_fieldTable->setItem(row, 0, nameItem);
+
+    // 数据类型
+    auto *typeCombo = new QComboBox();
+    typeCombo->setEditable(false);
+    typeCombo->setFixedHeight(24);
+    typeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    typeCombo->addItems({
+        "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
+        "NUMBER", "VARCHAR", "CHAR", "TEXT", "DATE",
+        "DATETIME", "TIME", "BLOB", "BOOLEAN"
+    });
+    typeCombo->setCurrentText(cfg.type);
+    m_fieldTable->setCellWidget(row, 1, typeCombo);
+
+    // 长度
+    auto *lenEdit = new QLineEdit(cfg.length > 0 ? QString::number(cfg.length) : "");
+    lenEdit->setAlignment(Qt::AlignCenter);
+    lenEdit->setPlaceholderText("长度");
+    lenEdit->setFixedHeight(24);
+    lenEdit->setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 13px; }");
+    m_fieldTable->setCellWidget(row, 2, lenEdit);
+
+    // NOT NULL
+    auto *chkNotNull = new QCheckBox();
+    chkNotNull->setChecked(!cfg.allowNull);
+    auto *widgetNn = new QWidget();
+    auto *layoutNn = new QHBoxLayout(widgetNn);
+    layoutNn->setContentsMargins(0, 0, 0, 0);
+    layoutNn->setAlignment(Qt::AlignCenter);
+    layoutNn->addWidget(chkNotNull);
+    m_fieldTable->setCellWidget(row, 3, widgetNn);
+
+    // 主键
+    auto *chkPk = new QCheckBox();
+    chkPk->setChecked(cfg.primaryKey);
+    auto *widgetPk = new QWidget();
+    auto *layoutPk = new QHBoxLayout(widgetPk);
+    layoutPk->setContentsMargins(0, 0, 0, 0);
+    layoutPk->setAlignment(Qt::AlignCenter);
+    layoutPk->addWidget(chkPk);
+    m_fieldTable->setCellWidget(row, 4, widgetPk);
+
+    // 唯一
+    auto *chkUnique = new QCheckBox();
+    chkUnique->setChecked(cfg.unique);
+    auto *widgetUniq = new QWidget();
+    auto *layoutUniq = new QHBoxLayout(widgetUniq);
+    layoutUniq->setContentsMargins(0, 0, 0, 0);
+    layoutUniq->setAlignment(Qt::AlignCenter);
+    layoutUniq->addWidget(chkUnique);
+    m_fieldTable->setCellWidget(row, 5, widgetUniq);
+
+    // 自增
+    auto *chkAutoInc = new QCheckBox();
+    chkAutoInc->setChecked(false);
+    auto *widgetAi = new QWidget();
+    auto *layoutAi = new QHBoxLayout(widgetAi);
+    layoutAi->setContentsMargins(0, 0, 0, 0);
+    layoutAi->setAlignment(Qt::AlignCenter);
+    layoutAi->addWidget(chkAutoInc);
+    m_fieldTable->setCellWidget(row, 6, widgetAi);
+
+    // 默认值
+    auto *defItem = new QTableWidgetItem(cfg.defaultValue);
+    defItem->setTextAlignment(Qt::AlignCenter);
+    m_fieldTable->setItem(row, 7, defItem);
+
+    // 备注（CHECK约束存入备注列）
+    auto *commItem = new QTableWidgetItem(cfg.checkConstraint);
+    commItem->setTextAlignment(Qt::AlignCenter);
+    m_fieldTable->setItem(row, 8, commItem);
+
+    connect(chkPk, &QCheckBox::stateChanged, this, [this, row](int state) {
+        if (state == Qt::Checked) {
+            updatePkRadio(row);
+        }
+    });
+
+    connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this, row]() {
+        refreshLengthEnable(row);
+    });
+
+    refreshLengthEnable(row);
+}
+
 void CreateTableDialog::onAddColumn()
 {
     int row = m_fieldTable->rowCount();
@@ -292,6 +408,8 @@ void CreateTableDialog::onAddColumn()
     // 数据类型
     auto *typeCombo = new QComboBox();
     typeCombo->setEditable(false);
+    typeCombo->setFixedHeight(24);
+    typeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     typeCombo->addItems({
         "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
         "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME",
@@ -304,7 +422,8 @@ void CreateTableDialog::onAddColumn()
     auto *lenEdit = new QLineEdit("255");
     lenEdit->setAlignment(Qt::AlignCenter);
     lenEdit->setPlaceholderText("长度");
-    lenEdit->setStyleSheet("QLineEdit { min-height: 24px; padding: 4px 6px; font-size: 12px; }");
+    lenEdit->setFixedHeight(24);
+    lenEdit->setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 13px; }");
     m_fieldTable->setCellWidget(row, 2, lenEdit);
 
     // NOT NULL
@@ -401,7 +520,7 @@ void CreateTableDialog::refreshLengthEnable(int row)
     QString type = typeCombo->currentText().toUpper();
     bool needsLen = (type == "VARCHAR" || type == "CHAR");
     lenEdit->setEnabled(needsLen);
-    lenEdit->setStyleSheet(needsLen ? "QLineEdit { min-height: 32px; padding: 6px; }" : "QLineEdit { min-height: 32px; padding: 6px; background-color: #FAFAFA; color: #9E9E9E; }");
+    lenEdit->setStyleSheet(needsLen ? "QLineEdit { padding: 2px 6px; font-size: 13px; }" : "QLineEdit { padding: 2px 6px; background-color: #F5F6F7; color: #B0B5BA; }");
 }
 
 void CreateTableDialog::onDeleteColumn()
@@ -492,6 +611,15 @@ QString CreateTableDialog::buildSql() const
                 if (chk && chk->isChecked()) {
                     constraints.append("AUTO_INCREMENT");
                 }
+            }
+        }
+
+        // CHECK约束（从备注列读取）
+        auto *commItem = m_fieldTable->item(row, 8);
+        if (commItem) {
+            QString check = commItem->text().trimmed();
+            if (!check.isEmpty()) {
+                constraints.append(QString("CHECK (%1)").arg(check));
             }
         }
 

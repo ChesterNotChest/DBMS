@@ -42,6 +42,7 @@ enum class LogicKeywordType {
     Or,
     Not,
     In,
+    Between,
     Exists,
     Select,
     Any,
@@ -77,7 +78,8 @@ enum class LogicNodeType {
     InList,
     InSubquery,
     ExistsSubquery,
-    QuantifiedSubquery
+    QuantifiedSubquery,
+    Between
 };
 
 enum class LogicUnaryOperator {

@@ -21,6 +21,7 @@ LogicKeywordType keywordTypeForWord(const QString &word)
     if (upper == QStringLiteral("OR")) return LogicKeywordType::Or;
     if (upper == QStringLiteral("NOT")) return LogicKeywordType::Not;
     if (upper == QStringLiteral("IN")) return LogicKeywordType::In;
+    if (upper == QStringLiteral("BETWEEN")) return LogicKeywordType::Between;
     if (upper == QStringLiteral("EXISTS")) return LogicKeywordType::Exists;
     if (upper == QStringLiteral("SELECT")) return LogicKeywordType::Select;
     if (upper == QStringLiteral("ANY")) return LogicKeywordType::Any;

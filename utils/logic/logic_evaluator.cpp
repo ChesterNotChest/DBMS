@@ -82,6 +82,8 @@ LogicEvalResult evaluateLogicExpression(const LogicNode &root,
             return {false, LogicTruthValue::Unknown, {QStringLiteral("subqueries are not allowed in this context"), -1}};
         }
         return evaluateQuantifiedSubqueryNode(root, rowContext, evalContext);
+    case LogicNodeType::Between:
+        return evaluateBetweenNode(root, rowContext);
     }
 
     return {false, LogicTruthValue::Unknown, {QStringLiteral("unsupported logic node"), -1}};

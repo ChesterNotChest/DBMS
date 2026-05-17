@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QHeaderView>
+#include "add_column_dialog.h"
 
 class CreateTableDialog : public QDialog
 {
@@ -25,6 +26,7 @@ public:
 
 private slots:
     void onAddColumn();
+    void onAddColumnDialog();
     void onDeleteColumn();
     void onClearAll();
     void onExecuteCreate();
