@@ -233,12 +233,7 @@ static bool isAliasForbidden(TokenType type)
 
 static bool isIdentifierLike(TokenType type)
 {
-    return type == TokenType::IDENTIFIER
-           || type == TokenType::INT_TYPE
-           || type == TokenType::FLOAT_TYPE
-           || type == TokenType::CHAR_TYPE
-           || type == TokenType::VARCHAR_TYPE
-           || type == TokenType::TEXT_TYPE;
+    return type == TokenType::IDENTIFIER;
 }
 
 static bool parseQualifiedIdentifier(const QVector<SqlToken> &tokens,
@@ -362,26 +357,30 @@ static QString sourceAliasOrTable(const QVariantMap &source)
 
 static bool validateSourceNames(const QVariantList &sources, QString *error)
 {
-    QSet<QString> visiblePrefixes;
+    QMap<QString, int> tableNameCounts;
+    QSet<QString> tableNames;
+    for (const QVariant &value : sources) {
+        const QVariantMap source = value.toMap();
+        const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
+        if (!tableName.isEmpty()) {
+            tableNameCounts[tableName] += 1;
+            tableNames.insert(tableName);
+        }
+    }
+
+    QSet<QString> reservedUniqueTablePrefixes;
+    QSet<QString> aliases;
     QSet<QString> unaliasedTables;
     for (const QVariant &value : sources) {
         const QVariantMap source = value.toMap();
         const QString tableName = source.value(QStringLiteral("tableName")).toString().trimmed();
         const QString alias = source.value(QStringLiteral("tableAlias")).toString().trimmed();
-        const QString prefix = alias.isEmpty() ? tableName : alias;
-        if (prefix.isEmpty()) {
+        if (tableName.isEmpty()) {
             if (error != nullptr) {
                 *error = QStringLiteral("SELECT: expected table name");
             }
             return false;
         }
-        if (visiblePrefixes.contains(prefix)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("SELECT: duplicate table alias '%1'").arg(prefix);
-            }
-            return false;
-        }
-        visiblePrefixes.insert(prefix);
         if (alias.isEmpty()) {
             if (unaliasedTables.contains(tableName)) {
                 if (error != nullptr) {
@@ -389,7 +388,33 @@ static bool validateSourceNames(const QVariantList &sources, QString *error)
                 }
                 return false;
             }
+            if (tableNameCounts.value(tableName) > 1) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table '%1' requires aliases").arg(tableName);
+                }
+                return false;
+            }
             unaliasedTables.insert(tableName);
+        }
+        if (tableNameCounts.value(tableName) == 1) {
+            if (reservedUniqueTablePrefixes.contains(tableName) || aliases.contains(tableName)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table qualifier '%1'").arg(tableName);
+                }
+                return false;
+            }
+            reservedUniqueTablePrefixes.insert(tableName);
+        }
+        if (!alias.isEmpty()) {
+            if (aliases.contains(alias)
+                || reservedUniqueTablePrefixes.contains(alias)
+                || tableNames.contains(alias)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table qualifier '%1'").arg(alias);
+                }
+                return false;
+            }
+            aliases.insert(alias);
         }
     }
     return true;

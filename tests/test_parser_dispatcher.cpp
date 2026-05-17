@@ -307,6 +307,10 @@ private slots:
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a NATURAL JOIN b")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a JOIN b ON a.id = b.id, c")).success);
         QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM a, b JOIN c ON b.id = c.id")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT INT FROM student")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT id FROM INT")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT id FROM student INT")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT * FROM student s, class student")).success);
     }
 
     void test_parseUpdateAndDeleteSupportSimpleWhere()
@@ -604,7 +608,14 @@ private slots:
             QStringLiteral("SELECT student_multi.id FROM student_multi x "
                            "JOIN student_multi y ON x.id = y.id"));
         QVERIFY(!result.success);
-        QVERIFY(result.errorMessage.contains(QStringLiteral("unknown table or alias")));
+        QVERIFY(result.errorMessage.contains(QStringLiteral("duplicate table qualifier"))
+                || result.errorMessage.contains(QStringLiteral("unknown table or alias")));
+
+        result = dispatcher.execute(
+            QStringLiteral("SELECT x.id, y.name FROM student_multi x "
+                           "JOIN student_multi y ON x.id = y.id ORDER BY x.id ASC"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 3);
     }
 
     void test_dispatchUpdateAndDeleteKeepQualifiedWhereOnAstPath()

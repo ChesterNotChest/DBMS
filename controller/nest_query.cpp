@@ -40,6 +40,7 @@ struct SelectTableSource
     QString tableAlias;
     tabledef::TableSchema schema;
     repo::TableData data;
+    bool tableNameQualifierVisible = true;
 };
 
 struct MultiProjectionItem
@@ -250,8 +251,68 @@ bool loadSourcesFromPayload(const QVariantMap &payload,
         }
 
         if (sources != nullptr) {
-            sources->append(SelectTableSource{tableName, tableAlias, schema, rows.resultTable});
+            sources->append(SelectTableSource{tableName, tableAlias, schema, rows.resultTable, true});
         }
+    }
+    return true;
+}
+
+bool validateAndAnnotateSourceNames(QList<SelectTableSource> *sources, QString *error)
+{
+    if (sources == nullptr) {
+        return true;
+    }
+
+    QMap<QString, int> tableNameCounts;
+    for (const SelectTableSource &source : *sources) {
+        tableNameCounts[source.tableName.trimmed()] += 1;
+    }
+
+    QSet<QString> reservedUniqueTablePrefixes;
+    QSet<QString> aliases;
+    QSet<QString> unaliasedTables;
+    for (SelectTableSource &source : *sources) {
+        const QString tableName = source.tableName.trimmed();
+        const QString alias = source.tableAlias.trimmed();
+        if (tableName.isEmpty()) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: expected table name");
+            }
+            return false;
+        }
+        if (alias.isEmpty()) {
+            if (unaliasedTables.contains(tableName) || tableNameCounts.value(tableName) > 1) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table '%1' requires aliases").arg(tableName);
+                }
+                return false;
+            }
+            unaliasedTables.insert(tableName);
+        }
+
+        if (tableNameCounts.value(tableName) == 1) {
+            if (reservedUniqueTablePrefixes.contains(tableName) || aliases.contains(tableName)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table qualifier '%1'").arg(tableName);
+                }
+                return false;
+            }
+            reservedUniqueTablePrefixes.insert(tableName);
+        }
+
+        if (!alias.isEmpty()) {
+            if (aliases.contains(alias)
+                || reservedUniqueTablePrefixes.contains(alias)
+                || tableNameCounts.contains(alias)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: duplicate table qualifier '%1'").arg(alias);
+                }
+                return false;
+            }
+            aliases.insert(alias);
+        }
+
+        source.tableNameQualifierVisible = tableNameCounts.value(tableName) == 1;
     }
     return true;
 }
@@ -270,38 +331,13 @@ bool buildMultiNameResolution(const QList<SelectTableSource> &sources,
     resolution->starOutputColumns.clear();
 
     QMap<QString, QString> firstBareColumnKey;
-    QSet<QString> prefixes;
-    QSet<QString> unaliasedTables;
-    QMap<QString, int> tableNameCounts;
-
-    for (const SelectTableSource &source : sources) {
-        tableNameCounts[source.tableName.trimmed()] += 1;
-    }
-
     for (const SelectTableSource &source : sources) {
         const QString prefix = canonicalPrefix(source);
-        const bool tableNameIsUnique = tableNameCounts.value(source.tableName.trimmed()) == 1;
         if (prefix.isEmpty()) {
             if (error != nullptr) {
                 *error = QStringLiteral("SELECT: expected table name");
             }
             return false;
-        }
-        if (prefixes.contains(prefix)) {
-            if (error != nullptr) {
-                *error = QStringLiteral("SELECT: duplicate table alias '%1'").arg(prefix);
-            }
-            return false;
-        }
-        prefixes.insert(prefix);
-        if (source.tableAlias.trimmed().isEmpty()) {
-            if (unaliasedTables.contains(source.tableName)) {
-                if (error != nullptr) {
-                    *error = QStringLiteral("SELECT: duplicate table '%1' requires aliases").arg(source.tableName);
-                }
-                return false;
-            }
-            unaliasedTables.insert(source.tableName);
         }
 
         for (const tabledef::Column &column : source.schema.columns) {
@@ -311,7 +347,7 @@ bool buildMultiNameResolution(const QList<SelectTableSource> &sources,
             resolution->starOutputColumns.append(key);
 
             resolution->visibleNameToKey.insert(prefix + QLatin1Char('.') + column.name, key);
-            if (tableNameIsUnique) {
+            if (source.tableNameQualifierVisible) {
                 resolution->visibleNameToKey.insert(source.tableName + QLatin1Char('.') + column.name, key);
             }
             if (!source.tableAlias.trimmed().isEmpty()) {
@@ -379,7 +415,9 @@ logic::LogicRowContext buildSourceRowContext(const SelectTableSource &source, in
         const QString value = columnIndex < row.size() ? row.at(columnIndex) : QString();
         const logic::LogicCellValue cell{value, column.type, value.isEmpty()};
         rowContext.cellsByName.insert(prefix + QLatin1Char('.') + column.name, cell);
-        rowContext.cellsByName.insert(source.tableName + QLatin1Char('.') + column.name, cell);
+        if (source.tableNameQualifierVisible) {
+            rowContext.cellsByName.insert(source.tableName + QLatin1Char('.') + column.name, cell);
+        }
         if (!source.tableAlias.trimmed().isEmpty()) {
             rowContext.cellsByName.insert(source.tableAlias + QLatin1Char('.') + column.name, cell);
         }
@@ -396,7 +434,9 @@ logic::LogicRowContext buildNullSourceContext(const SelectTableSource &source)
     for (const tabledef::Column &column : source.schema.columns) {
         const logic::LogicCellValue cell = nullCell(column.type);
         rowContext.cellsByName.insert(prefix + QLatin1Char('.') + column.name, cell);
-        rowContext.cellsByName.insert(source.tableName + QLatin1Char('.') + column.name, cell);
+        if (source.tableNameQualifierVisible) {
+            rowContext.cellsByName.insert(source.tableName + QLatin1Char('.') + column.name, cell);
+        }
         if (!source.tableAlias.trimmed().isEmpty()) {
             rowContext.cellsByName.insert(source.tableAlias + QLatin1Char('.') + column.name, cell);
         }
@@ -720,6 +760,12 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
     QString error;
     QList<SelectTableSource> sources;
     if (!loadSourcesFromPayload(parsed.payload, &sources, &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+    if (!validateAndAnnotateSourceNames(&sources, &error)) {
         result.success = false;
         result.errorMessage = error;
         result.text = error;
