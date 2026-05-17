@@ -5,6 +5,7 @@
 #include "../utils/service_common/service_common.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QSet>
 
 namespace service {
@@ -50,6 +51,44 @@ struct MultiProjectionItem
     QString resolvedKey;
     QString outputName;
     tabledef::ColumnType type = tabledef::ColumnType::Varchar;
+};
+
+enum class AggregateFunction
+{
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+};
+
+struct AggregateSpec
+{
+    AggregateFunction function = AggregateFunction::Count;
+    QString argumentName;
+    QString resolvedArgumentKey;
+    bool isStar = false;
+    QString sourceText;
+    QString syntheticName;
+    QString outputName;
+    tabledef::ColumnType outputType = tabledef::ColumnType::Varchar;
+};
+
+struct AggregateProjectionItem
+{
+    bool isAggregate = false;
+    QString sourceName;
+    QString resolvedKey;
+    int aggregateIndex = -1;
+    QString outputName;
+    tabledef::ColumnType outputType = tabledef::ColumnType::Varchar;
+};
+
+struct GroupedRows
+{
+    QString groupKey;
+    logic::LogicRowContext representative;
+    QVector<logic::LogicRowContext> rows;
 };
 
 struct MultiNameResolution
@@ -673,6 +712,135 @@ QVector<logic::LogicRowContext> joinRowsets(const QVector<logic::LogicRowContext
     return output;
 }
 
+bool buildJoinedFilteredRows(QueryExecutor *executor,
+                             const sqlparser::ParseResult &parsed,
+                             const logic::CorrelationBindings *bindings,
+                             QList<SelectTableSource> *sources,
+                             MultiNameResolution *resolution,
+                             QVector<logic::LogicRowContext> *filteredRows,
+                             QString *error)
+{
+    if (sources != nullptr) {
+        sources->clear();
+    }
+    if (filteredRows != nullptr) {
+        filteredRows->clear();
+    }
+
+    QList<SelectTableSource> loadedSources;
+    if (!loadSourcesFromPayload(parsed.payload, &loadedSources, error)) {
+        return false;
+    }
+    if (!validateAndAnnotateSourceNames(&loadedSources, error)) {
+        return false;
+    }
+    if (loadedSources.isEmpty()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: expected table name");
+        }
+        return false;
+    }
+
+    MultiNameResolution builtResolution;
+    if (!buildMultiNameResolution(loadedSources, &builtResolution, error)) {
+        return false;
+    }
+
+    logic::LogicEvalContext evalContext;
+    evalContext.subqueryExecutor = executor;
+    evalContext.currentDatabase = currentDatabase;
+    evalContext.dataRoot = getDataRoot();
+    evalContext.allowSubquery = true;
+
+    logic::LogicNode whereAst;
+    const bool hasWhereAst = parsed.payload.contains(QStringLiteral("whereAst"));
+    if (hasWhereAst) {
+        whereAst = parsed.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
+    }
+
+    logic::LogicRowContext nullTemplate = buildNullSourceContext(loadedSources.first());
+    QVector<logic::LogicRowContext> joinedRows = rowsForSource(loadedSources.first());
+    const QVariantList joinPayload = parsed.payload.value(QStringLiteral("joins")).toList();
+    if (joinPayload.isEmpty()) {
+        for (int sourceIndex = 1; sourceIndex < loadedSources.size(); ++sourceIndex) {
+            joinedRows = joinRowsets(joinedRows,
+                                     loadedSources.at(sourceIndex),
+                                     QStringLiteral("inner"),
+                                     builtResolution,
+                                     nullptr,
+                                     bindings,
+                                     evalContext,
+                                     &nullTemplate,
+                                     error);
+            if (error != nullptr && !error->isEmpty()) {
+                return false;
+            }
+            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(loadedSources.at(sourceIndex)));
+        }
+    } else {
+        for (const QVariant &joinValue : joinPayload) {
+            const QVariantMap joinMap = joinValue.toMap();
+            const int rightIndex = joinMap.value(QStringLiteral("rightSourceIndex")).toInt();
+            if (rightIndex <= 0 || rightIndex >= loadedSources.size()) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: invalid JOIN payload");
+                }
+                return false;
+            }
+            const logic::LogicNode onAst = joinMap.value(QStringLiteral("onAst")).value<logic::LogicNode>();
+            joinedRows = joinRowsets(joinedRows,
+                                     loadedSources.at(rightIndex),
+                                     joinMap.value(QStringLiteral("joinType"), QStringLiteral("inner")).toString(),
+                                     builtResolution,
+                                     &onAst,
+                                     bindings,
+                                     evalContext,
+                                     &nullTemplate,
+                                     error);
+            if (error != nullptr && !error->isEmpty()) {
+                return false;
+            }
+            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(loadedSources.at(rightIndex)));
+        }
+    }
+
+    for (logic::LogicRowContext &row : joinedRows) {
+        removeAmbiguousBareColumns(&row, builtResolution);
+        addUniqueBareColumns(&row, builtResolution);
+    }
+
+    QVector<logic::LogicRowContext> rows;
+    rows.reserve(joinedRows.size());
+    for (logic::LogicRowContext row : joinedRows) {
+        QString evalError;
+        const bool include = evaluateFilter(hasWhereAst ? &whereAst : nullptr,
+                                            row,
+                                            bindings,
+                                            evalContext,
+                                            &evalError);
+        if (!evalError.isEmpty()) {
+            if (error != nullptr) {
+                *error = evalError;
+            }
+            return false;
+        }
+        if (include) {
+            rows.append(row);
+        }
+    }
+
+    if (sources != nullptr) {
+        *sources = loadedSources;
+    }
+    if (resolution != nullptr) {
+        *resolution = builtResolution;
+    }
+    if (filteredRows != nullptr) {
+        *filteredRows = rows;
+    }
+    return true;
+}
+
 bool resolveMultiProjection(const QVariantMap &payload,
                             const MultiNameResolution &resolution,
                             QList<MultiProjectionItem> *projectionItems,
@@ -804,6 +972,540 @@ void sortJoinedRows(QVector<logic::LogicRowContext> *rows,
     });
 }
 
+bool aggregateFunctionFromName(const QString &name, AggregateFunction *function)
+{
+    const QString upper = name.trimmed().toUpper();
+    if (upper == QStringLiteral("COUNT")) {
+        if (function != nullptr) *function = AggregateFunction::Count;
+        return true;
+    }
+    if (upper == QStringLiteral("SUM")) {
+        if (function != nullptr) *function = AggregateFunction::Sum;
+        return true;
+    }
+    if (upper == QStringLiteral("AVG")) {
+        if (function != nullptr) *function = AggregateFunction::Avg;
+        return true;
+    }
+    if (upper == QStringLiteral("MIN")) {
+        if (function != nullptr) *function = AggregateFunction::Min;
+        return true;
+    }
+    if (upper == QStringLiteral("MAX")) {
+        if (function != nullptr) *function = AggregateFunction::Max;
+        return true;
+    }
+    return false;
+}
+
+bool isNumericType(tabledef::ColumnType type)
+{
+    return type == tabledef::ColumnType::Int || type == tabledef::ColumnType::Float;
+}
+
+QString aggregateFunctionDisplayName(AggregateFunction function)
+{
+    switch (function) {
+    case AggregateFunction::Count: return QStringLiteral("COUNT");
+    case AggregateFunction::Sum: return QStringLiteral("SUM");
+    case AggregateFunction::Avg: return QStringLiteral("AVG");
+    case AggregateFunction::Min: return QStringLiteral("MIN");
+    case AggregateFunction::Max: return QStringLiteral("MAX");
+    }
+    return QString();
+}
+
+bool resolveAggregateSpecs(const QVariantMap &payload,
+                           const MultiNameResolution &resolution,
+                           QList<AggregateSpec> *specs,
+                           QString *error)
+{
+    if (specs != nullptr) specs->clear();
+    const QVariantList items = payload.value(QStringLiteral("aggregateItems")).toList();
+    for (int i = 0; i < items.size(); ++i) {
+        const QVariantMap item = items.at(i).toMap();
+        AggregateFunction function;
+        if (!aggregateFunctionFromName(item.value(QStringLiteral("functionName")).toString(), &function)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: unsupported aggregate function");
+            }
+            return false;
+        }
+
+        AggregateSpec spec;
+        spec.function = function;
+        spec.argumentName = item.value(QStringLiteral("argument")).toString().trimmed();
+        spec.isStar = item.value(QStringLiteral("isStar")).toBool();
+        spec.sourceText = item.value(QStringLiteral("sourceText")).toString();
+        spec.syntheticName = item.value(QStringLiteral("syntheticName"), QStringLiteral("__agg_%1").arg(i)).toString();
+        spec.outputName = item.value(QStringLiteral("outputColumn"), spec.sourceText).toString();
+
+        if (spec.isStar) {
+            if (function != AggregateFunction::Count) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: unsupported aggregate argument");
+                }
+                return false;
+            }
+            spec.outputType = tabledef::ColumnType::Int;
+        } else {
+            if (!resolveMultiColumn(resolution, spec.argumentName, &spec.resolvedArgumentKey, error)) {
+                return false;
+            }
+            const tabledef::ColumnType argumentType = resolution.keyTypes.value(spec.resolvedArgumentKey, tabledef::ColumnType::Varchar);
+            if ((function == AggregateFunction::Sum || function == AggregateFunction::Avg)
+                && !isNumericType(argumentType)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("aggregate function '%1' requires a numeric column")
+                                 .arg(aggregateFunctionDisplayName(function));
+                }
+                return false;
+            }
+            if (function == AggregateFunction::Count) {
+                spec.outputType = tabledef::ColumnType::Int;
+            } else if (function == AggregateFunction::Avg) {
+                spec.outputType = tabledef::ColumnType::Float;
+            } else {
+                spec.outputType = argumentType;
+            }
+        }
+        if (specs != nullptr) {
+            specs->append(spec);
+        }
+    }
+    return true;
+}
+
+bool resolveGroupKeys(const QVariantMap &payload,
+                      const MultiNameResolution &resolution,
+                      QStringList *groupKeys,
+                      QString *error)
+{
+    if (groupKeys != nullptr) groupKeys->clear();
+    const QStringList groupColumns = payload.value(QStringLiteral("groupByColumns")).toStringList();
+    for (const QString &column : groupColumns) {
+        QString resolved;
+        if (!resolveMultiColumn(resolution, column, &resolved, error)) {
+            if (error != nullptr && error->startsWith(QStringLiteral("SELECT: column"))) {
+                *error = QStringLiteral("GROUP BY column '%1' does not exist").arg(column);
+            }
+            return false;
+        }
+        if (groupKeys != nullptr) {
+            groupKeys->append(resolved);
+        }
+    }
+    return true;
+}
+
+QString serializeGroupKeyPart(const logic::LogicCellValue &cell)
+{
+    const QString value = cell.isNull ? QStringLiteral("<NULL>") : cell.value;
+    return QString::number(value.size()) + QLatin1Char(':') + value;
+}
+
+QVector<GroupedRows> groupRows(const QVector<logic::LogicRowContext> &rows,
+                               const QStringList &groupKeys,
+                               bool aggregateQuery)
+{
+    QVector<GroupedRows> groups;
+    if (groupKeys.isEmpty()) {
+        if (aggregateQuery) {
+            GroupedRows group;
+            group.groupKey = QStringLiteral("__all__");
+            group.rows = rows;
+            if (!rows.isEmpty()) {
+                group.representative = rows.first();
+            }
+            groups.append(group);
+        }
+        return groups;
+    }
+
+    QMap<QString, int> groupIndexByKey;
+    for (const logic::LogicRowContext &row : rows) {
+        QString serialized;
+        for (const QString &key : groupKeys) {
+            serialized += serializeGroupKeyPart(row.cellsByName.value(key));
+            serialized += QLatin1Char('|');
+        }
+        int groupIndex = groupIndexByKey.value(serialized, -1);
+        if (groupIndex < 0) {
+            GroupedRows group;
+            group.groupKey = serialized;
+            group.representative = row;
+            groupIndex = groups.size();
+            groups.append(group);
+            groupIndexByKey.insert(serialized, groupIndex);
+        }
+        groups[groupIndex].rows.append(row);
+    }
+    return groups;
+}
+
+logic::LogicCellValue computeAggregateValue(const AggregateSpec &spec,
+                                            const GroupedRows &group)
+{
+    if (spec.function == AggregateFunction::Count) {
+        int count = 0;
+        if (spec.isStar) {
+            count = group.rows.size();
+        } else {
+            for (const logic::LogicRowContext &row : group.rows) {
+                const logic::LogicCellValue cell = row.cellsByName.value(spec.resolvedArgumentKey);
+                if (!cell.isNull && !cell.value.isEmpty()) {
+                    ++count;
+                }
+            }
+        }
+        return logic::LogicCellValue{QString::number(count), tabledef::ColumnType::Int, false};
+    }
+
+    bool hasValue = false;
+    double numericTotal = 0.0;
+    int numericCount = 0;
+    logic::LogicCellValue bestValue;
+
+    for (const logic::LogicRowContext &row : group.rows) {
+        const logic::LogicCellValue cell = row.cellsByName.value(spec.resolvedArgumentKey);
+        if (cell.isNull || cell.value.isEmpty()) {
+            continue;
+        }
+        if (spec.function == AggregateFunction::Sum || spec.function == AggregateFunction::Avg) {
+            bool ok = false;
+            const double value = cell.value.toDouble(&ok);
+            if (!ok) {
+                continue;
+            }
+            numericTotal += value;
+            ++numericCount;
+            hasValue = true;
+            continue;
+        }
+        if (!hasValue) {
+            bestValue = cell;
+            hasValue = true;
+            continue;
+        }
+        const int comparison = compareCellValues(cell.value, bestValue.value, cell.type);
+        if ((spec.function == AggregateFunction::Min && comparison < 0)
+            || (spec.function == AggregateFunction::Max && comparison > 0)) {
+            bestValue = cell;
+        }
+    }
+
+    if (!hasValue) {
+        return logic::LogicCellValue{QString(), spec.outputType, true};
+    }
+    if (spec.function == AggregateFunction::Sum) {
+        const QString value = spec.outputType == tabledef::ColumnType::Int
+                                  ? QString::number(static_cast<qlonglong>(std::llround(numericTotal)))
+                                  : QString::number(numericTotal, 'g', 15);
+        return logic::LogicCellValue{value, spec.outputType, false};
+    }
+    if (spec.function == AggregateFunction::Avg) {
+        const double average = numericCount == 0 ? 0.0 : numericTotal / numericCount;
+        return logic::LogicCellValue{QString::number(average, 'g', 15), tabledef::ColumnType::Float, false};
+    }
+    return bestValue;
+}
+
+bool aggregateProjectionItems(const QVariantMap &payload,
+                              const MultiNameResolution &resolution,
+                              const QStringList &groupKeys,
+                              const QList<AggregateSpec> &specs,
+                              QList<AggregateProjectionItem> *projectionItems,
+                              QStringList *outputColumns,
+                              QList<tabledef::ColumnType> *columnTypes,
+                              QString *error)
+{
+    if (projectionItems != nullptr) projectionItems->clear();
+    if (outputColumns != nullptr) outputColumns->clear();
+    if (columnTypes != nullptr) columnTypes->clear();
+
+    if (payload.value(QStringLiteral("selectAll"), false).toBool()) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: '*' is not supported in aggregate queries");
+        }
+        return false;
+    }
+
+    const QVariantList items = projectionItemsFromPayload(payload);
+    QSet<QString> outputNames;
+    for (const QVariant &value : items) {
+        const QVariantMap item = value.toMap();
+        const QString itemKind = item.value(QStringLiteral("itemKind"), QStringLiteral("column")).toString();
+        const QString sourceName = item.value(QStringLiteral("sourceColumn")).toString();
+        const QString outputName = item.value(QStringLiteral("outputColumn"), unqualifiedName(sourceName)).toString();
+        AggregateProjectionItem projectionItem;
+        projectionItem.isAggregate = itemKind == QStringLiteral("aggregate");
+        projectionItem.sourceName = sourceName;
+        projectionItem.outputName = outputName.trimmed().isEmpty() ? unqualifiedName(sourceName) : outputName;
+        if (outputNames.contains(projectionItem.outputName)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: duplicate output alias '%1'").arg(projectionItem.outputName);
+            }
+            return false;
+        }
+        outputNames.insert(projectionItem.outputName);
+
+        if (projectionItem.isAggregate) {
+            const int aggregateIndex = item.value(QStringLiteral("aggregateIndex"), -1).toInt();
+            if (aggregateIndex < 0 || aggregateIndex >= specs.size()) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT aggregate payload is incomplete");
+                }
+                return false;
+            }
+            projectionItem.aggregateIndex = aggregateIndex;
+            projectionItem.resolvedKey = specs.at(aggregateIndex).syntheticName;
+            projectionItem.outputType = specs.at(aggregateIndex).outputType;
+        } else {
+            QString resolvedKey;
+            if (!resolveMultiColumn(resolution, sourceName, &resolvedKey, error)) {
+                return false;
+            }
+            if (!groupKeys.contains(resolvedKey)) {
+                if (error != nullptr) {
+                    *error = QStringLiteral("SELECT: non-aggregate column '%1' must appear in GROUP BY").arg(sourceName);
+                }
+                return false;
+            }
+            projectionItem.resolvedKey = resolvedKey;
+            projectionItem.outputType = resolution.keyTypes.value(resolvedKey, tabledef::ColumnType::Varchar);
+        }
+
+        if (projectionItems != nullptr) projectionItems->append(projectionItem);
+        if (outputColumns != nullptr) outputColumns->append(projectionItem.outputName);
+        if (columnTypes != nullptr) columnTypes->append(projectionItem.outputType);
+    }
+    return true;
+}
+
+logic::LogicRowContext buildAggregateRowContext(const GroupedRows &group,
+                                                const QStringList &groupKeys,
+                                                const MultiNameResolution &resolution,
+                                                const QList<AggregateSpec> &specs,
+                                                const QList<AggregateProjectionItem> &projectionItems)
+{
+    logic::LogicRowContext rowContext;
+
+    for (const QString &key : groupKeys) {
+        if (group.representative.cellsByName.contains(key)) {
+            const logic::LogicCellValue value = group.representative.cellsByName.value(key);
+            rowContext.cellsByName.insert(key, value);
+            for (auto it = resolution.visibleNameToKey.cbegin(); it != resolution.visibleNameToKey.cend(); ++it) {
+                if (it.value() == key) {
+                    rowContext.cellsByName.insert(it.key(), value);
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < specs.size(); ++i) {
+        const AggregateSpec &spec = specs.at(i);
+        const logic::LogicCellValue value = computeAggregateValue(spec, group);
+        rowContext.cellsByName.insert(spec.syntheticName, value);
+        if (!spec.sourceText.isEmpty()) {
+            rowContext.cellsByName.insert(spec.sourceText, value);
+        }
+        if (!spec.outputName.isEmpty()) {
+            rowContext.cellsByName.insert(spec.outputName, value);
+        }
+    }
+
+    for (const AggregateProjectionItem &item : projectionItems) {
+        if (item.isAggregate && item.aggregateIndex >= 0 && item.aggregateIndex < specs.size()) {
+            const AggregateSpec &spec = specs.at(item.aggregateIndex);
+            rowContext.cellsByName.insert(item.outputName, rowContext.cellsByName.value(spec.syntheticName));
+        } else if (!item.isAggregate && rowContext.cellsByName.contains(item.resolvedKey)) {
+            rowContext.cellsByName.insert(item.outputName, rowContext.cellsByName.value(item.resolvedKey));
+        }
+    }
+    return rowContext;
+}
+
+bool resolveAggregateOrderBy(const QVariantMap &payload,
+                             const QList<AggregateProjectionItem> &projectionItems,
+                             const MultiNameResolution &resolution,
+                             const QStringList &groupKeys,
+                             const QList<AggregateSpec> &specs,
+                             QString *orderKey,
+                             tabledef::ColumnType *orderType,
+                             bool *descending,
+                             QString *error)
+{
+    if (orderKey != nullptr) orderKey->clear();
+    if (orderType != nullptr) *orderType = tabledef::ColumnType::Varchar;
+    if (descending != nullptr) *descending = payload.value(QStringLiteral("orderByDescending"), false).toBool();
+    const QString rawOrderBy = payload.value(QStringLiteral("orderByColumn")).toString().trimmed();
+    if (rawOrderBy.isEmpty()) {
+        return true;
+    }
+    for (const AggregateProjectionItem &item : projectionItems) {
+        if (item.outputName == rawOrderBy) {
+            if (orderKey != nullptr) *orderKey = item.outputName;
+            if (orderType != nullptr) *orderType = item.outputType;
+            return true;
+        }
+    }
+    for (const AggregateSpec &spec : specs) {
+        if (spec.sourceText == rawOrderBy || spec.syntheticName == rawOrderBy || spec.outputName == rawOrderBy) {
+            if (orderKey != nullptr) *orderKey = spec.syntheticName;
+            if (orderType != nullptr) *orderType = spec.outputType;
+            return true;
+        }
+    }
+    QString resolved;
+    if (resolveMultiColumn(resolution, rawOrderBy, &resolved, nullptr) && groupKeys.contains(resolved)) {
+        if (orderKey != nullptr) *orderKey = resolved;
+        if (orderType != nullptr) *orderType = resolution.keyTypes.value(resolved, tabledef::ColumnType::Varchar);
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("ORDER BY column '%1' does not exist in aggregate result").arg(rawOrderBy);
+    }
+    return false;
+}
+
+void sortAggregateRows(QVector<logic::LogicRowContext> *rows,
+                       const QString &orderKey,
+                       tabledef::ColumnType orderType,
+                       bool descending)
+{
+    sortJoinedRows(rows, orderKey, orderType, descending);
+}
+
+QueryExecuteResult execAggregateSelect(QueryExecutor *executor,
+                                       const sqlparser::ParseResult &parsed,
+                                       const logic::CorrelationBindings *bindings)
+{
+    QueryExecuteResult result;
+    QString error;
+    QList<SelectTableSource> sources;
+    MultiNameResolution resolution;
+    QVector<logic::LogicRowContext> filteredRows;
+    if (!buildJoinedFilteredRows(executor, parsed, bindings, &sources, &resolution, &filteredRows, &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+
+    QList<AggregateSpec> specs;
+    if (!resolveAggregateSpecs(parsed.payload, resolution, &specs, &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+    QStringList groupKeys;
+    if (!resolveGroupKeys(parsed.payload, resolution, &groupKeys, &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+    if (specs.isEmpty() && groupKeys.isEmpty() && parsed.payload.contains(QStringLiteral("havingAst"))) {
+        result.success = false;
+        result.errorMessage = QStringLiteral("HAVING requires GROUP BY or aggregate projection");
+        result.text = result.errorMessage;
+        return result;
+    }
+
+    QList<AggregateProjectionItem> projectionItems;
+    QStringList outputColumns;
+    QList<tabledef::ColumnType> columnTypes;
+    if (!aggregateProjectionItems(parsed.payload,
+                                  resolution,
+                                  groupKeys,
+                                  specs,
+                                  &projectionItems,
+                                  &outputColumns,
+                                  &columnTypes,
+                                  &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+
+    QVector<GroupedRows> groups = groupRows(filteredRows, groupKeys, true);
+    QVector<logic::LogicRowContext> aggregateRows;
+    aggregateRows.reserve(groups.size());
+
+    logic::LogicEvalContext evalContext;
+    evalContext.subqueryExecutor = executor;
+    evalContext.currentDatabase = currentDatabase;
+    evalContext.dataRoot = getDataRoot();
+    evalContext.allowSubquery = true;
+    logic::LogicNode havingAst;
+    const bool hasHavingAst = parsed.payload.contains(QStringLiteral("havingAst"));
+    if (hasHavingAst) {
+        havingAst = parsed.payload.value(QStringLiteral("havingAst")).value<logic::LogicNode>();
+    }
+
+    for (const GroupedRows &group : groups) {
+        logic::LogicRowContext aggregateRow = buildAggregateRowContext(group, groupKeys, resolution, specs, projectionItems);
+        QString evalError;
+        const bool include = evaluateFilter(hasHavingAst ? &havingAst : nullptr,
+                                            aggregateRow,
+                                            bindings,
+                                            evalContext,
+                                            &evalError);
+        if (!evalError.isEmpty()) {
+            result.success = false;
+            result.errorMessage = QStringLiteral("HAVING column '%1' does not exist in aggregate result")
+                                      .arg(evalError.contains(QLatin1Char('\'')) ? evalError.section(QLatin1Char('\''), 1, 1) : evalError);
+            result.text = result.errorMessage;
+            return result;
+        }
+        if (include) {
+            aggregateRows.append(aggregateRow);
+        }
+    }
+
+    QString orderKey;
+    tabledef::ColumnType orderType = tabledef::ColumnType::Varchar;
+    bool descending = false;
+    if (!resolveAggregateOrderBy(parsed.payload,
+                                 projectionItems,
+                                 resolution,
+                                 groupKeys,
+                                 specs,
+                                 &orderKey,
+                                 &orderType,
+                                 &descending,
+                                 &error)) {
+        result.success = false;
+        result.errorMessage = error;
+        result.text = error;
+        return result;
+    }
+    sortAggregateRows(&aggregateRows, orderKey, orderType, descending);
+
+    SelectRowsResult selectResult;
+    selectResult.success = true;
+    selectResult.resultTable.columns = outputColumns;
+    selectResult.columnTypes = columnTypes;
+    const int limit = parsed.payload.value(QStringLiteral("limit"), -1).toInt();
+    int emitted = 0;
+    for (const logic::LogicRowContext &row : aggregateRows) {
+        if (limit >= 0 && emitted >= limit) {
+            break;
+        }
+        repo::TableRow outputRow;
+        outputRow.reserve(projectionItems.size());
+        for (const AggregateProjectionItem &item : projectionItems) {
+            outputRow.append(row.cellsByName.value(item.isAggregate ? item.outputName : item.resolvedKey).value);
+        }
+        selectResult.resultTable.rows.append(outputRow);
+        ++emitted;
+    }
+    selectResult.affectedRowCount = selectResult.resultTable.rows.size();
+    return makeResultFromSelect(selectResult, QString());
+}
+
 QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
                                         const sqlparser::ParseResult &parsed,
                                         const logic::CorrelationBindings *bindings)
@@ -812,120 +1514,13 @@ QueryExecuteResult execMultiTableSelect(QueryExecutor *executor,
 
     QString error;
     QList<SelectTableSource> sources;
-    if (!loadSourcesFromPayload(parsed.payload, &sources, &error)) {
-        result.success = false;
-        result.errorMessage = error;
-        result.text = error;
-        return result;
-    }
-    if (!validateAndAnnotateSourceNames(&sources, &error)) {
-        result.success = false;
-        result.errorMessage = error;
-        result.text = error;
-        return result;
-    }
-    if (sources.isEmpty()) {
-        result.success = false;
-        result.errorMessage = QStringLiteral("SELECT: expected table name");
-        result.text = result.errorMessage;
-        return result;
-    }
-
     MultiNameResolution resolution;
-    if (!buildMultiNameResolution(sources, &resolution, &error)) {
+    QVector<logic::LogicRowContext> filteredRows;
+    if (!buildJoinedFilteredRows(executor, parsed, bindings, &sources, &resolution, &filteredRows, &error)) {
         result.success = false;
         result.errorMessage = error;
         result.text = error;
         return result;
-    }
-
-    logic::LogicEvalContext evalContext;
-    evalContext.subqueryExecutor = executor;
-    evalContext.currentDatabase = currentDatabase;
-    evalContext.dataRoot = getDataRoot();
-    evalContext.allowSubquery = true;
-
-    logic::LogicNode whereAst;
-    const bool hasWhereAst = parsed.payload.contains(QStringLiteral("whereAst"));
-    if (hasWhereAst) {
-        whereAst = parsed.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
-    }
-
-    logic::LogicRowContext nullTemplate = buildNullSourceContext(sources.first());
-    QVector<logic::LogicRowContext> joinedRows = rowsForSource(sources.first());
-    const QVariantList joinPayload = parsed.payload.value(QStringLiteral("joins")).toList();
-    if (joinPayload.isEmpty()) {
-        for (int sourceIndex = 1; sourceIndex < sources.size(); ++sourceIndex) {
-            joinedRows = joinRowsets(joinedRows,
-                                     sources.at(sourceIndex),
-                                     QStringLiteral("inner"),
-                                     resolution,
-                                     nullptr,
-                                     bindings,
-                                     evalContext,
-                                     &nullTemplate,
-                                     &error);
-            if (!error.isEmpty()) {
-                result.success = false;
-                result.errorMessage = error;
-                result.text = error;
-                return result;
-            }
-            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(sources.at(sourceIndex)));
-        }
-    } else {
-        for (const QVariant &joinValue : joinPayload) {
-            const QVariantMap joinMap = joinValue.toMap();
-            const int rightIndex = joinMap.value(QStringLiteral("rightSourceIndex")).toInt();
-            if (rightIndex <= 0 || rightIndex >= sources.size()) {
-                result.success = false;
-                result.errorMessage = QStringLiteral("SELECT: invalid JOIN payload");
-                result.text = result.errorMessage;
-                return result;
-            }
-            const logic::LogicNode onAst = joinMap.value(QStringLiteral("onAst")).value<logic::LogicNode>();
-            joinedRows = joinRowsets(joinedRows,
-                                     sources.at(rightIndex),
-                                     joinMap.value(QStringLiteral("joinType"), QStringLiteral("inner")).toString(),
-                                     resolution,
-                                     &onAst,
-                                     bindings,
-                                     evalContext,
-                                     &nullTemplate,
-                                     &error);
-            if (!error.isEmpty()) {
-                result.success = false;
-                result.errorMessage = error;
-                result.text = error;
-                return result;
-            }
-            nullTemplate = mergeRowContexts(nullTemplate, buildNullSourceContext(sources.at(rightIndex)));
-        }
-    }
-
-    for (logic::LogicRowContext &row : joinedRows) {
-        removeAmbiguousBareColumns(&row, resolution);
-        addUniqueBareColumns(&row, resolution);
-    }
-
-    QVector<logic::LogicRowContext> filteredRows;
-    filteredRows.reserve(joinedRows.size());
-    for (logic::LogicRowContext row : joinedRows) {
-        QString evalError;
-        const bool include = evaluateFilter(hasWhereAst ? &whereAst : nullptr,
-                                            row,
-                                            bindings,
-                                            evalContext,
-                                            &evalError);
-        if (!evalError.isEmpty()) {
-            result.success = false;
-            result.errorMessage = evalError;
-            result.text = evalError;
-            return result;
-        }
-        if (include) {
-            filteredRows.append(row);
-        }
     }
 
     QList<MultiProjectionItem> projectionItems;
@@ -1081,6 +1676,10 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
         result.errorMessage = QStringLiteral("No database selected. Use USE database_name;");
         result.text = result.errorMessage;
         return result;
+    }
+
+    if (parsed.payload.value(QStringLiteral("isAggregateQuery")).toBool()) {
+        return execAggregateSelect(this, parsed, bindings);
     }
 
     if (parsed.payload.value(QStringLiteral("isMultiTable")).toBool()) {

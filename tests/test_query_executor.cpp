@@ -54,6 +54,31 @@ tabledef::TableSchema relationSchema(const QString &tableName, const QString &fo
     return schema;
 }
 
+tabledef::TableSchema aggregateStudentSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema;
+    schema.tableName = tableName;
+    schema.columns = {
+        makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+        makeColumn(QStringLiteral("class_id"), tabledef::ColumnType::Int),
+        makeColumn(QStringLiteral("gender"), tabledef::ColumnType::Varchar, 16),
+        makeColumn(QStringLiteral("score"), tabledef::ColumnType::Float),
+        makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 64),
+    };
+    return schema;
+}
+
+tabledef::TableSchema aggregateClassSchema(const QString &tableName)
+{
+    tabledef::TableSchema schema;
+    schema.tableName = tableName;
+    schema.columns = {
+        makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+        makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 64),
+    };
+    return schema;
+}
+
 void ensureDatabase(const QString &databaseName)
 {
     TaskResult result = database_service::createDatabase(databaseName);
@@ -309,6 +334,195 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
         QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("2"));
+    }
+
+    void test_executeSelectSqlAppliesLikeWhere()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_like_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("20")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("10"), QStringLiteral("30")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM child WHERE id LIKE '1%' ORDER BY id ASC"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("10"));
+    }
+
+    void test_executeAggregateSelectSupportsGroupHavingAndOrderAlias()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_aggregate_db");
+        const QString tableName = QStringLiteral("student");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, aggregateStudentSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("F"), QStringLiteral("90"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("1"), QStringLiteral("M"), QStringLiteral("70"), QStringLiteral("bob")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("3"), QStringLiteral("2"), QStringLiteral("F"), QStringLiteral("50"), QStringLiteral("cathy")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("4"), QStringLiteral("2"), QStringLiteral("M"), QString(), QStringLiteral("dan")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+
+        QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT COUNT(*) AS n, COUNT(score) AS scored, SUM(score) AS total, AVG(score) AS avg_score FROM student"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns,
+                 QStringList({QStringLiteral("n"), QStringLiteral("scored"), QStringLiteral("total"), QStringLiteral("avg_score")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("4"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(1), QStringLiteral("3"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(2), QStringLiteral("210"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(3), QStringLiteral("70"));
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id HAVING n >= 2 ORDER BY n DESC LIMIT 1"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("class_id"), QStringLiteral("n")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(1), QStringLiteral("2"));
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id, gender, AVG(score) AS avg_score FROM student GROUP BY class_id, gender ORDER BY avg_score DESC"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 4);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(2), QStringLiteral("90"));
+    }
+
+    void test_executeAggregateSelectSupportsJoinWhereHavingOrderAliasLimit()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_aggregate_join_db");
+        const QString studentTable = QStringLiteral("student");
+        const QString classTable = QStringLiteral("class");
+        ensureDatabase(databaseName);
+        ensureTable(studentTable, aggregateStudentSchema(studentTable));
+        ensureTable(classTable, aggregateClassSchema(classTable));
+        seedRow(databaseName, classTable, {QStringLiteral("1"), QStringLiteral("alpha")}, m_dataRoot);
+        seedRow(databaseName, classTable, {QStringLiteral("2"), QStringLiteral("beta")}, m_dataRoot);
+        seedRow(databaseName, studentTable, {QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("F"), QStringLiteral("90"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, studentTable, {QStringLiteral("2"), QStringLiteral("1"), QStringLiteral("M"), QStringLiteral("80"), QStringLiteral("bob")}, m_dataRoot);
+        seedRow(databaseName, studentTable, {QStringLiteral("3"), QStringLiteral("2"), QStringLiteral("F"), QStringLiteral("70"), QStringLiteral("cathy")}, m_dataRoot);
+        seedRow(databaseName, studentTable, {QStringLiteral("4"), QStringLiteral("2"), QStringLiteral("M"), QStringLiteral("55"), QStringLiteral("dan")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT c.name AS class_name, COUNT(s.id) AS n, AVG(s.score) AS avg_score "
+                           "FROM student s JOIN class c ON s.class_id = c.id "
+                           "WHERE s.score >= 60 "
+                           "GROUP BY c.name "
+                           "HAVING n >= 2 "
+                           "ORDER BY avg_score DESC "
+                           "LIMIT 1"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns,
+                 QStringList({QStringLiteral("class_name"), QStringLiteral("n"), QStringLiteral("avg_score")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("alpha"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(1), QStringLiteral("2"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(2), QStringLiteral("85"));
+    }
+
+    void test_executeAggregateSelectRejectsInvalidQueries()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_aggregate_invalid_db");
+        const QString tableName = QStringLiteral("student");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, aggregateStudentSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("F"), QStringLiteral("90"), QStringLiteral("alice")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+
+        QueryExecuteResult result = executor.executeSelectSql(QStringLiteral("SELECT * FROM student GROUP BY class_id"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("*")));
+
+        result = executor.executeSelectSql(QStringLiteral("SELECT id, COUNT(*) FROM student"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("must appear in GROUP BY")));
+
+        result = executor.executeSelectSql(QStringLiteral("SELECT SUM(name) FROM student"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("numeric")));
+
+        result = executor.executeSelectSql(QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id HAVING score > 60"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("HAVING column")));
+
+        result = executor.executeSelectSql(QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id ORDER BY unknown_alias"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("ORDER BY column")));
+
+        result = executor.executeSelectSql(QStringLiteral("SELECT COUNT(*) AS n, SUM(score) AS n FROM student"), context);
+        QVERIFY(!result.success);
+        QVERIFY(result.errorMessage.contains(QStringLiteral("duplicate output alias")));
+    }
+
+    void test_executeAggregateSelectHandlesEmptyInputAndHavingAggregateFunction()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_aggregate_empty_db");
+        const QString tableName = QStringLiteral("student");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, aggregateStudentSchema(tableName));
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT COUNT(*) AS n, SUM(score) AS total FROM student"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("0"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(1), QString());
+
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("F"), QStringLiteral("90"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("1"), QStringLiteral("M"), QString(), QStringLiteral("bob")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("3"), QStringLiteral("2"), QStringLiteral("F"), QStringLiteral("70"), QStringLiteral("cathy")}, m_dataRoot);
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id FROM student GROUP BY class_id HAVING COUNT(*) > 1"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 1);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("1"));
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id ORDER BY COUNT(*) DESC"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(1), QStringLiteral("2"));
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id FROM student GROUP BY class_id ORDER BY COUNT(*) DESC"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.first().at(0), QStringLiteral("1"));
+
+        result = executor.executeSelectSql(
+            QStringLiteral("SELECT class_id, COUNT(score) AS scored FROM student GROUP BY class_id ORDER BY class_id ASC"),
+            context);
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).at(1), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).at(1), QStringLiteral("1"));
     }
 
     void test_executeSelectSqlAppliesWhereAstBeforeProjectionAndLimit()

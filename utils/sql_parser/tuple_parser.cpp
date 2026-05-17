@@ -192,6 +192,8 @@ static bool projectionIsSelectAll(const QStringList &projection)
 static bool isClauseTerminator(TokenType type)
 {
     return type == TokenType::WHERE
+           || type == TokenType::GROUP
+           || type == TokenType::HAVING
            || type == TokenType::ORDER
            || type == TokenType::LIMIT
            || type == TokenType::SEMICOLON
@@ -236,6 +238,30 @@ static bool isIdentifierLike(TokenType type)
     return type == TokenType::IDENTIFIER;
 }
 
+static bool isAggregateFunctionToken(TokenType type)
+{
+    return type == TokenType::COUNT
+           || type == TokenType::SUM
+           || type == TokenType::AVG
+           || type == TokenType::MIN
+           || type == TokenType::MAX;
+}
+
+static QString aggregateFunctionName(TokenType type)
+{
+    if (type == TokenType::COUNT) return QStringLiteral("COUNT");
+    if (type == TokenType::SUM) return QStringLiteral("SUM");
+    if (type == TokenType::AVG) return QStringLiteral("AVG");
+    if (type == TokenType::MIN) return QStringLiteral("MIN");
+    if (type == TokenType::MAX) return QStringLiteral("MAX");
+    return QString();
+}
+
+static QString aggregateSyntheticName(int index)
+{
+    return QStringLiteral("__agg_%1").arg(index);
+}
+
 static bool parseQualifiedIdentifier(const QVector<SqlToken> &tokens,
                                      int *index,
                                      int endExclusive,
@@ -259,6 +285,68 @@ static bool parseQualifiedIdentifier(const QVector<SqlToken> &tokens,
     }
 
     *name = result;
+    return true;
+}
+
+static bool parseAggregateCall(const QVector<SqlToken> &tokens,
+                               int *index,
+                               int endExclusive,
+                               QVariantMap *aggregateItem,
+                               QString *sourceText,
+                               QString *error)
+{
+    if (index == nullptr || *index >= endExclusive || !isAggregateFunctionToken(tokens[*index].type)) {
+        return false;
+    }
+
+    const int functionIndex = *index;
+    const QString functionName = aggregateFunctionName(tokens[functionIndex].type);
+    if (functionIndex + 1 >= endExclusive || tokens[functionIndex + 1].type != TokenType::LPAREN) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: aggregate function expects '('");
+        }
+        return false;
+    }
+
+    const int rightParen = findMatchingParen(tokens, functionIndex + 1);
+    if (rightParen < 0 || rightParen >= endExclusive) {
+        if (error != nullptr) {
+            *error = QStringLiteral("SELECT: aggregate function expects ')'");
+        }
+        return false;
+    }
+
+    QString argument;
+    bool isStar = false;
+    if (functionName == QStringLiteral("COUNT")
+        && functionIndex + 2 == rightParen - 1
+        && tokens[functionIndex + 2].type == TokenType::STAR) {
+        isStar = true;
+    } else {
+        int argIndex = functionIndex + 2;
+        if (!parseQualifiedIdentifier(tokens, &argIndex, rightParen, &argument)
+            || argIndex != rightParen) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT: unsupported aggregate argument");
+            }
+            return false;
+        }
+    }
+
+    const QString callText = functionName
+                             + QLatin1Char('(')
+                             + (isStar ? QStringLiteral("*") : argument)
+                             + QLatin1Char(')');
+    if (aggregateItem != nullptr) {
+        aggregateItem->insert(QStringLiteral("functionName"), functionName);
+        aggregateItem->insert(QStringLiteral("argument"), argument);
+        aggregateItem->insert(QStringLiteral("isStar"), isStar);
+        aggregateItem->insert(QStringLiteral("sourceText"), callText);
+    }
+    if (sourceText != nullptr) {
+        *sourceText = callText;
+    }
+    *index = rightParen + 1;
     return true;
 }
 
@@ -599,6 +687,8 @@ static bool parseProjectionItems(const QVector<SqlToken> &tokens,
                                  int to,
                                  QStringList *projection,
                                  QVariantList *projectionItems,
+                                 QVariantList *aggregateItems,
+                                 bool *hasAggregation,
                                  QString *error)
 {
     if (projection != nullptr) {
@@ -606,6 +696,12 @@ static bool parseProjectionItems(const QVector<SqlToken> &tokens,
     }
     if (projectionItems != nullptr) {
         projectionItems->clear();
+    }
+    if (aggregateItems != nullptr) {
+        aggregateItems->clear();
+    }
+    if (hasAggregation != nullptr) {
+        *hasAggregation = false;
     }
     if (from > to) {
         if (error != nullptr) {
@@ -624,6 +720,8 @@ static bool parseProjectionItems(const QVector<SqlToken> &tokens,
         }
 
         QString sourceColumn;
+        QVariantMap aggregateItem;
+        bool isAggregate = false;
         if (tokens[index].type == TokenType::STAR) {
             sourceColumn = QStringLiteral("*");
             ++index;
@@ -654,6 +752,13 @@ static bool parseProjectionItems(const QVector<SqlToken> &tokens,
                 return false;
             }
             index = right + 1;
+        } else if (isAggregateFunctionToken(tokens[index].type)) {
+            QString aggregateSource;
+            if (!parseAggregateCall(tokens, &index, to + 1, &aggregateItem, &aggregateSource, error)) {
+                return false;
+            }
+            sourceColumn = aggregateSource;
+            isAggregate = true;
         } else if (!parseQualifiedIdentifier(tokens, &index, to + 1, &sourceColumn)) {
             if (error != nullptr) {
                 *error = QStringLiteral("SELECT: expected projection column");
@@ -691,7 +796,23 @@ static bool parseProjectionItems(const QVector<SqlToken> &tokens,
             QVariantMap item;
             item.insert(QStringLiteral("sourceColumn"), sourceColumn);
             item.insert(QStringLiteral("outputColumn"), outputColumn);
+            item.insert(QStringLiteral("itemKind"), isAggregate ? QStringLiteral("aggregate") : QStringLiteral("column"));
+            if (isAggregate) {
+                const int aggregateIndex = aggregateItems != nullptr ? aggregateItems->size() : -1;
+                item.insert(QStringLiteral("aggregateIndex"), aggregateIndex);
+            }
             projectionItems->append(item);
+        }
+        if (isAggregate) {
+            if (hasAggregation != nullptr) {
+                *hasAggregation = true;
+            }
+            if (aggregateItems != nullptr) {
+                const int aggregateIndex = aggregateItems->size();
+                aggregateItem.insert(QStringLiteral("outputColumn"), outputColumn);
+                aggregateItem.insert(QStringLiteral("syntheticName"), aggregateSyntheticName(aggregateIndex));
+                aggregateItems->append(aggregateItem);
+            }
         }
 
         if (index > to) {
@@ -808,8 +929,163 @@ static bool parseSelectLimit(const QVector<SqlToken>& tokens,
     return true;
 }
 
+static bool parseGroupByClause(const QVector<SqlToken> &tokens,
+                               int groupIdx,
+                               int endExclusive,
+                               QStringList *groupByColumns,
+                               QString *error)
+{
+    if (groupByColumns != nullptr) {
+        groupByColumns->clear();
+    }
+    if (groupIdx < 0) {
+        return true;
+    }
+    if (groupIdx + 1 >= endExclusive || tokens[groupIdx + 1].type != TokenType::BY) {
+        if (error != nullptr) {
+            *error = QStringLiteral("GROUP BY: expected column name");
+        }
+        return false;
+    }
+
+    int index = groupIdx + 2;
+    if (index >= endExclusive) {
+        if (error != nullptr) {
+            *error = QStringLiteral("GROUP BY: expected column name");
+        }
+        return false;
+    }
+    while (index < endExclusive) {
+        QString columnName;
+        if (!parseQualifiedIdentifier(tokens, &index, endExclusive, &columnName)) {
+            if (error != nullptr) {
+                *error = QStringLiteral("GROUP BY: expected column name");
+            }
+            return false;
+        }
+        if (groupByColumns != nullptr) {
+            groupByColumns->append(columnName);
+        }
+        if (index >= endExclusive) {
+            break;
+        }
+        if (tokens[index].type != TokenType::COMMA) {
+            if (error != nullptr) {
+                *error = QStringLiteral("GROUP BY: expected ',' between columns");
+            }
+            return false;
+        }
+        ++index;
+        if (index >= endExclusive) {
+            if (error != nullptr) {
+                *error = QStringLiteral("GROUP BY: expected column name after ','");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+static int findAggregateItemBySource(const QVariantList &aggregateItems, const QString &sourceText)
+{
+    for (int i = 0; i < aggregateItems.size(); ++i) {
+        if (aggregateItems.at(i).toMap().value(QStringLiteral("sourceText")).toString() == sourceText) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool parseHavingClause(const QString &sql,
+                              const QVector<SqlToken> &tokens,
+                              int havingIdx,
+                              int endExclusive,
+                              QVariantList *aggregateItems,
+                              QVariantMap *payload,
+                              QString *error)
+{
+    if (havingIdx < 0) {
+        return true;
+    }
+    if (havingIdx + 1 >= endExclusive) {
+        if (error != nullptr) {
+            *error = QStringLiteral("HAVING: expected condition");
+        }
+        return false;
+    }
+
+    QString havingText;
+    int index = havingIdx + 1;
+    while (index < endExclusive) {
+        if (isAggregateFunctionToken(tokens[index].type)) {
+            QVariantMap aggregateItem;
+            QString sourceText;
+            if (!parseAggregateCall(tokens, &index, endExclusive, &aggregateItem, &sourceText, error)) {
+                return false;
+            }
+            int aggregateIndex = aggregateItems != nullptr ? findAggregateItemBySource(*aggregateItems, sourceText) : -1;
+            if (aggregateIndex < 0) {
+                aggregateIndex = aggregateItems != nullptr ? aggregateItems->size() : 0;
+                aggregateItem.insert(QStringLiteral("outputColumn"), sourceText);
+                aggregateItem.insert(QStringLiteral("syntheticName"), aggregateSyntheticName(aggregateIndex));
+                if (aggregateItems != nullptr) {
+                    aggregateItems->append(aggregateItem);
+                }
+            }
+            havingText += aggregateSyntheticName(aggregateIndex);
+            continue;
+        }
+
+        const SqlToken &token = tokens[index];
+        if (token.type == TokenType::SELECT
+            || token.type == TokenType::IN
+            || token.type == TokenType::ALL
+            || token.lexeme.compare(QStringLiteral("EXISTS"), Qt::CaseInsensitive) == 0
+            || token.lexeme.compare(QStringLiteral("ANY"), Qt::CaseInsensitive) == 0) {
+            if (error != nullptr) {
+                *error = QStringLiteral("HAVING: subqueries are not supported");
+            }
+            return false;
+        }
+        QString lexeme = token.lexeme;
+        if (token.type == TokenType::STRING_LIT) {
+            lexeme.replace(QStringLiteral("'"), QStringLiteral("''"));
+            havingText += QStringLiteral("'%1'").arg(lexeme);
+        } else {
+            havingText += lexeme;
+        }
+        if (index + 1 < endExclusive) {
+            havingText += QLatin1Char(' ');
+        }
+        ++index;
+    }
+
+    const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(havingText);
+    if (!tokenized.success) {
+        if (error != nullptr) {
+            *error = tokenized.error.message;
+        }
+        return false;
+    }
+    const logic::LogicParseResult parsed = logic::parseLogicTokens(havingText, tokenized.tokens);
+    if (!parsed.success) {
+        if (error != nullptr) {
+            *error = parsed.error.message;
+        }
+        return false;
+    }
+
+    if (payload != nullptr) {
+        payload->insert(QStringLiteral("havingText"), havingText);
+        payload->insert(QStringLiteral("havingAst"), QVariant::fromValue(parsed.root));
+    }
+    Q_UNUSED(sql);
+    return true;
+}
+
 static bool parseOrderByClause(const QVector<SqlToken> &tokens,
                                int orderIdx,
+                               QVariantList *aggregateItems,
                                QVariantMap *payload,
                                QString *error)
 {
@@ -833,7 +1109,20 @@ static bool parseOrderByClause(const QVector<SqlToken> &tokens,
 
     int itemIndex = orderIdx + 2;
     QString orderByColumn;
-    if (!parseQualifiedIdentifier(tokens, &itemIndex, tokens.size(), &orderByColumn)) {
+    if (isAggregateFunctionToken(tokens[itemIndex].type)) {
+        QVariantMap aggregateItem;
+        QString aggregateSource;
+        if (!parseAggregateCall(tokens, &itemIndex, tokens.size(), &aggregateItem, &aggregateSource, error)) {
+            return false;
+        }
+        if (aggregateItems != nullptr && findAggregateItemBySource(*aggregateItems, aggregateSource) < 0) {
+            const int aggregateIndex = aggregateItems->size();
+            aggregateItem.insert(QStringLiteral("outputColumn"), aggregateSource);
+            aggregateItem.insert(QStringLiteral("syntheticName"), aggregateSyntheticName(aggregateIndex));
+            aggregateItems->append(aggregateItem);
+        }
+        orderByColumn = aggregateSource;
+    } else if (!parseQualifiedIdentifier(tokens, &itemIndex, tokens.size(), &orderByColumn)) {
         if (error != nullptr) {
             *error = QStringLiteral("ORDER BY: expected column name");
         }
@@ -889,8 +1178,11 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (cmdType == "SELECT") {
         QStringList projection;
         QVariantList projectionItems;
+        QVariantList aggregateItems;
+        bool hasAggregation = false;
         QVariantList fromSources;
         QVariantList joins;
+        QStringList groupByColumns;
         QString table;
         QString tableAlias;
 
@@ -905,16 +1197,29 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         }
 
         QString projectionError;
-        if (!parseProjectionItems(tokens, 1, fromIdx - 1, &projection, &projectionItems, &projectionError)) {
+        if (!parseProjectionItems(tokens,
+                                  1,
+                                  fromIdx - 1,
+                                  &projection,
+                                  &projectionItems,
+                                  &aggregateItems,
+                                  &hasAggregation,
+                                  &projectionError)) {
             return {false, projectionError, cmdType, {}};
         }
 
         int whereIdx = -1;
+        int groupIdx = -1;
+        int havingIdx = -1;
         int orderIdx = -1;
         int limitIdx = -1;
         for (int i = fromIdx + 1; i < tokens.size(); ++i) {
             if (tokens[i].type == TokenType::WHERE && whereIdx < 0) {
                 whereIdx = i;
+            } else if (tokens[i].type == TokenType::GROUP && groupIdx < 0) {
+                groupIdx = i;
+            } else if (tokens[i].type == TokenType::HAVING && havingIdx < 0) {
+                havingIdx = i;
             } else if (tokens[i].type == TokenType::ORDER && orderIdx < 0) {
                 orderIdx = i;
             } else if (tokens[i].type == TokenType::LIMIT && limitIdx < 0) {
@@ -922,21 +1227,44 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
             }
         }
 
-        if (whereIdx >= 0 && limitIdx >= 0 && limitIdx < whereIdx) {
-            return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
+        auto clauseOrderError = [&]() -> QString {
+            struct ClausePos { int index; const char *name; };
+            const QList<ClausePos> clauses = {
+                {whereIdx, "WHERE"},
+                {groupIdx, "GROUP"},
+                {havingIdx, "HAVING"},
+                {orderIdx, "ORDER"},
+                {limitIdx, "LIMIT"},
+            };
+            int previous = -1;
+            for (const ClausePos &clause : clauses) {
+                if (clause.index < 0) {
+                    continue;
+                }
+                if (clause.index < previous) {
+                    return QStringLiteral("SELECT: unsupported clause '%1'").arg(QLatin1String(clause.name));
+                }
+                previous = clause.index;
+            }
+            return {};
+        };
+        const QString orderErrorText = clauseOrderError();
+        if (!orderErrorText.isEmpty()) {
+            return {false, orderErrorText, cmdType, {}};
         }
-        if (whereIdx >= 0 && orderIdx >= 0 && orderIdx < whereIdx) {
-            return {false, "SELECT: unsupported clause 'ORDER'", cmdType, {}};
-        }
-        if (orderIdx >= 0 && limitIdx >= 0 && limitIdx < orderIdx) {
-            return {false, "SELECT: unsupported clause 'LIMIT'", cmdType, {}};
+        if (havingIdx >= 0 && groupIdx < 0 && !hasAggregation) {
+            return {false, "HAVING requires GROUP BY or aggregate projection", cmdType, {}};
         }
 
         const int tableTailEnd = whereIdx >= 0
                                      ? whereIdx
-                                     : (orderIdx >= 0
-                                            ? orderIdx
-                                            : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1));
+                                     : (groupIdx >= 0
+                                            ? groupIdx
+                                            : (havingIdx >= 0
+                                                   ? havingIdx
+                                                   : (orderIdx >= 0
+                                                          ? orderIdx
+                                                          : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1))));
 
         bool isMultiTable = false;
         QString fromError;
@@ -954,13 +1282,26 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         }
 
         QString whereError;
-        const int whereEndClause = orderIdx >= 0 ? orderIdx : limitIdx;
+        const int whereEndClause = groupIdx >= 0 ? groupIdx : (havingIdx >= 0 ? havingIdx : (orderIdx >= 0 ? orderIdx : limitIdx));
         if (!extractWherePayload(sql, tokens, whereIdx, whereEndClause, &payload, &whereError)) {
             return {false, whereError, cmdType, {}};
         }
 
+        QString groupError;
+        const int groupEndClause = havingIdx >= 0 ? havingIdx : (orderIdx >= 0 ? orderIdx : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1));
+        if (!parseGroupByClause(tokens, groupIdx, groupEndClause, &groupByColumns, &groupError)) {
+            return {false, groupError, cmdType, {}};
+        }
+
+        QString havingError;
+        const int havingEndClause = orderIdx >= 0 ? orderIdx : (limitIdx >= 0 ? limitIdx : lastMeaningfulTokenIndex(tokens) + 1);
+        if (!parseHavingClause(sql, tokens, havingIdx, havingEndClause, &aggregateItems, &payload, &havingError)) {
+            return {false, havingError, cmdType, {}};
+        }
+        hasAggregation = hasAggregation || !aggregateItems.isEmpty();
+
         QString orderError;
-        if (!parseOrderByClause(tokens, orderIdx, &payload, &orderError)) {
+        if (!parseOrderByClause(tokens, orderIdx, &aggregateItems, &payload, &orderError)) {
             return {false, orderError, cmdType, {}};
         }
 
@@ -968,7 +1309,7 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         QString limitError;
         const int limitParseStart = limitIdx >= 0
                                         ? limitIdx
-                                        : ((orderIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableTailEnd);
+                                        : ((orderIdx >= 0 || havingIdx >= 0 || groupIdx >= 0 || whereIdx >= 0) ? tokens.size() - 1 : tableTailEnd);
         if (!parseSelectLimit(tokens, limitParseStart, &limit, &limitError)) {
             return {false, limitError, cmdType, {}};
         }
@@ -980,6 +1321,10 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
         }
         payload["projection"] = projection;
         payload["projectionItems"] = projectionItems;
+        payload["aggregateItems"] = aggregateItems;
+        payload["hasAggregation"] = hasAggregation;
+        payload["groupByColumns"] = groupByColumns;
+        payload["isAggregateQuery"] = hasAggregation || !groupByColumns.isEmpty() || havingIdx >= 0;
         payload["tableName"] = table;
         payload["tableAlias"] = tableAlias;
         payload["fromSources"] = fromSources;

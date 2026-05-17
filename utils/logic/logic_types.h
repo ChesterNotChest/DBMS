@@ -47,6 +47,7 @@ enum class LogicKeywordType {
     Any,
     All,
     Is,
+    Like,
     Null
 };
 
@@ -95,7 +96,8 @@ enum class LogicCompareOperator {
     Lt,
     Lte,
     Gt,
-    Gte
+    Gte,
+    Like
 };
 
 enum class LogicQuantifier {

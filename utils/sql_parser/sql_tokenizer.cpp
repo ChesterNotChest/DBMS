@@ -24,6 +24,8 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "SELECT")         return TokenType::SELECT;
     if (w == "FROM")           return TokenType::FROM;
     if (w == "WHERE")          return TokenType::WHERE;
+    if (w == "GROUP")          return TokenType::GROUP;
+    if (w == "HAVING")         return TokenType::HAVING;
     if (w == "ORDER")          return TokenType::ORDER;
     if (w == "LIMIT")          return TokenType::LIMIT;
     if (w == "INSERT")         return TokenType::INSERT;
@@ -72,6 +74,11 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "LIKE")           return TokenType::LIKE;
     if (w == "BETWEEN")        return TokenType::BETWEEN;
     if (w == "IS")             return TokenType::IS;
+    if (w == "COUNT")          return TokenType::COUNT;
+    if (w == "SUM")            return TokenType::SUM;
+    if (w == "AVG")            return TokenType::AVG;
+    if (w == "MIN")            return TokenType::MIN;
+    if (w == "MAX")            return TokenType::MAX;
     // 类型关键字
     if (w == "INT" || w == "INTEGER")       return TokenType::INT_TYPE;
     if (w == "FLOAT" || w == "DOUBLE" || w == "REAL")

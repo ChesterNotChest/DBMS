@@ -276,6 +276,33 @@ private slots:
             QStringLiteral("SELECT id FROM student ORDER BY a, b"));
         QVERIFY(!multiOrder.success);
 
+        const sqlparser::ParseResult grouped = sqlparser::parseSql(
+            QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id HAVING n >= 2 ORDER BY n DESC LIMIT 1"));
+        QVERIFY2(grouped.success, qPrintable(grouped.errorMessage));
+        QCOMPARE(grouped.payload.value(QStringLiteral("isAggregateQuery")).toBool(), true);
+        QCOMPARE(grouped.payload.value(QStringLiteral("hasAggregation")).toBool(), true);
+        QCOMPARE(grouped.payload.value(QStringLiteral("groupByColumns")).toStringList(), QStringList({QStringLiteral("class_id")}));
+        QCOMPARE(grouped.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("n"));
+        QCOMPARE(grouped.payload.value(QStringLiteral("limit")).toInt(), 1);
+        const QVariantList aggregateItems = grouped.payload.value(QStringLiteral("aggregateItems")).toList();
+        QCOMPARE(aggregateItems.size(), 1);
+        QCOMPARE(aggregateItems.first().toMap().value(QStringLiteral("functionName")).toString(), QStringLiteral("COUNT"));
+        QCOMPARE(aggregateItems.first().toMap().value(QStringLiteral("isStar")).toBool(), true);
+        QVERIFY(grouped.payload.contains(QStringLiteral("havingAst")));
+
+        const sqlparser::ParseResult orderByAggregate = sqlparser::parseSql(
+            QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id ORDER BY COUNT(*) DESC"));
+        QVERIFY2(orderByAggregate.success, qPrintable(orderByAggregate.errorMessage));
+        QCOMPARE(orderByAggregate.payload.value(QStringLiteral("orderByColumn")).toString(), QStringLiteral("COUNT(*)"));
+        QCOMPARE(orderByAggregate.payload.value(QStringLiteral("orderByDescending")).toBool(), true);
+
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT COUNT() FROM student")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT SUM(a + b) FROM student")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT id FROM student GROUP")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT class_id FROM student HAVING COUNT(*) > 1")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT class_id, COUNT(*) AS n FROM student GROUP BY class_id HAVING EXISTS (SELECT id FROM child)")).success);
+        QVERIFY(!sqlparser::parseSql(QStringLiteral("SELECT class_id FROM student GROUP BY class_id HAVING COUNT(DISTINCT id) > 1")).success);
+
         const sqlparser::ParseResult commaFrom = sqlparser::parseSql(
             QStringLiteral("SELECT s.id, c.name FROM student s, class c WHERE s.class_id = c.id"));
         QVERIFY2(commaFrom.success, qPrintable(commaFrom.errorMessage));

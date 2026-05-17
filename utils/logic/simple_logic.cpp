@@ -1,6 +1,9 @@
 #include "simple_logic.h"
 #include "logic_evaluator.h"
 
+#include <functional>
+#include <QVector>
+
 namespace logic {
 
 namespace {
@@ -28,6 +31,37 @@ double numericValueFor(const LogicCellValue &cell, bool *ok)
     }
     const double value = cell.value.toDouble(ok);
     return value;
+}
+
+bool likePatternMatches(const QString &value, const QString &pattern)
+{
+    const int valueSize = value.size();
+    const int patternSize = pattern.size();
+    QVector<QVector<int>> memo(valueSize + 1, QVector<int>(patternSize + 1, -1));
+
+    std::function<bool(int, int)> matches = [&](int valueIndex, int patternIndex) -> bool {
+        int &cached = memo[valueIndex][patternIndex];
+        if (cached >= 0) {
+            return cached == 1;
+        }
+
+        bool result = false;
+        if (patternIndex == patternSize) {
+            result = valueIndex == valueSize;
+        } else if (pattern.at(patternIndex) == QLatin1Char('%')) {
+            result = matches(valueIndex, patternIndex + 1)
+                     || (valueIndex < valueSize && matches(valueIndex + 1, patternIndex));
+        } else if (valueIndex < valueSize
+                   && (pattern.at(patternIndex) == QLatin1Char('_')
+                       || pattern.at(patternIndex) == value.at(valueIndex))) {
+            result = matches(valueIndex + 1, patternIndex + 1);
+        }
+
+        cached = result ? 1 : 0;
+        return result;
+    };
+
+    return matches(0, 0);
 }
 
 LogicCellValue resolveCellValue(const LogicNode &node,
@@ -67,6 +101,10 @@ LogicTruthValue compareCells(const LogicCellValue &lhs,
         return LogicTruthValue::Unknown;
     }
 
+    if (op == LogicCompareOperator::Like) {
+        return likePatternMatches(lhs.value, rhs.value) ? LogicTruthValue::True : LogicTruthValue::False;
+    }
+
     bool leftOk = false;
     bool rightOk = false;
     const bool numericCompare = lhs.type == tabledef::ColumnType::Int
@@ -87,6 +125,7 @@ LogicTruthValue compareCells(const LogicCellValue &lhs,
         case LogicCompareOperator::Lte: return leftValue <= rightValue ? LogicTruthValue::True : LogicTruthValue::False;
         case LogicCompareOperator::Gt: return leftValue > rightValue ? LogicTruthValue::True : LogicTruthValue::False;
         case LogicCompareOperator::Gte: return leftValue >= rightValue ? LogicTruthValue::True : LogicTruthValue::False;
+        case LogicCompareOperator::Like: return LogicTruthValue::Unknown;
         }
     }
 
@@ -98,6 +137,7 @@ LogicTruthValue compareCells(const LogicCellValue &lhs,
     case LogicCompareOperator::Lte: return compareResult <= 0 ? LogicTruthValue::True : LogicTruthValue::False;
     case LogicCompareOperator::Gt: return compareResult > 0 ? LogicTruthValue::True : LogicTruthValue::False;
     case LogicCompareOperator::Gte: return compareResult >= 0 ? LogicTruthValue::True : LogicTruthValue::False;
+    case LogicCompareOperator::Like: return LogicTruthValue::Unknown;
     }
     return LogicTruthValue::Unknown;
 }
