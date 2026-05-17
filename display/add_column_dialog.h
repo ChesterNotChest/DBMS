@@ -14,10 +14,10 @@
 struct ColumnConfig {
     QString name;
     QString type;
-    int length;
-    bool allowNull;
-    bool primaryKey;
-    bool unique;
+    int length = 0;
+    bool allowNull = true;
+    bool primaryKey = false;
+    bool unique = false;
     QString checkConstraint;
     QString defaultValue;
 };

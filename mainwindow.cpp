@@ -191,6 +191,21 @@ void MainWindow::setupToolBar()
     connect(m_saveBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSave);
     m_toolbar->addWidget(m_saveBtn);
 
+    // 新增：选择表按钮
+    m_selectTableBtn = new QPushButton(u8"📑", this);
+    m_selectTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_selectTableBtn->setCursor(Qt::PointingHandCursor);
+    m_selectTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_selectTableBtn->setStyleSheet(
+        "QPushButton { background:#E8F0FE; color:#1565C0; border:1px solid #BBDEFB; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#D7E9FC; border-color:#90CAF9; }"
+        "QPushButton:pressed { background:#B3D4F6; }"
+    );
+    m_selectTableBtn->setToolTip("选择要编辑或删除的表");
+    connect(m_selectTableBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSelectTable);
+    m_toolbar->addWidget(m_selectTableBtn);
+
     // 新增：可视化建表按钮
     m_newTableBtn = new QPushButton(u8"\U0001F4C4", this);
     m_newTableBtn->setFont(QFont("Segoe UI Emoji", 12));
@@ -201,9 +216,23 @@ void MainWindow::setupToolBar()
         "border-radius:4px; padding:4px 12px; font-size:12px; }"
         "QPushButton:hover { background:#C8E6C9; }"
         "QPushButton:pressed { background:#A5D6A7; }");
-    m_newTableBtn->setToolTip("可视化建表");
+    m_newTableBtn->setToolTip("可视化建表 / 编辑当前表");
     connect(m_newTableBtn, SIGNAL(clicked()), this, SLOT(onToolbarNewTable()));
     m_toolbar->addWidget(m_newTableBtn);
+
+    // 新增：删除表按钮
+    m_dropTableBtn = new QPushButton(u8"\U0001F5D1", this);
+    m_dropTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_dropTableBtn->setCursor(Qt::PointingHandCursor);
+    m_dropTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_dropTableBtn->setStyleSheet(
+        "QPushButton { background:#FFEBEE; color:#C62828; border:1px solid #FFCDD2; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#FFCDD2; }"
+        "QPushButton:pressed { background:#EF9A9A; }");
+    m_dropTableBtn->setToolTip("删除当前选中表");
+    connect(m_dropTableBtn, &QPushButton::clicked, this, &MainWindow::onToolbarDropTable);
+    m_toolbar->addWidget(m_dropTableBtn);
 
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -458,6 +487,24 @@ void MainWindow::updateStatusDbLabel()
 
 void MainWindow::onToolbarExecute()   { m_editorPanel->execute(); }
 void MainWindow::onToolbarNewQuery()   { m_editorPanel->newQuery(); }
+void MainWindow::onToolbarSelectTable() { 
+    if (m_currentDatabase.isEmpty()) {
+        m_resultPanel->showError("请先选择或打开一个数据库");
+        return;
+    }
+    const service::SqlExecResult result = executeSqlForGui(QStringLiteral("SHOW TABLES;"));
+    QStringList tables = firstColumnValues(result);
+    if (tables.isEmpty()) {
+        m_resultPanel->showError("当前数据库暂无可选表");
+        return;
+    }
+    bool ok;
+    QString sel = QInputDialog::getItem(this, "选择表", "表名：", tables, 0, false, &ok);
+    if (!ok || sel.isEmpty()) return;
+    m_currentTable = sel;
+    updateStatusDbLabel();
+    m_resultPanel->showLog("选中表: " + sel);
+}
 void MainWindow::onExecuteSql()        { m_editorPanel->execute(); }
 void MainWindow::onNewQueryTab()       { m_editorPanel->newQuery(); }
 void MainWindow::onCloseCurrentTab()   { m_editorPanel->closeCurrentTab(); }
@@ -521,6 +568,45 @@ void MainWindow::onDeleteDatabase()
         m_resultPanel->showLog("删除数据库: " + sel);
         if (m_currentDatabase == sel) {
             m_currentDatabase.clear();
+            m_currentTable.clear();
+            updateStatusDbLabel();
+        }
+        m_structurePanel->refresh();
+    } else {
+        m_resultPanel->showError("删除失败: " + r.errorMessage);
+    }
+}
+
+void MainWindow::onToolbarDropTable()
+{
+    if (m_currentDatabase.isEmpty()) {
+        m_resultPanel->showError("请先选择或打开一个数据库");
+        return;
+    }
+
+    QString tableName = m_currentTable;
+    if (tableName.isEmpty()) {
+        const service::SqlExecResult result = executeSqlForGui(QStringLiteral("SHOW TABLES;"));
+        QStringList tables = firstColumnValues(result);
+        if (tables.isEmpty()) {
+            m_resultPanel->showError("当前数据库暂无可删除表");
+            return;
+        }
+        bool ok;
+        tableName = QInputDialog::getItem(this, "删除表", "选择要删除的表：", tables, 0, false, &ok);
+        if (!ok || tableName.isEmpty()) return;
+    }
+
+    int ret = QMessageBox::warning(this, "确认删除",
+        QString("确定要删除表 '%1' 吗？\n此操作不可恢复！").arg(tableName),
+        QMessageBox::Yes | QMessageBox::Cancel);
+    if (ret != QMessageBox::Yes) return;
+
+    const QString sql = QStringLiteral("DROP TABLE %1;").arg(tableName);
+    auto r = executeSqlForGui(sql);
+    if (r.success) {
+        m_resultPanel->showLog("删除表: " + tableName);
+        if (m_currentTable == tableName) {
             m_currentTable.clear();
             updateStatusDbLabel();
         }
@@ -793,9 +879,22 @@ void MainWindow::onToolbarSave()
     onExecuteRequested(sql);
 }
 
-// Visual table creation
+// Visual table creation / edit current table
 void MainWindow::onToolbarNewTable()
 {
+    if (!m_currentDatabase.isEmpty() && !m_currentTable.isEmpty()) {
+        const QString showSql = QStringLiteral("SHOW CREATE TABLE %1;").arg(m_currentTable);
+        auto r = executeSqlForGui(showSql);
+        if (r.success && !r.text.isEmpty()) {
+            CreateTableDialog dlg(this, m_currentDatabase, m_currentTable, r.text);
+            if (dlg.exec() != QDialog::Accepted) return;
+            QString sql = dlg.getGeneratedSql();
+            if (sql.isEmpty()) return;
+            onExecuteRequested(sql);
+            return;
+        }
+    }
+
     CreateTableDialog dlg(this, m_currentDatabase);
     if (dlg.exec() != QDialog::Accepted) return;
     QString sql = dlg.getGeneratedSql();

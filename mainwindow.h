@@ -59,6 +59,7 @@ private slots:
 
     void onToolbarExecute();
     void onToolbarNewQuery();
+    void onToolbarSelectTable();
 
     void onAbout();
     void onRefreshStructure();
@@ -67,6 +68,7 @@ private slots:
     void onSaveRequested(const QString &tableName, const QList<QStringList> &rows);
     void onToolbarSave();
     void onToolbarNewTable();
+    void onToolbarDropTable();
 
 private:
     void setupMenuBar();
@@ -95,7 +97,9 @@ protected:
     QLabel *m_statusRowsLabel = nullptr;
 
     QPushButton *m_saveBtn = nullptr;
+    QPushButton *m_selectTableBtn = nullptr;
     QPushButton *m_newTableBtn = nullptr;
+    QPushButton *m_dropTableBtn = nullptr;
 
     QString m_currentDatabase;
     QString m_currentTable;

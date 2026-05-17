@@ -92,6 +92,7 @@ set(DBMS_GUI_SOURCES
         display/create_table_dialog.cpp
         display/add_column_dialog.h
         display/add_column_dialog.cpp
+        resources/resources.qrc
 )
 
 set(DBMS_TEST_SOURCES
