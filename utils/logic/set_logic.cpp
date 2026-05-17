@@ -55,6 +55,7 @@ LogicTruthValue compareValues(const LogicCellValue &lhs,
         case LogicCompareOperator::Lte: return leftValue <= rightValue ? LogicTruthValue::True : LogicTruthValue::False;
         case LogicCompareOperator::Gt: return leftValue > rightValue ? LogicTruthValue::True : LogicTruthValue::False;
         case LogicCompareOperator::Gte: return leftValue >= rightValue ? LogicTruthValue::True : LogicTruthValue::False;
+        case LogicCompareOperator::Like: return LogicTruthValue::Unknown;
         }
     }
 
@@ -66,6 +67,7 @@ LogicTruthValue compareValues(const LogicCellValue &lhs,
     case LogicCompareOperator::Lte: return compareResult <= 0 ? LogicTruthValue::True : LogicTruthValue::False;
     case LogicCompareOperator::Gt: return compareResult > 0 ? LogicTruthValue::True : LogicTruthValue::False;
     case LogicCompareOperator::Gte: return compareResult >= 0 ? LogicTruthValue::True : LogicTruthValue::False;
+    case LogicCompareOperator::Like: return LogicTruthValue::Unknown;
     }
     return LogicTruthValue::Unknown;
 }

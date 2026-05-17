@@ -12,11 +12,16 @@ QString captureSubquerySqlTextInternal(const QString &expressionText, LogicParse
 
 bool isComparisonOperatorToken(const LogicToken &token)
 {
-    return token.type == LogicTokenType::CompareOperator;
+    return token.type == LogicTokenType::CompareOperator
+           || (token.type == LogicTokenType::Keyword
+               && token.keywordType == LogicKeywordType::Like);
 }
 
 LogicCompareOperator compareOperatorFromToken(const LogicToken &token)
 {
+    if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Like) {
+        return LogicCompareOperator::Like;
+    }
     const QString text = token.rawText.toUpper();
     if (text == QStringLiteral("=")) return LogicCompareOperator::Eq;
     if (text == QStringLiteral("!=") || text == QStringLiteral("<>")) return LogicCompareOperator::NotEq;

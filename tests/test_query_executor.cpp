@@ -311,6 +311,29 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.rows.first().value(0), QStringLiteral("2"));
     }
 
+    void test_executeSelectSqlAppliesLikeWhere()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_like_db");
+        const QString tableName = QStringLiteral("child");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, childSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("10")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("20")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("10"), QStringLiteral("30")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM child WHERE id LIKE '1%' ORDER BY id ASC"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("10"));
+    }
+
     void test_executeSelectSqlAppliesWhereAstBeforeProjectionAndLimit()
     {
         const QString databaseName = QStringLiteral("test_query_executor_select_limit_db");

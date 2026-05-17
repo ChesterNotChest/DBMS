@@ -634,6 +634,37 @@ private slots:
         QCOMPARE(res.truth, logic::LogicTruthValue::False);
     }
 
+    void test_likePatternComparison()
+    {
+        const QString expr = QStringLiteral("name LIKE 'Al_ce%'");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::Comparison);
+        QCOMPARE(parsed.root.compareOperator, logic::LogicCompareOperator::Like);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QStringLiteral("Alice Zhang"), tabledef::ColumnType::Varchar, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QStringLiteral("Alicia Zhang"), tabledef::ColumnType::Varchar, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QString(), tabledef::ColumnType::Varchar, true});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+    }
+
     void test_inListEmptyAndNullRules()
     {
         const QString expr = QStringLiteral("id IN (1, 2, NULL)");
