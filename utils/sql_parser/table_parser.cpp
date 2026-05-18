@@ -268,7 +268,8 @@ bool parseColumnSegment(const QVector<SqlToken> &tokens,
             result.insert(QStringLiteral("onUpdateAction"), onUpdateAction);
             break;
         } else {
-            ++i;
+            if (error != nullptr) *error = QStringLiteral("CREATE TABLE: unsupported column token '%1'").arg(tokens[i].lexeme);
+            return false;
         }
     }
 
@@ -457,10 +458,20 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
         const int end = lastMeaningfulTokenIndex(tokens);
         if (end < 0) return {false, "ALTER TABLE: unsupported syntax", cmdType, {}};
 
-        int actionIndex = -1;
+        int actionSearchStart = 0;
         for (int i = 0; i <= end; ++i) {
+            if (lexemeIs(tokens, i, QStringLiteral("TABLE"))) {
+                actionSearchStart = i + 2;
+                break;
+            }
+        }
+
+        int actionIndex = -1;
+        for (int i = actionSearchStart; i <= end; ++i) {
             if (lexemeIs(tokens, i, QStringLiteral("ADD"))
+                || lexemeIs(tokens, i, QStringLiteral("ALTER"))
                 || lexemeIs(tokens, i, QStringLiteral("MODIFY"))
+                || lexemeIs(tokens, i, QStringLiteral("RENAME"))
                 || lexemeIs(tokens, i, QStringLiteral("DROP"))) {
                 actionIndex = i;
                 break;
@@ -498,6 +509,102 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
             return {true, "", cmdType, payload};
         }
 
+        if (lexemeIs(tokens, actionIndex, QStringLiteral("ALTER"))) {
+            if (!lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                || actionIndex + 2 > end
+                || tokens[actionIndex + 2].type != TokenType::IDENTIFIER) {
+                return {false, "ALTER TABLE ALTER COLUMN: expected column name", cmdType, {}};
+            }
+
+            const QString columnName = tokens[actionIndex + 2].lexeme;
+            const int operationIndex = actionIndex + 3;
+            if (operationIndex > end) {
+                return {false, "ALTER TABLE ALTER COLUMN: expected operation", cmdType, {}};
+            }
+
+            if (lexemeIs(tokens, operationIndex, QStringLiteral("SET"))) {
+                if (operationIndex + 1 > end) {
+                    return {false, "ALTER TABLE ALTER COLUMN SET: expected operation", cmdType, {}};
+                }
+                if (lexemeIs(tokens, operationIndex + 1, QStringLiteral("DEFAULT"))) {
+                    if (operationIndex + 2 > end) {
+                        return {false, "ALTER TABLE ALTER COLUMN SET DEFAULT: expected value", cmdType, {}};
+                    }
+                    if (operationIndex + 3 <= end) {
+                        return {false, "ALTER TABLE ALTER COLUMN SET DEFAULT: unsupported trailing syntax", cmdType, {}};
+                    }
+                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_DEFAULT"));
+                    payload.insert(QStringLiteral("columnName"), columnName);
+                    payload.insert(QStringLiteral("defaultValue"), tokens[operationIndex + 2].lexeme);
+                    return {true, "", cmdType, payload};
+                }
+                if (lexemeIs(tokens, operationIndex + 1, QStringLiteral("NOT"))
+                    && operationIndex + 2 <= end
+                    && lexemeIs(tokens, operationIndex + 2, QStringLiteral("NULL"))) {
+                    if (operationIndex + 3 <= end) {
+                        return {false, "ALTER TABLE ALTER COLUMN SET NOT NULL: unsupported trailing syntax", cmdType, {}};
+                    }
+                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_NOT_NULL"));
+                    payload.insert(QStringLiteral("columnName"), columnName);
+                    return {true, "", cmdType, payload};
+                }
+                return {false, "ALTER TABLE ALTER COLUMN SET: unsupported operation", cmdType, {}};
+            }
+
+            if (lexemeIs(tokens, operationIndex, QStringLiteral("DROP"))) {
+                if (operationIndex + 1 > end) {
+                    return {false, "ALTER TABLE ALTER COLUMN DROP: expected operation", cmdType, {}};
+                }
+                if (lexemeIs(tokens, operationIndex + 1, QStringLiteral("DEFAULT"))) {
+                    if (operationIndex + 2 <= end) {
+                        return {false, "ALTER TABLE ALTER COLUMN DROP DEFAULT: unsupported trailing syntax", cmdType, {}};
+                    }
+                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_DROP_DEFAULT"));
+                    payload.insert(QStringLiteral("columnName"), columnName);
+                    return {true, "", cmdType, payload};
+                }
+                if (lexemeIs(tokens, operationIndex + 1, QStringLiteral("NOT"))
+                    && operationIndex + 2 <= end
+                    && lexemeIs(tokens, operationIndex + 2, QStringLiteral("NULL"))) {
+                    if (operationIndex + 3 <= end) {
+                        return {false, "ALTER TABLE ALTER COLUMN DROP NOT NULL: unsupported trailing syntax", cmdType, {}};
+                    }
+                    payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_DROP_NOT_NULL"));
+                    payload.insert(QStringLiteral("columnName"), columnName);
+                    return {true, "", cmdType, payload};
+                }
+                return {false, "ALTER TABLE ALTER COLUMN DROP: unsupported operation", cmdType, {}};
+            }
+
+            if (lexemeIs(tokens, operationIndex, QStringLiteral("TYPE"))) {
+                if (operationIndex + 1 > end) {
+                    return {false, "ALTER TABLE ALTER COLUMN TYPE: expected type", cmdType, {}};
+                }
+                payload.insert(QStringLiteral("alterAction"), QStringLiteral("ALTER_COLUMN_SET_TYPE"));
+                payload.insert(QStringLiteral("columnName"), columnName);
+                payload.insert(QStringLiteral("type"), tokens[operationIndex + 1].lexeme.toUpper());
+                if (operationIndex + 2 <= end && tokens[operationIndex + 2].type == TokenType::LPAREN) {
+                    const int right = findMatchingParen(tokens, operationIndex + 2, end);
+                    if (right < 0) {
+                        return {false, "ALTER TABLE ALTER COLUMN TYPE: unmatched type length parenthesis", cmdType, {}};
+                    }
+                    if (right < end) {
+                        return {false, "ALTER TABLE ALTER COLUMN TYPE: unsupported trailing syntax", cmdType, {}};
+                    }
+                    if (right != operationIndex + 4
+                        || tokens[operationIndex + 3].type != TokenType::INTEGER_LIT) {
+                        return {false, "ALTER TABLE ALTER COLUMN TYPE: expected single integer length", cmdType, {}};
+                    }
+                    payload.insert(QStringLiteral("length"), tokens[operationIndex + 3].lexeme.toInt());
+                } else if (operationIndex + 2 <= end) {
+                    return {false, "ALTER TABLE ALTER COLUMN TYPE: unsupported trailing syntax", cmdType, {}};
+                }
+                return {true, "", cmdType, payload};
+            }
+
+            return {false, "ALTER TABLE ALTER COLUMN: unsupported operation", cmdType, {}};
+        }
+
         if (lexemeIs(tokens, actionIndex, QStringLiteral("MODIFY"))) {
             if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
                 || tokens[actionIndex + 1].type == TokenType::IDENTIFIER) {
@@ -532,13 +639,36 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
             return {true, "", cmdType, payload};
         }
 
+        if (lexemeIs(tokens, actionIndex, QStringLiteral("RENAME"))) {
+            if (!lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))
+                || actionIndex + 4 > end
+                || tokens[actionIndex + 2].type != TokenType::IDENTIFIER
+                || !lexemeIs(tokens, actionIndex + 3, QStringLiteral("TO"))
+                || tokens[actionIndex + 4].type != TokenType::IDENTIFIER) {
+                return {false, "ALTER TABLE RENAME COLUMN: expected old column name TO new column name", cmdType, {}};
+            }
+            if (actionIndex + 5 <= end) {
+                return {false, "ALTER TABLE RENAME COLUMN: unsupported trailing syntax", cmdType, {}};
+            }
+            payload.insert(QStringLiteral("alterAction"), QStringLiteral("RENAME_COLUMN"));
+            payload.insert(QStringLiteral("columnName"), tokens[actionIndex + 2].lexeme);
+            payload.insert(QStringLiteral("newColumnName"), tokens[actionIndex + 4].lexeme);
+            return {true, "", cmdType, payload};
+        }
+
         if (lexemeIs(tokens, actionIndex, QStringLiteral("DROP"))) {
             if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("COLUMN"))) {
+                if (actionIndex + 3 <= end) {
+                    return {false, "ALTER TABLE DROP COLUMN: unsupported trailing syntax", cmdType, {}};
+                }
                 payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_COLUMN"));
                 if (actionIndex + 2 < tokens.size()) payload.insert(QStringLiteral("columnName"), tokens[actionIndex + 2].lexeme);
                 return {true, "", cmdType, payload};
             }
             if (lexemeIs(tokens, actionIndex + 1, QStringLiteral("CONSTRAINT"))) {
+                if (actionIndex + 3 <= end) {
+                    return {false, "ALTER TABLE DROP CONSTRAINT: unsupported trailing syntax", cmdType, {}};
+                }
                 payload.insert(QStringLiteral("alterAction"), QStringLiteral("DROP_CONSTRAINT"));
                 if (actionIndex + 2 < tokens.size()) payload.insert(QStringLiteral("constraintName"), tokens[actionIndex + 2].lexeme);
                 return {true, "", cmdType, payload};

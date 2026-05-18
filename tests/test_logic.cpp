@@ -1,4 +1,4 @@
-#include "../controller/nest_query.h"
+﻿#include "../controller/nest_query.h"
 #include "../service/service.h"
 #include "../utils/logic/logic.h"
 
@@ -17,7 +17,11 @@ logic::LogicRowContext makeOuterRowContext()
     rowContext.tableName = QStringLiteral("parent");
     rowContext.cellsByName.insert(QStringLiteral("id"),
                                   logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+    rowContext.cellsByName.insert(QStringLiteral("parent.id"),
+                                  logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
     rowContext.cellsByName.insert(QStringLiteral("name"),
+                                  logic::LogicCellValue{QStringLiteral("alice"), tabledef::ColumnType::Varchar, false});
+    rowContext.cellsByName.insert(QStringLiteral("parent.name"),
                                   logic::LogicCellValue{QStringLiteral("alice"), tabledef::ColumnType::Varchar, false});
     return rowContext;
 }
@@ -153,7 +157,7 @@ private slots:
     void test_parseCorrelatedExistsCollectsOuterReferences()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+            "EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
 
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
@@ -162,14 +166,14 @@ private slots:
         QVERIFY2(parsed.success, qPrintable(parsed.error.message));
         QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
         QCOMPARE(parsed.root.subquerySql,
-                 QStringLiteral("SELECT id FROM child WHERE child.parent_id = outer.id"));
-        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+                 QStringLiteral("SELECT id FROM child WHERE child.parent_id = parent.id"));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
     void test_parseSubqueryPreservesRawText()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (  SELECT id FROM child WHERE child.parent_id = outer.id  )");
+            "EXISTS (  SELECT id FROM child WHERE child.parent_id = parent.id  )");
 
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
@@ -177,10 +181,10 @@ private slots:
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
         QVERIFY2(parsed.success, qPrintable(parsed.error.message));
         QCOMPARE(parsed.root.subquerySql,
-                 QStringLiteral("  SELECT id FROM child WHERE child.parent_id = outer.id  "));
+                 QStringLiteral("  SELECT id FROM child WHERE child.parent_id = parent.id  "));
     }
 
-    void test_parseCorrelatedReferenceRejectsTableNamePrefix()
+    void test_parseCorrelatedReferenceCollectsOuterTablePrefix()
     {
         const QString expression = QStringLiteral(
             "EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
@@ -189,31 +193,75 @@ private slots:
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.message.contains(QStringLiteral("outer.xxx")));
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
-    void test_parseCorrelatedReferenceRejectsAliasPrefix()
+    void test_parseCorrelatedReferenceAllowsOuterAsLocalAlias()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (SELECT id FROM child c WHERE c.parent_id = outer.id)");
+            "EXISTS (SELECT id FROM child outer WHERE outer.parent_id = parent.id)");
 
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.message.contains(QStringLiteral("outer.xxx")));
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
+    }
+
+    void test_parseCorrelatedReferenceAllowsLocalAliasPrefix()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT id FROM child c WHERE c.parent_id = parent.id)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
+    }
+
+    void test_parseCorrelatedReferenceCollectsOuterAliasPrefix()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT id FROM child c WHERE c.parent_id = p.id)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("p.id")}));
+    }
+
+    void test_parseCorrelatedSubqueryCollectsMultiTableOuterReferences()
+    {
+        const QString expression = QStringLiteral(
+            "EXISTS (SELECT a.id FROM a JOIN b ON a.bid = parent.bid WHERE b.name = parent.name)");
+
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
+        QCOMPARE(parsed.root.referencedOuterNames.size(), 2);
+        QVERIFY(parsed.root.referencedOuterNames.contains(QStringLiteral("parent.bid")));
+        QVERIFY(parsed.root.referencedOuterNames.contains(QStringLiteral("parent.name")));
     }
 
     void test_buildCorrelationBindingsExtractsTypedOuterValues()
     {
-        const logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        outerRowContext.cellsByName.insert(QStringLiteral("parent.id"),
+                                           logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         const logic::CorrelationBindings bindings = logic::buildCorrelationBindings(outerRowContext,
-                                                                                   {QStringLiteral("outer.id")});
+                                                                                   {QStringLiteral("parent.id")});
 
         QCOMPARE(bindings.items.size(), 1);
-        QCOMPARE(bindings.items.first().name, QStringLiteral("outer.id"));
+        QCOMPARE(bindings.items.first().name, QStringLiteral("parent.id"));
         QCOMPARE(bindings.items.first().value, QStringLiteral("10"));
         QCOMPARE(bindings.items.first().type, tabledef::ColumnType::Int);
         QCOMPARE(bindings.items.first().isNull, false);
@@ -222,23 +270,35 @@ private slots:
     void test_correlatedSubqueryPrefersExactOuterBindingName()
     {
         logic::LogicRowContext outerRowContext = makeOuterRowContext();
-        outerRowContext.cellsByName.insert(QStringLiteral("outer.id"),
+        outerRowContext.cellsByName.insert(QStringLiteral("parent.id"),
                                            logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         outerRowContext.cellsByName.insert(QStringLiteral("id"),
                                            logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
 
         const logic::CorrelationBindings bindings = logic::buildCorrelationBindings(outerRowContext,
-                                                                                   {QStringLiteral("outer.id")});
+                                                                                   {QStringLiteral("parent.id")});
 
         QCOMPARE(bindings.items.size(), 1);
-        QCOMPARE(bindings.items.first().name, QStringLiteral("outer.id"));
+        QCOMPARE(bindings.items.first().name, QStringLiteral("parent.id"));
         QCOMPARE(bindings.items.first().value, QStringLiteral("10"));
+    }
+
+    void test_correlatedSubqueryDoesNotFallbackQualifiedOuterAlias()
+    {
+        logic::LogicRowContext outerRowContext = makeOuterRowContext();
+        outerRowContext.cellsByName.insert(QStringLiteral("id"),
+                                           logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+
+        const logic::CorrelationBindings bindings = logic::buildCorrelationBindings(outerRowContext,
+                                                                                   {QStringLiteral("typo.id")});
+
+        QCOMPARE(bindings.items.size(), 0);
     }
 
     void test_correlatedSubqueryUsesExactOuterBindingDuringEvaluation()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+            "EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
@@ -250,7 +310,7 @@ private slots:
         evalContext.allowSubquery = true;
 
         logic::LogicRowContext outerRowContext = makeOuterRowContext();
-        outerRowContext.cellsByName.insert(QStringLiteral("outer.id"),
+        outerRowContext.cellsByName.insert(QStringLiteral("parent.id"),
                                            logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         outerRowContext.cellsByName.insert(QStringLiteral("id"),
                                            logic::LogicCellValue{QStringLiteral("1"), tabledef::ColumnType::Int, false});
@@ -259,7 +319,7 @@ private slots:
         QVERIFY2(result.success, qPrintable(result.error.message));
         QCOMPARE(result.truth, logic::LogicTruthValue::True);
         QCOMPARE(executor.observedBindings.items.size(), 1);
-        QCOMPARE(executor.observedBindings.items.first().name, QStringLiteral("outer.id"));
+        QCOMPARE(executor.observedBindings.items.first().name, QStringLiteral("parent.id"));
         QCOMPARE(executor.observedBindings.items.first().value, QStringLiteral("10"));
     }
 
@@ -301,7 +361,7 @@ private slots:
 
     void test_checkConstraintRejectsSubqueries()
     {
-        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = outer.id)");
+        const QString expression = QStringLiteral("EXISTS (SELECT id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
@@ -375,17 +435,19 @@ private slots:
         evalContext.allowSubquery = true;
 
         const QString anyExpression = QStringLiteral(
-            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult anyTokenized = logic::tokenizeLogicExpression(anyExpression);
         QVERIFY2(anyTokenized.success, qPrintable(anyTokenized.error.message));
         const logic::LogicParseResult anyParsed = logic::parseLogicTokens(anyExpression, anyTokenized.tokens);
         QVERIFY2(anyParsed.success, qPrintable(anyParsed.error.message));
         QCOMPARE(anyParsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
-        QCOMPARE(anyParsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+        QCOMPARE(anyParsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
 
         logic::LogicRowContext anyTrueRow;
         anyTrueRow.tableName = QStringLiteral("parent");
         anyTrueRow.cellsByName.insert(QStringLiteral("id"),
+                                      logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        anyTrueRow.cellsByName.insert(QStringLiteral("parent.id"),
                                       logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         anyTrueRow.cellsByName.insert(QStringLiteral("score"),
                                       logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
@@ -405,13 +467,13 @@ private slots:
         QCOMPARE(anyFalseResult.truth, logic::LogicTruthValue::False);
 
         const QString allExpression = QStringLiteral(
-            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = parent.id)");
         const logic::LogicTokenizeResult allTokenized = logic::tokenizeLogicExpression(allExpression);
         QVERIFY2(allTokenized.success, qPrintable(allTokenized.error.message));
         const logic::LogicParseResult allParsed = logic::parseLogicTokens(allExpression, allTokenized.tokens);
         QVERIFY2(allParsed.success, qPrintable(allParsed.error.message));
         QCOMPARE(allParsed.root.type, logic::LogicNodeType::QuantifiedSubquery);
-        QCOMPARE(allParsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+        QCOMPARE(allParsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
 
         logic::LogicRowContext allTrueRow = anyTrueRow;
         allTrueRow.cellsByName.insert(QStringLiteral("score"),
@@ -440,7 +502,7 @@ private slots:
         evalContext.allowSubquery = true;
 
         const QString anyExpression = QStringLiteral(
-            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+            "score = ANY (SELECT parent_id FROM child WHERE child.parent_id = parent.id)");
         const auto anyTokenized = logic::tokenizeLogicExpression(anyExpression);
         QVERIFY2(anyTokenized.success, qPrintable(anyTokenized.error.message));
         const auto anyParsed = logic::parseLogicTokens(anyExpression, anyTokenized.tokens);
@@ -450,6 +512,8 @@ private slots:
         anyRow.tableName = QStringLiteral("parent");
         anyRow.cellsByName.insert(QStringLiteral("id"),
                                   logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        anyRow.cellsByName.insert(QStringLiteral("parent.id"),
+                                  logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         anyRow.cellsByName.insert(QStringLiteral("score"),
                                   logic::LogicCellValue{QStringLiteral("30"), tabledef::ColumnType::Int, false});
 
@@ -458,7 +522,7 @@ private slots:
         QCOMPARE(anyResult.truth, logic::LogicTruthValue::Unknown);
 
         const QString allExpression = QStringLiteral(
-            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = outer.id)");
+            "score > ALL (SELECT parent_id FROM child WHERE child.parent_id = parent.id)");
         const auto allTokenized = logic::tokenizeLogicExpression(allExpression);
         QVERIFY2(allTokenized.success, qPrintable(allTokenized.error.message));
         const auto allParsed = logic::parseLogicTokens(allExpression, allTokenized.tokens);
@@ -467,6 +531,8 @@ private slots:
         logic::LogicRowContext allRow;
         allRow.tableName = QStringLiteral("parent");
         allRow.cellsByName.insert(QStringLiteral("id"),
+                                  logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
+        allRow.cellsByName.insert(QStringLiteral("parent.id"),
                                   logic::LogicCellValue{QStringLiteral("10"), tabledef::ColumnType::Int, false});
         allRow.cellsByName.insert(QStringLiteral("score"),
                                   logic::LogicCellValue{QStringLiteral("20"), tabledef::ColumnType::Int, false});
@@ -566,6 +632,37 @@ private slots:
         res = logic::evaluateLogicExpression(parsed.root, row, {});
         QVERIFY2(res.success, qPrintable(res.error.message));
         QCOMPARE(res.truth, logic::LogicTruthValue::False);
+    }
+
+    void test_likePatternComparison()
+    {
+        const QString expr = QStringLiteral("name LIKE 'Al_ce%'");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::Comparison);
+        QCOMPARE(parsed.root.compareOperator, logic::LogicCompareOperator::Like);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QStringLiteral("Alice Zhang"), tabledef::ColumnType::Varchar, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QStringLiteral("Alicia Zhang"), tabledef::ColumnType::Varchar, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        row.cellsByName.insert(QStringLiteral("name"),
+                              logic::LogicCellValue{QString(), tabledef::ColumnType::Varchar, true});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
     }
 
     void test_inListEmptyAndNullRules()
@@ -684,7 +781,7 @@ private slots:
 
     void test_tokenizerPopulatesFieldsAndKeywordTypes()
     {
-        const QString expr = QStringLiteral("a AND outer.id IS NULL");
+        const QString expr = QStringLiteral("a AND parent.id IS NULL");
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expr);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
@@ -709,7 +806,7 @@ private slots:
     void test_captureSubqueryWithNestedParentheses()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (SELECT (id) FROM child WHERE child.parent_id = outer.id)");
+            "EXISTS (SELECT (id) FROM child WHERE child.parent_id = parent.id)");
 
         const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
@@ -718,7 +815,7 @@ private slots:
         QVERIFY2(parsed.success, qPrintable(parsed.error.message));
         QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
         QVERIFY(parsed.root.subquerySql.contains(QStringLiteral("(id)")));
-        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
     void test_notInLiteralListNegation()
@@ -828,7 +925,7 @@ private slots:
     void test_parseCorrelatedExistsAllowsSelectStarSubquery()
     {
         const QString expression = QStringLiteral(
-            "EXISTS (SELECT * FROM child WHERE child.parent_id = outer.id)");
+            "EXISTS (SELECT * FROM child WHERE child.parent_id = parent.id)");
 
         const auto tokenized = logic::tokenizeLogicExpression(expression);
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
@@ -836,8 +933,8 @@ private slots:
         const auto parsed = logic::parseLogicTokens(expression, tokenized.tokens);
         QVERIFY2(parsed.success, qPrintable(parsed.error.message));
         QCOMPARE(parsed.root.type, logic::LogicNodeType::ExistsSubquery);
-        QCOMPARE(parsed.root.subquerySql, QStringLiteral("SELECT * FROM child WHERE child.parent_id = outer.id"));
-        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("outer.id")}));
+        QCOMPARE(parsed.root.subquerySql, QStringLiteral("SELECT * FROM child WHERE child.parent_id = parent.id"));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
     void test_parseCorrelatedReferenceErrorPosition()
@@ -849,8 +946,8 @@ private slots:
         QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
 
         const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
-        QVERIFY(!parsed.success);
-        QVERIFY(parsed.error.position >= 0);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
     }
 
     void test_existsSubqueryWithoutExecutorReturnsError()
@@ -1002,13 +1099,8 @@ private slots:
             const auto tokenized = logic::tokenizeLogicExpression(expr);
             QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
             const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
-            QVERIFY(!parsed.success);
-            QCOMPARE(parsed.error.message, QStringLiteral("only outer.xxx is allowed in correlated subqueries"));
-            const int start = expr.indexOf('(');
-            const int end = expr.lastIndexOf(')');
-            const QString sub = expr.mid(start + 1, end - start - 1);
-            const int expectedPos = sub.indexOf(QStringLiteral("parent.id"));
-            QCOMPARE(parsed.error.position, expectedPos);
+            QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+            QCOMPARE(parsed.root.referencedOuterNames, QStringList({QStringLiteral("parent.id")}));
         }
 
         // EXISTS missing parentheses
@@ -1085,3 +1177,4 @@ int service_tests::runLogicTests()
 }
 
 #include "test_logic.moc"
+

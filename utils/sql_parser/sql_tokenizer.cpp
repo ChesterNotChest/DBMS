@@ -24,6 +24,9 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "SELECT")         return TokenType::SELECT;
     if (w == "FROM")           return TokenType::FROM;
     if (w == "WHERE")          return TokenType::WHERE;
+    if (w == "GROUP")          return TokenType::GROUP;
+    if (w == "HAVING")         return TokenType::HAVING;
+    if (w == "ORDER")          return TokenType::ORDER;
     if (w == "LIMIT")          return TokenType::LIMIT;
     if (w == "INSERT")         return TokenType::INSERT;
     if (w == "INTO")           return TokenType::INTO;
@@ -38,9 +41,18 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "CONSTRAINT")     return TokenType::CONSTRAINT;
     if (w == "INDEX")          return TokenType::INDEX;
     if (w == "ON")             return TokenType::ON;
+    if (w == "JOIN")           return TokenType::JOIN;
+    if (w == "INNER")          return TokenType::INNER;
+    if (w == "LEFT")           return TokenType::LEFT;
+    if (w == "RIGHT")          return TokenType::RIGHT;
+    if (w == "FULL")           return TokenType::FULL;
+    if (w == "NATURAL")        return TokenType::NATURAL;
+    if (w == "CROSS")          return TokenType::CROSS;
+    if (w == "USING")          return TokenType::USING;
     if (w == "USER")           return TokenType::USER;
     if (w == "IDENTIFIED")     return TokenType::IDENTIFIED;
     if (w == "BY")             return TokenType::BY;
+    if (w == "ASC")            return TokenType::ASC;
     if (w == "GRANT")          return TokenType::GRANT;
     if (w == "REVOKE")         return TokenType::REVOKE;
     if (w == "ALL")            return TokenType::ALL;
@@ -62,6 +74,11 @@ TokenType SqlTokenizer::keywordLookup(const QString& word) {
     if (w == "LIKE")           return TokenType::LIKE;
     if (w == "BETWEEN")        return TokenType::BETWEEN;
     if (w == "IS")             return TokenType::IS;
+    if (w == "COUNT")          return TokenType::COUNT;
+    if (w == "SUM")            return TokenType::SUM;
+    if (w == "AVG")            return TokenType::AVG;
+    if (w == "MIN")            return TokenType::MIN;
+    if (w == "MAX")            return TokenType::MAX;
     // 类型关键字
     if (w == "INT" || w == "INTEGER")       return TokenType::INT_TYPE;
     if (w == "FLOAT" || w == "DOUBLE" || w == "REAL")

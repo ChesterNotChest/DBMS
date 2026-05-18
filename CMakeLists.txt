@@ -115,6 +115,7 @@ set(DBMS_TEST_SOURCES
         tests/test_cli_client.cpp
         tests/test_auth_client.cpp
         tests/test_gui_client_runtime.cpp
+        tests/test_integration_stress.cpp
 )
 
 set(DBMS_CLI_SOURCES

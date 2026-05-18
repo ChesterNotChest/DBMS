@@ -800,6 +800,10 @@ bool insertTableIndexes(const QString &tableName,
         logIndexMaintenance(QStringLiteral("insert rows into index %1 for %2")
                                 .arg(index.indexName, tableName));
         repo::SortIndexRepo sortIndexRepo(databaseName, index.indexName, tableName, currentDataRoot);
+        QList<QStringList> keyValuesList;
+        QStringList rowLocators;
+        keyValuesList.reserve(insertedRowIndexes.size());
+        rowLocators.reserve(insertedRowIndexes.size());
         for (int rowIndex : insertedRowIndexes) {
             QString keyError;
             const QStringList keyValues = keyValuesForIndexRow(tableData, index, rowIndex, &keyError);
@@ -818,13 +822,16 @@ bool insertTableIndexes(const QString &tableName,
                 return false;
             }
 
-            const repo::RepositoryResult result = sortIndexRepo.insertIndexEntry(keyValues, rowLocator);
-            if (!result.ok) {
-                if (error != nullptr) {
-                    *error = result.error;
-                }
-                return false;
+            keyValuesList.append(keyValues);
+            rowLocators.append(rowLocator);
+        }
+
+        const repo::RepositoryResult result = sortIndexRepo.insertIndexEntries(keyValuesList, rowLocators);
+        if (!result.ok) {
+            if (error != nullptr) {
+                *error = result.error;
             }
+            return false;
         }
     }
 

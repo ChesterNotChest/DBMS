@@ -27,6 +27,7 @@ LogicKeywordType keywordTypeForWord(const QString &word)
     if (upper == QStringLiteral("ANY")) return LogicKeywordType::Any;
     if (upper == QStringLiteral("ALL")) return LogicKeywordType::All;
     if (upper == QStringLiteral("IS")) return LogicKeywordType::Is;
+    if (upper == QStringLiteral("LIKE")) return LogicKeywordType::Like;
     if (upper == QStringLiteral("NULL")) return LogicKeywordType::Null;
     return LogicKeywordType::None;
 }

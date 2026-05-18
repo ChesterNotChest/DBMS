@@ -305,11 +305,15 @@ public:
     RepositoryResult deleteRow(int rowIndex) const;
     RepositoryResult rebuild(const TableData &table, const QStringList &rowLocators) const;
     RepositoryResult insertIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
+    RepositoryResult insertIndexEntries(const QList<QStringList> &keyValuesList,
+                                        const QStringList &rowLocators) const;
     RepositoryResult updateIndexEntry(const QStringList &oldKeyValues,
                                       const QStringList &newKeyValues,
                                       const QString &rowLocator) const;
     RepositoryResult deleteIndexEntry(const QStringList &keyValues, const QString &rowLocator) const;
     QStringList search(const QStringList &keyValues, QString *error = nullptr) const;
+    QList<QStringList> orderedKeyValues(bool descending = false, QString *error = nullptr) const;
+    QStringList orderedRowLocators(bool descending = false, QString *error = nullptr) const;
     bool validateUniqueKeys(QString *error = nullptr) const;
     QString getIndexFilePath() const;
 

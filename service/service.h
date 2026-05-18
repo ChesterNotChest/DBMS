@@ -51,6 +51,12 @@ struct SimpleCondition
     QString value;
 };
 
+struct OrderByClause
+{
+    QString columnName;
+    bool descending = false;
+};
+
 struct TaskResult
 {
     bool success = false;
@@ -111,6 +117,15 @@ public:
                                 const QStringList &projectionColumns,
                                 const QList<SimpleCondition> &simpleConditions,
                                 int limit = -1) const;
+
+    SelectRowsResult selectRows(const QString &targetDatabaseName,
+                                const QString &targetTableName,
+                                TargetTableKind targetTableKind,
+                                const tabledef::TableSchema &targetSchema,
+                                const QStringList &projectionColumns,
+                                const QList<SimpleCondition> &simpleConditions,
+                                int limit,
+                                const OrderByClause &orderBy) const;
 
     TableDmlResult insertRows(const QString &targetDatabaseName,
                               const QString &targetTableName,
@@ -202,6 +217,12 @@ SelectRowsResult selectRows(const QString &tableName,
                             const QStringList &projectionColumns,
                             const QList<SimpleCondition> &conditions,
                             int limit = -1);
+
+SelectRowsResult selectRows(const QString &tableName,
+                            const QStringList &projectionColumns,
+                            const QList<SimpleCondition> &conditions,
+                            int limit,
+                            const OrderByClause &orderBy);
 
 TaskResult insertRows(const QString &tableName,
                       const QList<QMap<QString, QString>> &rows);

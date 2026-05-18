@@ -87,6 +87,123 @@ ColumnDefinition columnDefinitionFromPayload(const QVariantMap &columnMap)
     return definition;
 }
 
+bool columnDefinitionFromExistingSchema(const tabledef::TableSchema &schema,
+                                        const QString &columnName,
+                                        ColumnDefinition *definition,
+                                        QString *error)
+{
+    if (definition == nullptr) {
+        if (error != nullptr) *error = QStringLiteral("column definition output pointer cannot be null");
+        return false;
+    }
+
+    const int columnIndex = tabledef::findColumnIndex(schema, columnName);
+    if (columnIndex < 0) {
+        if (error != nullptr) *error = QStringLiteral("column '%1' does not exist").arg(columnName);
+        return false;
+    }
+
+    ColumnDefinition result;
+    result.column = schema.columns.at(columnIndex);
+    result.checkClause = result.column.check;
+
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        if (!tabledef::constraintTouchesColumn(constraint, columnName)) {
+            continue;
+        }
+
+        if (constraint.columns.size() != 1 || constraint.columns.value(0) != columnName) {
+            if (error != nullptr) {
+                *error = QStringLiteral("partial ALTER COLUMN cannot preserve multi-column constraint '%1'")
+                             .arg(constraint.name);
+            }
+            return false;
+        }
+
+        if (tabledef::isPrimaryKeyConstraint(constraint)) {
+            result.primaryKey = true;
+        } else if (tabledef::isUniqueConstraint(constraint)) {
+            result.unique = true;
+        } else if (tabledef::isForeignKeyConstraint(constraint)) {
+            result.referencedTable = constraint.referencedTable;
+            result.referencedColumns = constraint.referencedColumns;
+            result.onDeleteAction = constraint.onDeleteAction;
+            result.onUpdateAction = constraint.onUpdateAction;
+        } else if (constraint.type == tabledef::ConstraintType::Check) {
+            result.checkClause = constraint.checkClause;
+            result.column.check = constraint.checkClause;
+        }
+    }
+
+    *definition = result;
+    return true;
+}
+
+SqlExecResult execPartialAlterColumn(const QString &tableName,
+                                     const sqlparser::ParseResult &p,
+                                     const QString &action)
+{
+    const QString columnName = p.payload.value(QStringLiteral("columnName")).toString().trimmed();
+    if (columnName.isEmpty()) {
+        return {false, QStringLiteral("ALTER TABLE ALTER COLUMN requires columnName")};
+    }
+
+    QString error;
+    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        return {false, error};
+    }
+
+    ColumnDefinition definition;
+    if (!columnDefinitionFromExistingSchema(schema, columnName, &definition, &error)) {
+        return {false, error};
+    }
+
+    QString oldColumnName = columnName;
+    if (action == QStringLiteral("ALTER_COLUMN_SET_DEFAULT")) {
+        if (!p.payload.contains(QStringLiteral("defaultValue"))) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN SET DEFAULT requires defaultValue")};
+        }
+        definition.column.defaultValue = p.payload.value(QStringLiteral("defaultValue")).toString();
+    } else if (action == QStringLiteral("ALTER_COLUMN_DROP_DEFAULT")) {
+        definition.column.defaultValue.clear();
+    } else if (action == QStringLiteral("ALTER_COLUMN_SET_NOT_NULL")) {
+        definition.column.notNull = true;
+    } else if (action == QStringLiteral("ALTER_COLUMN_DROP_NOT_NULL")) {
+        definition.column.notNull = false;
+    } else if (action == QStringLiteral("ALTER_COLUMN_SET_TYPE")) {
+        const QString typeName = p.payload.value(QStringLiteral("type")).toString().trimmed();
+        if (typeName.isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN TYPE requires type")};
+        }
+        if (typeName.compare(QStringLiteral("VARCHAR"), Qt::CaseInsensitive) == 0
+            && !p.payload.contains(QStringLiteral("length"))) {
+            return {false, QStringLiteral("ALTER TABLE ALTER COLUMN TYPE requires length")};
+        }
+        definition.column.type = columnTypeFromSql(typeName);
+        if (definition.column.type == tabledef::ColumnType::Varchar) {
+            definition.column.length = p.payload.value(QStringLiteral("length")).toInt();
+        } else {
+            definition.column.length = 0;
+        }
+    } else if (action == QStringLiteral("RENAME_COLUMN")) {
+        const QString newColumnName = p.payload.value(QStringLiteral("newColumnName")).toString().trimmed();
+        if (newColumnName.isEmpty()) {
+            return {false, QStringLiteral("ALTER TABLE RENAME COLUMN requires newColumnName")};
+        }
+        definition.column.name = newColumnName;
+    } else {
+        return {false, QStringLiteral("ALTER TABLE: unsupported partial column action %1").arg(action)};
+    }
+
+    TaskResult result = table_service::modifyColumn(tableName, oldColumnName, definition);
+    if (result.success) {
+        return {true, {}, action == QStringLiteral("RENAME_COLUMN") ? QStringLiteral("Column renamed")
+                                                                    : QStringLiteral("Column altered")};
+    }
+    return {false, result.errorMessage};
+}
+
 tabledef::Constraint constraintFromPayload(const QVariantMap &constraintMap,
                                            const QString &tableName,
                                            int ordinal)
@@ -154,6 +271,218 @@ bool simpleConditionsFromPayload(const QVariantList &conditionsPayload,
         }
     }
 
+    return true;
+}
+
+struct SelectProjectionItem {
+    QString sourceName;
+    QString resolvedColumnName;
+    QString outputName;
+};
+
+struct SelectNameResolution {
+    QString tableName;
+    QString tableAlias;
+    QMap<QString, QString> visibleColumnToRealColumn;
+    QMap<QString, QString> outputAliasToRealColumn;
+};
+
+QString unqualifiedName(const QString &name)
+{
+    const int dotIndex = name.lastIndexOf(QLatin1Char('.'));
+    return dotIndex >= 0 && dotIndex + 1 < name.size() ? name.mid(dotIndex + 1) : name;
+}
+
+SelectNameResolution buildSelectNameResolution(const tabledef::TableSchema &schema,
+                                               const QString &tableAlias)
+{
+    SelectNameResolution resolution;
+    resolution.tableName = schema.tableName;
+    resolution.tableAlias = tableAlias.trimmed();
+    for (const tabledef::Column &column : schema.columns) {
+        resolution.visibleColumnToRealColumn.insert(column.name, column.name);
+        if (!schema.tableName.trimmed().isEmpty()) {
+            resolution.visibleColumnToRealColumn.insert(schema.tableName + QLatin1Char('.') + column.name, column.name);
+        }
+        if (!resolution.tableAlias.isEmpty()) {
+            resolution.visibleColumnToRealColumn.insert(resolution.tableAlias + QLatin1Char('.') + column.name, column.name);
+        }
+    }
+    return resolution;
+}
+
+bool resolveVisibleColumn(const SelectNameResolution &resolution,
+                          const QString &name,
+                          QString *resolvedColumn,
+                          QString *error)
+{
+    const QString trimmed = name.trimmed();
+    const auto found = resolution.visibleColumnToRealColumn.constFind(trimmed);
+    if (found != resolution.visibleColumnToRealColumn.constEnd()) {
+        if (resolvedColumn != nullptr) {
+            *resolvedColumn = found.value();
+        }
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("SELECT: column '%1' does not exist").arg(name);
+    }
+    return false;
+}
+
+QVariantList projectionItemsFromPayload(const QVariantMap &payload)
+{
+    QVariantList items = payload.value(QStringLiteral("projectionItems")).toList();
+    if (!items.isEmpty()) {
+        return items;
+    }
+    const QStringList projection = payload.value(QStringLiteral("projection")).toStringList();
+    for (const QString &columnName : projection) {
+        QVariantMap item;
+        item.insert(QStringLiteral("sourceColumn"), columnName);
+        item.insert(QStringLiteral("outputColumn"), unqualifiedName(columnName));
+        items.append(item);
+    }
+    return items;
+}
+
+bool resolveProjectionItems(const SelectNameResolution &resolution,
+                            const QVariantList &payloadItems,
+                            QList<SelectProjectionItem> *items,
+                            QString *error)
+{
+    if (items != nullptr) {
+        items->clear();
+    }
+    for (const QVariant &value : payloadItems) {
+        if (value.typeId() != QMetaType::QVariantMap) {
+            if (error != nullptr) {
+                *error = QStringLiteral("SELECT projection payload is incomplete");
+            }
+            return false;
+        }
+        const QVariantMap map = value.toMap();
+        const QString sourceName = map.value(QStringLiteral("sourceColumn")).toString().trimmed();
+        const QString outputName = map.value(QStringLiteral("outputColumn"), unqualifiedName(sourceName)).toString().trimmed();
+        QString resolvedColumn;
+        if (!resolveVisibleColumn(resolution, sourceName, &resolvedColumn, error)) {
+            return false;
+        }
+        if (items != nullptr) {
+            items->append(SelectProjectionItem{sourceName,
+                                               resolvedColumn,
+                                               outputName.isEmpty() ? unqualifiedName(sourceName) : outputName});
+        }
+    }
+    return true;
+}
+
+QStringList resolvedProjectionColumns(const QList<SelectProjectionItem> &items)
+{
+    QStringList columns;
+    for (const SelectProjectionItem &item : items) {
+        columns.append(item.resolvedColumnName);
+    }
+    return columns;
+}
+
+QStringList outputProjectionColumns(const QList<SelectProjectionItem> &items)
+{
+    QStringList columns;
+    for (const SelectProjectionItem &item : items) {
+        columns.append(item.outputName);
+    }
+    return columns;
+}
+
+bool resolveOrderByColumn(const SelectNameResolution &resolution,
+                          const QList<SelectProjectionItem> &projectionItems,
+                          const QString &rawOrderBy,
+                          QString *resolvedColumn,
+                          QString *error)
+{
+    const QString trimmed = rawOrderBy.trimmed();
+    if (trimmed.isEmpty()) {
+        if (resolvedColumn != nullptr) {
+            resolvedColumn->clear();
+        }
+        return true;
+    }
+    for (const SelectProjectionItem &item : projectionItems) {
+        if (item.outputName == trimmed) {
+            if (resolvedColumn != nullptr) {
+                *resolvedColumn = item.resolvedColumnName;
+            }
+            return true;
+        }
+    }
+    if (resolveVisibleColumn(resolution, trimmed, resolvedColumn, nullptr)) {
+        return true;
+    }
+    if (error != nullptr) {
+        *error = QStringLiteral("ORDER BY column '%1' does not exist").arg(rawOrderBy);
+    }
+    return false;
+}
+
+bool normalizeSimpleConditions(const SelectNameResolution &resolution,
+                               QList<SimpleCondition> *conditions,
+                               QString *error)
+{
+    if (conditions == nullptr) {
+        return true;
+    }
+    for (SimpleCondition &condition : *conditions) {
+        QString resolvedColumn;
+        if (!resolveVisibleColumn(resolution, condition.columnName, &resolvedColumn, error)) {
+            return false;
+        }
+        condition.columnName = resolvedColumn;
+    }
+    return true;
+}
+
+bool prepareSelectNames(const sqlparser::ParseResult &p,
+                        const tabledef::TableSchema &schema,
+                        QStringList *resolvedProjection,
+                        QStringList *outputProjection,
+                        OrderByClause *orderBy,
+                        QString *error)
+{
+    const SelectNameResolution resolution =
+        buildSelectNameResolution(schema, p.payload.value(QStringLiteral("tableAlias")).toString());
+    QList<SelectProjectionItem> projectionItems;
+    const QStringList legacyProjection = p.payload.value(QStringLiteral("projection")).toStringList();
+    const bool selectAll = p.payload.value(QStringLiteral("selectAll"), false).toBool()
+                           || (legacyProjection.size() == 1 && legacyProjection.first() == QStringLiteral("*"));
+    if (!selectAll) {
+        if (!resolveProjectionItems(resolution,
+                                    projectionItemsFromPayload(p.payload),
+                                    &projectionItems,
+                                    error)) {
+            return false;
+        }
+    }
+
+    QString resolvedOrderBy;
+    if (!resolveOrderByColumn(resolution,
+                              projectionItems,
+                              p.payload.value(QStringLiteral("orderByColumn")).toString(),
+                              &resolvedOrderBy,
+                              error)) {
+        return false;
+    }
+
+    if (resolvedProjection != nullptr) {
+        *resolvedProjection = selectAll ? QStringList{QStringLiteral("*")} : resolvedProjectionColumns(projectionItems);
+    }
+    if (outputProjection != nullptr) {
+        *outputProjection = selectAll ? QStringList{} : outputProjectionColumns(projectionItems);
+    }
+    if (orderBy != nullptr) {
+        orderBy->columnName = resolvedOrderBy;
+        orderBy->descending = p.payload.value(QStringLiteral("orderByDescending"), false).toBool();
+    }
     return true;
 }
 
@@ -385,6 +714,14 @@ SqlExecResult SqlDispatcher::execAlterTable(const sqlparser::ParseResult& p) {
         if (r.success) return {true, {}, "Column modified"};
         return {false, r.errorMessage};
     }
+    if (action == "ALTER_COLUMN_SET_DEFAULT"
+        || action == "ALTER_COLUMN_DROP_DEFAULT"
+        || action == "ALTER_COLUMN_SET_NOT_NULL"
+        || action == "ALTER_COLUMN_DROP_NOT_NULL"
+        || action == "ALTER_COLUMN_SET_TYPE"
+        || action == "RENAME_COLUMN") {
+        return execPartialAlterColumn(tableName, p, action);
+    }
     if (action == "ADD_CONSTRAINT") {
         if (!payloadHasMap(p, QStringLiteral("constraint"))) {
             return {false, QStringLiteral("ALTER TABLE ADD CONSTRAINT requires a complete constraint payload")};
@@ -486,7 +823,16 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
     if (currentDatabase.isEmpty())
         return {false, "No database selected. Use USE database_name;"};
 
-    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()) {
+    const QString table = p.payload["tableName"].toString();
+    QString schemaError;
+    const tabledef::TableSchema schema = loadUserTableSchema(table, &schemaError);
+    if (!schemaError.isEmpty()) {
+        return {false, schemaError};
+    }
+
+    if (p.payload.value(QStringLiteral("hasComplexWhere")).toBool()
+        || p.payload.value(QStringLiteral("isMultiTable")).toBool()
+        || p.payload.value(QStringLiteral("isAggregateQuery")).toBool()) {
         QueryExecutor executor;
         const QueryExecuteResult queryResult = executor.executeParsed(p,
                                                                      QueryExecuteContext{currentDatabase,
@@ -509,19 +855,33 @@ SqlExecResult SqlDispatcher::execSelect(const sqlparser::ParseResult& p) {
                 p.payload};
     }
 
-    QString table = p.payload["tableName"].toString();
-    QStringList projection = p.payload["projection"].toStringList();
+    QStringList projection;
+    QStringList outputProjection;
     const int limit = p.payload.value(QStringLiteral("limit"), -1).toInt();
+    OrderByClause orderBy;
+    QString nameError;
+    if (!prepareSelectNames(p, schema, &projection, &outputProjection, &orderBy, &nameError)) {
+        return {false, nameError};
+    }
     // WHERE 尚未完整实现，暂不传递条件
     QList<SimpleCondition> conditions;
     QString conditionError;
     if (!simpleConditionsFromPayload(p.payload.value(QStringLiteral("conditions")).toList(), &conditions, &conditionError)) {
         return {false, conditionError};
     }
+    if (!normalizeSimpleConditions(buildSelectNameResolution(schema, p.payload.value(QStringLiteral("tableAlias")).toString()),
+                                   &conditions,
+                                   &conditionError)) {
+        return {false, conditionError};
+    }
 
-    auto r = tuple_service::selectRows(table, projection, conditions, limit);
-    if (r.success)
+    auto r = tuple_service::selectRows(table, projection, conditions, limit, orderBy);
+    if (r.success) {
+        if (!outputProjection.isEmpty()) {
+            r.resultTable.columns = outputProjection;
+        }
         return {true, {}, formatSelectResult(r), r.affectedRowCount, r};
+    }
     return {false, r.errorMessage};
 }
 
