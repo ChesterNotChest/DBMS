@@ -1,4 +1,5 @@
-#include "create_table_dialog.h"
+﻿#include "create_table_dialog.h"
+#include <QListView>
 
 CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
     : QDialog(parent)
@@ -56,14 +57,8 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
             border-bottom-right-radius: 3px;
         }
         QComboBox::down-arrow {
-            image: none;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #888;
-            margin-right: 3px;
-        }
-        QComboBox::down-arrow:hover {
-            border-top-color: #555;
+            width: 10px;
+            height: 6px;
         }
         QComboBox QAbstractItemView {
             background-color: white;
@@ -99,10 +94,24 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
         QTableWidget::item {
             padding: 6px 8px;
             text-align: center;
+            border: none;
         }
         QTableWidget::item:selected {
             background-color: #EEF0F3;
             color: #444;
+        }
+        QTableWidget QLineEdit {
+            border: none;
+            background-color: white;
+            padding: 6px 8px;
+            font-size: 13px;
+            margin: 0;
+            width: 100%;
+        }
+        QTableWidget QLineEdit:focus {
+            border: none;
+            outline: none;
+            background-color: white;
         }
         QHeaderView::section {
             background-color: #F0F1F3;
@@ -188,15 +197,6 @@ CreateTableDialog::CreateTableDialog(QWidget *parent, const QString &defaultDb)
             background-color: white;
             border-color: #4A5568;
             border-width: 1.8px;
-        }
-        QCheckBox::indicator:checked::after {
-            content: "✓";
-            display: block;
-            text-align: center;
-            font-size: 12px;
-            font-weight: bold;
-            color: #2D3748;
-            margin-top: -1px;
         }
     )");
 
@@ -264,14 +264,8 @@ CreateTableDialog::CreateTableDialog(QWidget *parent,
             border-bottom-right-radius: 3px;
         }
         QComboBox::down-arrow {
-            image: none;
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid #888;
-            margin-right: 3px;
-        }
-        QComboBox::down-arrow:hover {
-            border-top-color: #555;
+            width: 10px;
+            height: 6px;
         }
         QComboBox QAbstractItemView {
             background-color: white;
@@ -307,10 +301,24 @@ CreateTableDialog::CreateTableDialog(QWidget *parent,
         QTableWidget::item {
             padding: 6px 8px;
             text-align: center;
+            border: none;
         }
         QTableWidget::item:selected {
             background-color: #EEF0F3;
             color: #444;
+        }
+        QTableWidget QLineEdit {
+            border: none;
+            background-color: white;
+            padding: 6px 8px;
+            font-size: 13px;
+            margin: 0;
+            width: 100%;
+        }
+        QTableWidget QLineEdit:focus {
+            border: none;
+            outline: none;
+            background-color: white;
         }
         QHeaderView::section {
             background-color: #F0F1F3;
@@ -397,15 +405,6 @@ CreateTableDialog::CreateTableDialog(QWidget *parent,
             border-color: #4A5568;
             border-width: 1.8px;
         }
-        QCheckBox::indicator:checked::after {
-            content: "✓";
-            display: block;
-            text-align: center;
-            font-size: 12px;
-            font-weight: bold;
-            color: #2D3748;
-            margin-top: -1px;
-        }
     )");
 
     buildLayout(defaultDb);
@@ -418,47 +417,49 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     mainLayout->setSpacing(20);
     mainLayout->setContentsMargins(24, 24, 24, 24);
 
-    // 标题区域
     auto *titleLabel = new QLabel("📋 创建新数据表");
     titleLabel->setStyleSheet("font-size: 22px; font-weight: 700; color: #374151; padding: 0; letter-spacing: 0.5px;");
     mainLayout->addWidget(titleLabel);
 
-    // 数据库与表名区域
     auto *nameLayout = new QHBoxLayout;
     nameLayout->setSpacing(16);
     nameLayout->addWidget(new QLabel("数据表名称："));
-    
     m_tableNameEdit = new QLineEdit;
     m_tableNameEdit->setPlaceholderText("请输入表名，例如：students");
     m_tableNameEdit->setStyleSheet("QLineEdit { min-width: 200px; }");
     nameLayout->addWidget(m_tableNameEdit, 1);
     mainLayout->addLayout(nameLayout);
 
-    // 字段表格
-    m_fieldTable = new QTableWidget(0, 9);
+    m_fieldTable = new QTableWidget(0, 13);
     m_fieldTable->setHorizontalHeaderLabels({
-        "字段名称", "数据类型", "长度", "NOT NULL", "主键", "唯一", "自增", "默认值", "备注"
+        "字段名称", "数据类型", "长度", "NOT NULL", "主键", "唯一", "自增", "默认值", "备注", "引用表", "引用字段", "ON DELETE", "ON UPDATE"
     });
     m_fieldTable->horizontalHeader()->setStretchLastSection(true);
-    m_fieldTable->verticalHeader()->setDefaultSectionSize(34);
-    m_fieldTable->verticalHeader()->setMinimumSectionSize(32);
+    m_fieldTable->verticalHeader()->setDefaultSectionSize(28);
+    m_fieldTable->verticalHeader()->setMinimumSectionSize(26);
     m_fieldTable->verticalHeader()->setVisible(false);
     m_fieldTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_fieldTable->setAlternatingRowColors(true);
+    m_fieldTable->setUpdatesEnabled(false);
 
-    // 设置列宽
-    m_fieldTable->setColumnWidth(0, 130);
-    m_fieldTable->setColumnWidth(1, 110);
-    m_fieldTable->setColumnWidth(2, 75);
-    m_fieldTable->setColumnWidth(3, 75);
-    m_fieldTable->setColumnWidth(4, 60);
-    m_fieldTable->setColumnWidth(5, 60);
-    m_fieldTable->setColumnWidth(6, 60);
-    m_fieldTable->setColumnWidth(7, 100);
+    m_fieldTable->setColumnWidth(0, 110);
+    m_fieldTable->setColumnWidth(1, 95);
+    m_fieldTable->setColumnWidth(2, 70);
+    m_fieldTable->setColumnWidth(3, 95);
+    m_fieldTable->setColumnWidth(4, 55);
+    m_fieldTable->setColumnWidth(5, 55);
+    m_fieldTable->setColumnWidth(6, 55);
+    m_fieldTable->setColumnWidth(7, 90);
+    m_fieldTable->setColumnWidth(8, 90);
+    m_fieldTable->setColumnWidth(9, 90);
+    m_fieldTable->setColumnWidth(10, 90);
+    m_fieldTable->setColumnWidth(11, 100);
+    m_fieldTable->setColumnWidth(12, 100);
+
+    m_fieldTable->setUpdatesEnabled(true);
 
     mainLayout->addWidget(m_fieldTable, 1);
 
-    // 操作按钮区域
     auto *btnLayout = new QHBoxLayout;
     btnLayout->setSpacing(12);
 
@@ -478,7 +479,6 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     btnLayout->addStretch();
     mainLayout->addLayout(btnLayout);
 
-    // 底部按钮区域
     auto *bottomBtnLayout = new QHBoxLayout;
     bottomBtnLayout->setSpacing(16);
 
@@ -494,198 +494,155 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     bottomBtnLayout->addWidget(m_execBtn);
     mainLayout->addLayout(bottomBtnLayout);
 
-    // 默认添加几个示例行
+    m_fieldTable->setUpdatesEnabled(false);
     for (int i = 0; i < 3; i++) {
         onAddColumn();
     }
+    m_fieldTable->setUpdatesEnabled(true);
 }
 
 void CreateTableDialog::onAddColumnDialog()
 {
-    AddColumnDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    ColumnConfig cfg = dlg.getConfig();
-    if (cfg.name.isEmpty()) {
-        QMessageBox::warning(this, "警告", "列名不能为空！");
-        return;
-    }
-
-    int row = m_fieldTable->rowCount();
-    m_fieldTable->insertRow(row);
-
-    // 字段名称
-    auto *nameItem = new QTableWidgetItem(cfg.name);
-    nameItem->setTextAlignment(Qt::AlignCenter);
-    m_fieldTable->setItem(row, 0, nameItem);
-
-    // 数据类型
-    auto *typeCombo = new QComboBox();
-    typeCombo->setEditable(false);
-    typeCombo->setFixedHeight(24);
-    typeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    typeCombo->addItems({
-        "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
-        "NUMBER", "VARCHAR", "CHAR", "TEXT", "DATE",
-        "DATETIME", "TIME", "BLOB", "BOOLEAN"
-    });
-    typeCombo->setCurrentText(cfg.type);
-    m_fieldTable->setCellWidget(row, 1, typeCombo);
-
-    // 长度
-    auto *lenEdit = new QLineEdit(cfg.length > 0 ? QString::number(cfg.length) : "");
-    lenEdit->setAlignment(Qt::AlignCenter);
-    lenEdit->setPlaceholderText("长度");
-    lenEdit->setFixedHeight(24);
-    lenEdit->setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 13px; }");
-    m_fieldTable->setCellWidget(row, 2, lenEdit);
-
-    // NOT NULL
-    auto *chkNotNull = new QCheckBox();
-    chkNotNull->setChecked(!cfg.allowNull);
-    auto *widgetNn = new QWidget();
-    auto *layoutNn = new QHBoxLayout(widgetNn);
-    layoutNn->setContentsMargins(0, 0, 0, 0);
-    layoutNn->setAlignment(Qt::AlignCenter);
-    layoutNn->addWidget(chkNotNull);
-    m_fieldTable->setCellWidget(row, 3, widgetNn);
-
-    // 主键
-    auto *chkPk = new QCheckBox();
-    chkPk->setChecked(cfg.primaryKey);
-    auto *widgetPk = new QWidget();
-    auto *layoutPk = new QHBoxLayout(widgetPk);
-    layoutPk->setContentsMargins(0, 0, 0, 0);
-    layoutPk->setAlignment(Qt::AlignCenter);
-    layoutPk->addWidget(chkPk);
-    m_fieldTable->setCellWidget(row, 4, widgetPk);
-
-    // 唯一
-    auto *chkUnique = new QCheckBox();
-    chkUnique->setChecked(cfg.unique);
-    auto *widgetUniq = new QWidget();
-    auto *layoutUniq = new QHBoxLayout(widgetUniq);
-    layoutUniq->setContentsMargins(0, 0, 0, 0);
-    layoutUniq->setAlignment(Qt::AlignCenter);
-    layoutUniq->addWidget(chkUnique);
-    m_fieldTable->setCellWidget(row, 5, widgetUniq);
-
-    // 自增
-    auto *chkAutoInc = new QCheckBox();
-    chkAutoInc->setChecked(false);
-    auto *widgetAi = new QWidget();
-    auto *layoutAi = new QHBoxLayout(widgetAi);
-    layoutAi->setContentsMargins(0, 0, 0, 0);
-    layoutAi->setAlignment(Qt::AlignCenter);
-    layoutAi->addWidget(chkAutoInc);
-    m_fieldTable->setCellWidget(row, 6, widgetAi);
-
-    // 默认值
-    auto *defItem = new QTableWidgetItem(cfg.defaultValue);
-    defItem->setTextAlignment(Qt::AlignCenter);
-    m_fieldTable->setItem(row, 7, defItem);
-
-    // 备注（CHECK约束存入备注列）
-    auto *commItem = new QTableWidgetItem(cfg.checkConstraint);
-    commItem->setTextAlignment(Qt::AlignCenter);
-    m_fieldTable->setItem(row, 8, commItem);
-
-    connect(chkPk, &QCheckBox::stateChanged, this, [this, row](int state) {
-        if (state == Qt::Checked) {
-            updatePkRadio(row);
-        }
-    });
-
-    connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this, row]() {
-        refreshLengthEnable(row);
-    });
-
-    refreshLengthEnable(row);
+    // 直接在表格中添加一行，不再弹出对话框
+    onAddColumn();
+    
+    // 自动滚动到新添加的行并选中编辑
+    int row = m_fieldTable->rowCount() - 1;
+    m_fieldTable->scrollToItem(m_fieldTable->item(row, 0));
+    m_fieldTable->selectRow(row);
+    m_fieldTable->editItem(m_fieldTable->item(row, 0));
 }
 
 void CreateTableDialog::onAddColumn()
 {
     int row = m_fieldTable->rowCount();
     m_fieldTable->insertRow(row);
+    m_fieldTable->setRowHeight(row, 22);
 
-    // 字段名称
     auto *nameItem = new QTableWidgetItem(QString("column%1").arg(row + 1));
     nameItem->setTextAlignment(Qt::AlignCenter);
     m_fieldTable->setItem(row, 0, nameItem);
 
-    // 数据类型
     auto *typeCombo = new QComboBox();
     typeCombo->setEditable(false);
-    typeCombo->setFixedHeight(24);
+    typeCombo->setFixedHeight(20);
     typeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     typeCombo->addItems({
         "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
         "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME",
         "TIME", "BLOB", "BOOLEAN"
     });
+    auto *typeView = new QListView(typeCombo);
+    typeView->setTextElideMode(Qt::ElideNone);
+    typeView->setMinimumWidth(90);
+    typeCombo->setView(typeView);
+    typeCombo->setStyleSheet(
+        "QComboBox { margin: 1px; padding: 0px 3px; font-size: 11px; border: 1px solid #E8E8E8; border-radius: 2px; }"
+        "QComboBox::drop-down { width: 14px; }"
+        "QComboBox::down-arrow { width: 6px; height: 4px; }"
+    );
     typeCombo->setCurrentText("VARCHAR");
     m_fieldTable->setCellWidget(row, 1, typeCombo);
 
-    // 长度
-    auto *lenEdit = new QLineEdit("255");
-    lenEdit->setAlignment(Qt::AlignCenter);
-    lenEdit->setPlaceholderText("长度");
-    lenEdit->setFixedHeight(24);
-    lenEdit->setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 13px; }");
-    m_fieldTable->setCellWidget(row, 2, lenEdit);
+    auto *lenItem = new QTableWidgetItem("255");
+    lenItem->setTextAlignment(Qt::AlignCenter);
+    m_fieldTable->setItem(row, 2, lenItem);
 
-    // NOT NULL
     auto *chkNotNull = new QCheckBox();
     chkNotNull->setChecked(false);
-    auto *widgetNn = new QWidget();
-    auto *layoutNn = new QHBoxLayout(widgetNn);
-    layoutNn->setContentsMargins(0, 0, 0, 0);
-    layoutNn->setAlignment(Qt::AlignCenter);
-    layoutNn->addWidget(chkNotNull);
-    m_fieldTable->setCellWidget(row, 3, widgetNn);
+    chkNotNull->setStyleSheet(
+        "QCheckBox { spacing: 0px; padding: 3px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 1px; }"
+        "QCheckBox::indicator::unchecked { border: 1.5px solid #333; background-color: white; }"
+        "QCheckBox::indicator::checked { border: 1.5px solid #333; background-color: #333; }"
+        "QCheckBox::indicator::checked::text { color: white; }"
+    );
+    m_fieldTable->setCellWidget(row, 3, chkNotNull);
 
-    // 主键
     auto *chkPk = new QCheckBox();
     chkPk->setChecked(false);
-    auto *widgetPk = new QWidget();
-    auto *layoutPk = new QHBoxLayout(widgetPk);
-    layoutPk->setContentsMargins(0, 0, 0, 0);
-    layoutPk->setAlignment(Qt::AlignCenter);
-    layoutPk->addWidget(chkPk);
-    m_fieldTable->setCellWidget(row, 4, widgetPk);
+    chkPk->setStyleSheet(
+        "QCheckBox { spacing: 0px; padding: 3px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 1px; }"
+        "QCheckBox::indicator::unchecked { border: 1.5px solid #333; background-color: white; }"
+        "QCheckBox::indicator::checked { border: 1.5px solid #333; background-color: #333; }"
+        "QCheckBox::indicator::checked::text { color: white; }"
+    );
+    m_fieldTable->setCellWidget(row, 4, chkPk);
 
-    // 唯一
     auto *chkUnique = new QCheckBox();
     chkUnique->setChecked(false);
-    auto *widgetUniq = new QWidget();
-    auto *layoutUniq = new QHBoxLayout(widgetUniq);
-    layoutUniq->setContentsMargins(0, 0, 0, 0);
-    layoutUniq->setAlignment(Qt::AlignCenter);
-    layoutUniq->addWidget(chkUnique);
-    m_fieldTable->setCellWidget(row, 5, widgetUniq);
+    chkUnique->setStyleSheet(
+        "QCheckBox { spacing: 0px; padding: 3px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 1px; }"
+        "QCheckBox::indicator::unchecked { border: 1.5px solid #333; background-color: white; }"
+        "QCheckBox::indicator::checked { border: 1.5px solid #333; background-color: #333; }"
+        "QCheckBox::indicator::checked::text { color: white; }"
+    );
+    m_fieldTable->setCellWidget(row, 5, chkUnique);
 
-    // 自增
     auto *chkAutoInc = new QCheckBox();
     chkAutoInc->setChecked(false);
-    auto *widgetAi = new QWidget();
-    auto *layoutAi = new QHBoxLayout(widgetAi);
-    layoutAi->setContentsMargins(0, 0, 0, 0);
-    layoutAi->setAlignment(Qt::AlignCenter);
-    layoutAi->addWidget(chkAutoInc);
-    m_fieldTable->setCellWidget(row, 6, widgetAi);
+    chkAutoInc->setStyleSheet(
+        "QCheckBox { spacing: 0px; padding: 3px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border-radius: 1px; }"
+        "QCheckBox::indicator::unchecked { border: 1.5px solid #333; background-color: white; }"
+        "QCheckBox::indicator::checked { border: 1.5px solid #333; background-color: #333; }"
+        "QCheckBox::indicator::checked::text { color: white; }"
+    );
+    m_fieldTable->setCellWidget(row, 6, chkAutoInc);
 
-    // 默认值
     auto *defItem = new QTableWidgetItem("");
     defItem->setTextAlignment(Qt::AlignCenter);
     defItem->setData(Qt::UserRole, "placeholder");
     m_fieldTable->setItem(row, 7, defItem);
 
-    // 备注
     auto *commItem = new QTableWidgetItem("");
     commItem->setTextAlignment(Qt::AlignCenter);
     commItem->setData(Qt::UserRole, "placeholder");
     m_fieldTable->setItem(row, 8, commItem);
+
+    auto *refTableItem = new QTableWidgetItem("");
+    refTableItem->setTextAlignment(Qt::AlignCenter);
+    refTableItem->setData(Qt::UserRole, "placeholder");
+    m_fieldTable->setItem(row, 9, refTableItem);
+
+    auto *refColumnItem = new QTableWidgetItem("");
+    refColumnItem->setTextAlignment(Qt::AlignCenter);
+    refColumnItem->setData(Qt::UserRole, "placeholder");
+    m_fieldTable->setItem(row, 10, refColumnItem);
+
+    auto *onDeleteCombo = new QComboBox();
+    onDeleteCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
+    onDeleteCombo->setCurrentText("NO ACTION");
+    onDeleteCombo->setFixedHeight(22);
+    onDeleteCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *deleteView = new QListView(onDeleteCombo);
+    deleteView->setTextElideMode(Qt::ElideNone);
+    deleteView->setMinimumWidth(100);
+    onDeleteCombo->setView(deleteView);
+    onDeleteCombo->setStyleSheet(
+        "QComboBox { margin: 2px; padding: 1px 4px; font-size: 10px; border: 1px solid #E0E0E0; border-radius: 2px; }"
+        "QComboBox::drop-down { width: 16px; }"
+        "QComboBox::down-arrow { width: 8px; height: 5px; }"
+    );
+    m_fieldTable->setCellWidget(row, 11, onDeleteCombo);
+
+    auto *onUpdateCombo = new QComboBox();
+    onUpdateCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
+    onUpdateCombo->setCurrentText("NO ACTION");
+    onUpdateCombo->setFixedHeight(22);
+    onUpdateCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *updateView = new QListView(onUpdateCombo);
+    updateView->setTextElideMode(Qt::ElideNone);
+    updateView->setMinimumWidth(100);
+    onUpdateCombo->setView(updateView);
+    onUpdateCombo->setStyleSheet(
+        "QComboBox { margin: 2px; padding: 1px 4px; font-size: 10px; border: 1px solid #E0E0E0; border-radius: 2px; }"
+        "QComboBox::drop-down { width: 16px; }"
+        "QComboBox::down-arrow { width: 8px; height: 5px; }"
+    );
+    m_fieldTable->setCellWidget(row, 12, onUpdateCombo);
 
     connect(chkPk, &QCheckBox::stateChanged, this, [this, row](int state) {
         if (state == Qt::Checked) {
@@ -718,6 +675,11 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
         "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME",
         "TIME", "BLOB", "BOOLEAN"
     });
+    auto *typeView = new QListView(typeCombo);
+    typeView->setTextElideMode(Qt::ElideNone);
+    typeView->setMinimumWidth(180);
+    typeCombo->setView(typeView);
+    typeCombo->setStyleSheet("QComboBox { padding: 2px 6px; font-size: 13px; min-width: 100px; }");
     typeCombo->setCurrentText(cfg.type.isEmpty() ? "VARCHAR" : cfg.type.toUpper());
     m_fieldTable->setCellWidget(row, 1, typeCombo);
 
@@ -772,6 +734,47 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     commItem->setTextAlignment(Qt::AlignCenter);
     m_fieldTable->setItem(row, 8, commItem);
 
+    auto *refTableCombo = new QComboBox();
+    refTableCombo->setEditable(true);
+    refTableCombo->setInsertPolicy(QComboBox::NoInsert);
+    refTableCombo->setFixedHeight(24);
+    refTableCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    populateReferenceTables(refTableCombo);
+    if (!cfg.referencedTable.isEmpty()) {
+        refTableCombo->setCurrentText(cfg.referencedTable);
+    }
+    refTableCombo->setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }");
+    m_fieldTable->setCellWidget(row, 9, refTableCombo);
+
+    auto *refColumnCombo = new QComboBox();
+    refColumnCombo->setEditable(true);
+    refColumnCombo->setInsertPolicy(QComboBox::NoInsert);
+    refColumnCombo->setFixedHeight(24);
+    refColumnCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    if (!cfg.referencedColumns.isEmpty()) {
+        refColumnCombo->addItem(cfg.referencedColumns.first());
+    }
+    refColumnCombo->setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }");
+    m_fieldTable->setCellWidget(row, 10, refColumnCombo);
+
+    auto *onDeleteCombo = new QComboBox();
+    onDeleteCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
+    QString deleteActionStr = tabledef::foreignKeyActionToString(cfg.onDeleteAction);
+    onDeleteCombo->setCurrentText(deleteActionStr);
+    onDeleteCombo->setFixedHeight(24);
+    onDeleteCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    onDeleteCombo->setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }");
+    m_fieldTable->setCellWidget(row, 11, onDeleteCombo);
+
+    auto *onUpdateCombo = new QComboBox();
+    onUpdateCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
+    QString updateActionStr = tabledef::foreignKeyActionToString(cfg.onUpdateAction);
+    onUpdateCombo->setCurrentText(updateActionStr);
+    onUpdateCombo->setFixedHeight(24);
+    onUpdateCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    onUpdateCombo->setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }");
+    m_fieldTable->setCellWidget(row, 12, onUpdateCombo);
+
     connect(chkPk, &QCheckBox::stateChanged, this, [this, row](int state) {
         if (state == Qt::Checked) {
             updatePkRadio(row);
@@ -789,17 +792,11 @@ void CreateTableDialog::updatePkRadio(int row)
 {
     for (int r = 0; r < m_fieldTable->rowCount(); r++) {
         if (r != row) {
-            auto *widget = m_fieldTable->cellWidget(r, 4);
-            if (widget) {
-                auto *layout = widget->layout();
-                if (layout && layout->count() > 0) {
-                    auto *chk = qobject_cast<QCheckBox*>(layout->itemAt(0)->widget());
-                    if (chk) {
-                        chk->blockSignals(true);
-                        chk->setChecked(false);
-                        chk->blockSignals(false);
-                    }
-                }
+            auto *chk = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(r, 4));
+            if (chk) {
+                chk->blockSignals(true);
+                chk->setChecked(false);
+                chk->blockSignals(false);
             }
         }
     }
@@ -808,13 +805,17 @@ void CreateTableDialog::updatePkRadio(int row)
 void CreateTableDialog::refreshLengthEnable(int row)
 {
     auto *typeCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 1));
-    auto *lenEdit = qobject_cast<QLineEdit*>(m_fieldTable->cellWidget(row, 2));
-    if (!typeCombo || !lenEdit) return;
+    auto *lenItem = m_fieldTable->item(row, 2);
+    if (!typeCombo || !lenItem) return;
 
     QString type = typeCombo->currentText().toUpper();
-    bool needsLen = (type == "VARCHAR" || type == "CHAR");
-    lenEdit->setEnabled(needsLen);
-    lenEdit->setStyleSheet(needsLen ? "QLineEdit { padding: 2px 6px; font-size: 13px; }" : "QLineEdit { padding: 2px 6px; background-color: #F5F6F7; color: #B0B5BA; }");
+    bool needsLen = (type == "VARCHAR" || type == "CHAR" || type == "DECIMAL");
+    
+    if (!needsLen && lenItem->text().trimmed() == "255") {
+        lenItem->setText("");
+    } else if (needsLen && lenItem->text().trimmed().isEmpty()) {
+        lenItem->setText("255");
+    }
 }
 
 void CreateTableDialog::onDeleteColumn()
@@ -845,7 +846,6 @@ QString CreateTableDialog::buildSql() const
 
     QString sql = QString("CREATE TABLE %1 (\n").arg(table);
     QStringList colDefs;
-    QString primaryKey;
 
     for (int row = 0; row < m_fieldTable->rowCount(); ++row) {
         QString name = m_fieldTable->item(row, 0)->text().trimmed();
@@ -854,67 +854,37 @@ QString CreateTableDialog::buildSql() const
         auto *typeCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 1));
         QString type = typeCombo ? typeCombo->currentText().toUpper() : "VARCHAR";
 
-        auto *lenEdit = qobject_cast<QLineEdit*>(m_fieldTable->cellWidget(row, 2));
-        QString len = lenEdit ? lenEdit->text().trimmed() : "";
+        QString len;
+        auto *lenItem = m_fieldTable->item(row, 2);
+        if (lenItem) {
+            len = lenItem->text().trimmed();
+        }
 
         QString fullType = type;
-        if ((type == "VARCHAR" || type == "CHAR") && !len.isEmpty()) {
+        if ((type == "VARCHAR" || type == "CHAR" || type == "DECIMAL") && !len.isEmpty()) {
             fullType = QString("%1(%2)").arg(type).arg(len);
         }
 
         QStringList constraints;
 
-        auto *nnWidget = m_fieldTable->cellWidget(row, 3);
-        if (nnWidget) {
-            auto *nnLayout = nnWidget->layout();
-            if (nnLayout && nnLayout->count() > 0) {
-                auto *chk = qobject_cast<QCheckBox*>(nnLayout->itemAt(0)->widget());
-                if (chk && chk->isChecked()) {
-                    constraints.append("NOT NULL");
-                }
-            }
+        auto *chkNotNull = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(row, 3));
+        if (chkNotNull && chkNotNull->isChecked()) {
+            constraints.append("NOT NULL");
         }
 
-        auto *pkWidget = m_fieldTable->cellWidget(row, 4);
-        if (pkWidget) {
-            auto *pkLayout = pkWidget->layout();
-            if (pkLayout && pkLayout->count() > 0) {
-                auto *chk = qobject_cast<QCheckBox*>(pkLayout->itemAt(0)->widget());
-                if (chk && chk->isChecked()) {
-                    constraints.append("PRIMARY KEY");
-                }
-            }
+        auto *chkPk = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(row, 4));
+        if (chkPk && chkPk->isChecked()) {
+            constraints.append("PRIMARY KEY");
         }
 
-        auto *uniqueWidget = m_fieldTable->cellWidget(row, 5);
-        if (uniqueWidget) {
-            auto *uniqueLayout = uniqueWidget->layout();
-            if (uniqueLayout && uniqueLayout->count() > 0) {
-                auto *chk = qobject_cast<QCheckBox*>(uniqueLayout->itemAt(0)->widget());
-                if (chk && chk->isChecked()) {
-                    constraints.append("UNIQUE");
-                }
-            }
+        auto *chkUnique = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(row, 5));
+        if (chkUnique && chkUnique->isChecked()) {
+            constraints.append("UNIQUE");
         }
 
-        auto *aiWidget = m_fieldTable->cellWidget(row, 6);
-        if (aiWidget) {
-            auto *aiLayout = aiWidget->layout();
-            if (aiLayout && aiLayout->count() > 0) {
-                auto *chk = qobject_cast<QCheckBox*>(aiLayout->itemAt(0)->widget());
-                if (chk && chk->isChecked()) {
-                    constraints.append("AUTO_INCREMENT");
-                }
-            }
-        }
-
-        // CHECK约束（从备注列读取）
-        auto *commItem = m_fieldTable->item(row, 8);
-        if (commItem) {
-            QString check = commItem->text().trimmed();
-            if (!check.isEmpty()) {
-                constraints.append(QString("CHECK (%1)").arg(check));
-            }
+        auto *chkAutoInc = qobject_cast<QCheckBox*>(m_fieldTable->cellWidget(row, 6));
+        if (chkAutoInc && chkAutoInc->isChecked()) {
+            constraints.append("AUTO_INCREMENT");
         }
 
         QString defaultValue;
@@ -932,9 +902,40 @@ QString CreateTableDialog::buildSql() const
             }
         }
 
+        auto *checkItem = m_fieldTable->item(row, 8);
+        if (checkItem) {
+            QString check = checkItem->text().trimmed();
+            if (!check.isEmpty()) {
+                constraints.append(QString("CHECK (%1)").arg(check));
+            }
+        }
+
+        auto *refTableItem = m_fieldTable->item(row, 9);
+        auto *refColumnItem = m_fieldTable->item(row, 10);
+        auto *onDeleteCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 11));
+        auto *onUpdateCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 12));
+
+        QString refTable = refTableItem ? refTableItem->text().trimmed() : "";
+        QString refColumn = refColumnItem ? refColumnItem->text().trimmed() : "";
+        QString onDelete = onDeleteCombo ? onDeleteCombo->currentText().trimmed() : "";
+        QString onUpdate = onUpdateCombo ? onUpdateCombo->currentText().trimmed() : "";
+
+        if (!refTable.isEmpty() && !refColumn.isEmpty()) {
+            QStringList fkParts;
+            fkParts.append(QString("REFERENCES %1(%2)").arg(refTable).arg(refColumn));
+            if (onDelete != "NO ACTION") {
+                fkParts.append(QString("ON DELETE %1").arg(onDelete));
+            }
+            if (onUpdate != "NO ACTION") {
+                fkParts.append(QString("ON UPDATE %1").arg(onUpdate));
+            }
+            constraints.append(fkParts.join(" "));
+        }
+
         QString colDef = QString("    %1 %2").arg(name).arg(fullType);
         if (!defaultValue.isEmpty()) colDef.append(" ").append(defaultValue);
         if (!constraints.isEmpty()) colDef.append(" ").append(constraints.join(" "));
+
         colDefs.append(colDef);
     }
 
@@ -947,6 +948,7 @@ QString CreateTableDialog::buildSql() const
 void CreateTableDialog::loadTableSchema(const QString &tableName, const QString &createTableText)
 {
     if (tableName.isEmpty() || createTableText.trimmed().isEmpty()) return;
+
     setWindowTitle("可视化建表 / 编辑表");
     m_tableNameEdit->setText(tableName);
     m_tableNameEdit->setEnabled(false);
@@ -962,12 +964,14 @@ void CreateTableDialog::loadTableSchema(const QString &tableName, const QString 
     if (start >= 0 && end > start) {
         body = createTableText.mid(start + 1, end - start - 1);
     }
+
     const QStringList lines = body.split('\n', Qt::SkipEmptyParts);
 
     for (const QString &rawLine : lines) {
         QString line = rawLine.trimmed();
         if (line.endsWith(',')) line.chop(1);
         if (line.isEmpty()) continue;
+
         if (line.startsWith("PRIMARY KEY", Qt::CaseInsensitive)
             || line.startsWith("UNIQUE", Qt::CaseInsensitive)
             || line.startsWith("CONSTRAINT", Qt::CaseInsensitive)
@@ -977,6 +981,7 @@ void CreateTableDialog::loadTableSchema(const QString &tableName, const QString 
 
         ColumnConfig cfg = parseColumnDefinition(line);
         if (cfg.name.isEmpty()) continue;
+
         m_originalColumns.append(cfg);
         onAddColumnWithConfig(cfg);
     }
@@ -990,6 +995,7 @@ QString CreateTableDialog::columnDefinitionText(const ColumnConfig &cfg) const
     }
 
     QStringList constraints;
+
     if (!cfg.allowNull) {
         constraints.append("NOT NULL");
     }
@@ -1017,6 +1023,7 @@ QString CreateTableDialog::columnDefinitionText(const ColumnConfig &cfg) const
     if (!constraints.isEmpty()) {
         colDef.append(" ").append(constraints.join(" "));
     }
+
     return colDef;
 }
 
@@ -1073,12 +1080,36 @@ ColumnConfig CreateTableDialog::rowColumnConfig(int row) const
         cfg.checkConstraint = commItem->text().trimmed();
     }
 
+    auto *refTableCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 9));
+    auto *refColumnCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 10));
+    auto *onDeleteCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 11));
+    auto *onUpdateCombo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, 12));
+
+    if (refTableCombo) {
+        cfg.referencedTable = refTableCombo->currentText().trimmed();
+    }
+    if (refColumnCombo) {
+        QString refColumn = refColumnCombo->currentText().trimmed();
+        if (!refColumn.isEmpty()) {
+            cfg.referencedColumns = { refColumn };
+        }
+    }
+    if (onDeleteCombo) {
+        QString deleteAction = onDeleteCombo->currentText().trimmed();
+        tabledef::tryParseForeignKeyAction(deleteAction, &cfg.onDeleteAction);
+    }
+    if (onUpdateCombo) {
+        QString updateAction = onUpdateCombo->currentText().trimmed();
+        tabledef::tryParseForeignKeyAction(updateAction, &cfg.onUpdateAction);
+    }
+
     return cfg;
 }
 
 QString CreateTableDialog::buildAlterSql() const
 {
     if (m_sourceTableName.isEmpty()) return QString();
+
     QStringList statements;
     QMap<QString, ColumnConfig> originalMap;
     for (const ColumnConfig &cfg : std::as_const(m_originalColumns)) {
@@ -1089,6 +1120,7 @@ QString CreateTableDialog::buildAlterSql() const
     for (int row = 0; row < m_fieldTable->rowCount(); ++row) {
         ColumnConfig current = rowColumnConfig(row);
         if (current.name.isEmpty()) continue;
+
         currentNames.insert(current.name);
 
         if (!originalMap.contains(current.name)) {
@@ -1130,6 +1162,7 @@ ColumnConfig CreateTableDialog::parseColumnDefinition(const QString &text) const
 
     cfg.name = match.captured(1).remove('`').remove('"');
     cfg.type = match.captured(2).toUpper();
+
     QString length = match.captured(3);
     if (!length.isEmpty()) {
         length.remove('(').remove(')');
@@ -1138,6 +1171,7 @@ ColumnConfig CreateTableDialog::parseColumnDefinition(const QString &text) const
 
     QString rest = match.captured(4).trimmed();
     QString lower = rest.toLower();
+
     if (lower.contains("not null")) cfg.allowNull = false;
     if (lower.contains("primary key")) cfg.primaryKey = true;
     if (lower.contains("unique")) cfg.unique = true;
@@ -1159,6 +1193,32 @@ ColumnConfig CreateTableDialog::parseColumnDefinition(const QString &text) const
     auto checkMatch = checkRegex.match(rest);
     if (checkMatch.hasMatch()) {
         cfg.checkConstraint = checkMatch.captured(1).trimmed();
+    }
+
+    static const QRegularExpression fkRegex(R"((?i)REFERENCES\s+([^\s(]+)\s*\(([^)]+)\))");
+    auto fkMatch = fkRegex.match(rest);
+    if (fkMatch.hasMatch()) {
+        cfg.referencedTable = fkMatch.captured(1).trimmed();
+        QString refColumns = fkMatch.captured(2).trimmed();
+        if (!refColumns.isEmpty()) {
+            cfg.referencedColumns = { refColumns };
+        }
+    }
+
+    static const QRegularExpression onDeleteRegex(R"((?i)ON\s+DELETE\s+(NO\s+ACTION|RESTRICT|CASCADE|SET\s+NULL|SET\s+DEFAULT))");
+    auto onDeleteMatch = onDeleteRegex.match(rest);
+    if (onDeleteMatch.hasMatch()) {
+        QString deleteAction = onDeleteMatch.captured(1).trimmed().toUpper();
+        deleteAction = deleteAction.replace(" ", "_");
+        tabledef::tryParseForeignKeyAction(deleteAction, &cfg.onDeleteAction);
+    }
+
+    static const QRegularExpression onUpdateRegex(R"((?i)ON\s+UPDATE\s+(NO\s+ACTION|RESTRICT|CASCADE|SET\s+NULL|SET\s+DEFAULT))");
+    auto onUpdateMatch = onUpdateRegex.match(rest);
+    if (onUpdateMatch.hasMatch()) {
+        QString updateAction = onUpdateMatch.captured(1).trimmed().toUpper();
+        updateAction = updateAction.replace(" ", "_");
+        tabledef::tryParseForeignKeyAction(updateAction, &cfg.onUpdateAction);
     }
 
     return cfg;
@@ -1186,4 +1246,67 @@ void CreateTableDialog::onExecuteCreate()
     }
 
     accept();
+}
+
+void CreateTableDialog::populateReferenceTables(QComboBox *combo)
+{
+    if (!combo) return;
+    combo->clear();
+    combo->addItem("");
+
+    QDir dbDir(QStringLiteral("database"));
+    if (!dbDir.exists()) {
+        dbDir = QDir::current();
+    }
+    QStringList filters;
+    filters << QStringLiteral("*.tab");
+    QFileInfoList files = dbDir.entryInfoList(filters, QDir::Files);
+    for (const QFileInfo &fi : files) {
+        QString tableName = fi.baseName();
+        if (!tableName.isEmpty()) {
+            combo->addItem(tableName);
+        }
+    }
+}
+
+void CreateTableDialog::populateReferenceColumns(QComboBox *refTableCombo, QComboBox *refColumnCombo)
+{
+    if (!refTableCombo || !refColumnCombo) return;
+
+    refColumnCombo->clear();
+    QString tableName = refTableCombo->currentText().trimmed();
+    if (tableName.isEmpty()) return;
+
+    QString metaPath = QStringLiteral("database/%1.meta").arg(tableName);
+    QFile metaFile(metaPath);
+    if (!metaFile.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+
+    QByteArray data = metaFile.readAll();
+    metaFile.close();
+
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (!doc.isObject()) return;
+    QJsonObject obj = doc.object();
+    QJsonArray columns = obj.value(QStringLiteral("columns")).toArray();
+    QJsonArray constraints = obj.value(QStringLiteral("constraints")).toArray();
+
+    QSet<QString> keyColumns;
+    for (const QJsonValue &cv : constraints) {
+        QJsonObject cobj = cv.toObject();
+        QString cType = cobj.value(QStringLiteral("type")).toString();
+        if (cType == QStringLiteral("PRIMARY_KEY") || cType == QStringLiteral("UNIQUE")) {
+            QJsonArray cols = cobj.value(QStringLiteral("columns")).toArray();
+            for (const QJsonValue &col : cols) {
+                keyColumns.insert(col.toString());
+            }
+        }
+    }
+
+    if (keyColumns.isEmpty() && !columns.isEmpty()) {
+        keyColumns.insert(columns.first().toObject().value(QStringLiteral("name")).toString());
+    }
+
+    for (const QString &colName : keyColumns) {
+        refColumnCombo->addItem(colName);
+    }
 }

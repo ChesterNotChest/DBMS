@@ -44,10 +44,14 @@ private slots:
 private:
     void setupUI();
     void loadStructure();
+    void loadTablesForDatabase(QTreeWidgetItem *dbItem, const QString &dbName);
     QStringList firstColumnValuesFromSql(const QString &sql) const;
     void addColumnsToTableItem(QTreeWidgetItem *tItem,
                                const QString &dbName,
                                const QString &tableName);
+    void addConstraintsToTableItem(QTreeWidgetItem *tItem,
+                                   const QString &dbName,
+                                   const QString &tableName);
     void updateStatusLabel();
 
     QTreeWidget *m_treeWidget = nullptr;

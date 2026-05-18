@@ -13,6 +13,13 @@
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QRegularExpression>
+#include <QDir>
+#include <QFileInfo>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSet>
 #include "add_column_dialog.h"
 
 class CreateTableDialog : public QDialog
@@ -58,6 +65,11 @@ private:
     QString m_sourceTableName;
     bool m_isEditMode = false;
     QList<ColumnConfig> m_originalColumns;
+
+    void setRowForeignKeyData(int row, const ColumnConfig &cfg);
+    ColumnConfig getRowForeignKeyData(int row) const;
+    void populateReferenceTables(QComboBox *combo);
+    void populateReferenceColumns(QComboBox *refTableCombo, QComboBox *refColumnCombo);
 };
 
 #endif // CREATE_TABLE_DIALOG_H

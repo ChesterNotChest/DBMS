@@ -43,9 +43,9 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
 
     // 结果TabWidget
     m_tabWidget = new QTabWidget(this);
-    m_tabWidget->setStyleSheet("QTabWidget::pane { border:1px solid #CCC; border-top:none; } "
-                               "QTabBar::tab { background:#F0F0F0; padding:6px 16px; border:1px solid #CCC; border-bottom:none; margin-right:2px; font-size:12px; color:#666; } "
-                               "QTabBar::tab:selected { background:#E3F2FD; color:#1565C0; font-weight:bold; border-bottom:2px solid #E3F2FD; }");
+    m_tabWidget->setStyleSheet("QTabWidget::pane { border:1px solid #E0E0E0; border-top:none; } "
+                               "QTabBar::tab { background:#F5F5F5; padding:6px 16px; border:1px solid #E0E0E0; border-bottom:none; margin-right:2px; font-size:12px; color:#424242; } "
+                               "QTabBar::tab:selected { background:#FFFFFF; color:#212121; font-weight:bold; border-bottom:2px solid #FFFFFF; }");
     rootLayout->addWidget(m_tabWidget, 1);
 
     // 结果页面 + 表格
@@ -56,40 +56,41 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
 
     m_table = new QTableWidget(resultWidget);
     m_table->setStyleSheet(
-        // 基础背景：浅蓝色
-        "QTableWidget { background:#E3F2FD; border:none; gridline-color:#BBDEFB; }"
-        // 表头：浅蓝背景 + 加粗
-        "QHeaderView::section { background:#BBDEFB; font-weight:bold; color:#0D47A1; "
-        "padding:6px 10px; border:none; border-bottom:2px solid #90CAF9; "
-        "border-right:1px solid #BBDEFB; font-family:'Consolas','Courier New'; font-size:13px; "
+        // 基础背景：纯白
+        "QTableWidget { background:#FFFFFF; border:1px solid #E0E0E0; gridline-color:#E0E0E0; }"
+        // 表头：浅灰背景 + 深灰文字 + 加粗
+        "QHeaderView::section { background:#E0E0E0; font-weight:bold; color:#424242; "
+        "padding:8px 12px; border:none; border-bottom:2px solid #BDBDBD; "
+        "border-right:1px solid #EEEEEE; font-family:'Consolas','Courier New'; font-size:13px; "
         "min-width:50px; }"
-        "QHeaderView::section:first { color:#1565C0; font-weight:normal; font-size:11px; "
-        "border-right:1px solid #90CAF9; border-bottom:2px solid #90CAF9; "
+        "QHeaderView::section:first { color:#616161; font-weight:normal; font-size:11px; "
+        "border-right:1px solid #BDBDBD; border-bottom:2px solid #BDBDBD; "
         "min-width:40px; max-width:50px; }"
-        // 内容行：交替背景色
-        "QTableWidget::item { padding:6px 10px; border:none; color:#1A237E; "
+        // 内容行：白底黑字
+        "QTableWidget::item { padding:8px 12px; border:none; color:#212121; "
         "font-family:'Consolas','Courier New'; font-size:13px; "
-        "border-bottom:1px solid #E3F2FD; border-right:1px solid #E3F2FD; "
+        "border-bottom:1px solid #E0E0E0; border-right:1px solid #E0E0E0; "
         "text-align:center; }"
-        // 选中高亮：蓝色
-        "QTableWidget::item:selected { background:#90CAF9; color:#0D47A1; font-weight:600; }"
-        // 悬停：浅蓝
-        "QTableWidget::item:hover { background:#BBDEFB; }"
-        // 交替行：浅绿蓝/浅蓝
-"QTableWidget::item:alternate { background:#E8F5E9; }"
-        // 编辑器样式 - 确保编辑器能正常工作！
-"QTableWidget QLineEdit { background:#FFFFFF; color:#0D47A1; border:2px solid #2196F3; font-weight:bold; font-size:15px; padding:6px; selection-background-color:#90CAF9; min-height:30px; }"
-        // 角落按钮
-        "QTableCornerButton::section { background:#BBDEFB; border:none; }"
-        // 滚动条：细窄
-        "QScrollBar:vertical { background:#E3F2FD; width:10px; margin:0px; }"
-        "QScrollBar::handle:vertical { background:#90CAF9; border-radius:5px; min-height:30px; }"
-        "QScrollBar::handle:vertical:hover { background:#64B5F6; }"
+        // 选中高亮：深灰
+        "QTableWidget::item:selected { background:#757575; color:#FFFFFF; font-weight:600; }"
+        // 悬停：浅灰
+        "QTableWidget::item:hover { background:#F5F5F5; }"
+        // 交替行：浅灰
+        "QTableWidget::item:alternate { background:#FAFAFA; }"
+        // 编辑器样式 - 确保编辑时能清楚看到内容
+        "QTableWidget QLineEdit { background:#FFFFFF; color:#1A1A1A; border:2px solid #424242; font-weight:bold; font-size:14px; padding:4px 8px; selection-background-color:#90CAF9; min-height:26px; }"
+        "QTableWidget QWidget { background:#FFFFFF; }"
+        // 角落按钮：浅灰背景
+        "QTableCornerButton::section { background:#E0E0E0; border:none; }"
+        // 滚动条：细窄灰色
+        "QScrollBar:vertical { background:#F5F5F5; width:10px; margin:0px; }"
+        "QScrollBar::handle:vertical { background:#BDBDBD; border-radius:5px; min-height:30px; }"
+        "QScrollBar::handle:vertical:hover { background:#9E9E9E; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0px; }"
         "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }"
-        "QScrollBar:horizontal { background:#E3F2FD; height:10px; margin:0px; }"
-        "QScrollBar::handle:horizontal { background:#90CAF9; border-radius:5px; min-width:30px; }"
-        "QScrollBar::handle:horizontal:hover { background:#64B5F6; }"
+        "QScrollBar:horizontal { background:#F5F5F6; height:10px; margin:0px; }"
+        "QScrollBar::handle:horizontal { background:#BDBDBD; border-radius:5px; min-width:30px; }"
+        "QScrollBar::handle:horizontal:hover { background:#9E9E9E; }"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0px; }"
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background:transparent; }"
     );
@@ -269,6 +270,11 @@ void ResultPanel::onDeleteRow() {
     std::sort(rowsToDelete.begin(), rowsToDelete.end(), std::greater<int>());
 
     int realDeleted = 0;
+    QSet<int> updatedNewRowIds;
+    QSet<int> updatedDirtyRowIds;
+    QList<int> ascendingDeletedRows = rowsToDelete;
+    std::sort(ascendingDeletedRows.begin(), ascendingDeletedRows.end());
+
     for (int r : rowsToDelete) {
         // 从原始数据中获取PK（删除前获取）
         QString pk = m_currentRows.value(r, QStringList()).value(0, "");
@@ -295,10 +301,31 @@ void ResultPanel::onDeleteRow() {
         m_table->removeRow(r);
     }
 
+    auto adjustIndexSet = [&](const QSet<int> &oldSet) {
+        QSet<int> adjusted;
+        for (int id : oldSet) {
+            if (rowsToDelete.contains(id)) {
+                continue;
+            }
+            int shift = 0;
+            for (int deleted : ascendingDeletedRows) {
+                if (deleted < id) {
+                    shift++;
+                }
+            }
+            adjusted.insert(id - shift);
+        }
+        return adjusted;
+    };
+
+    updatedNewRowIds = adjustIndexSet(m_newRowIds);
+    updatedDirtyRowIds = adjustIndexSet(m_dirtyRowIds);
+
     // 重新建立映射：从表格读取当前数据
     m_originalRows.clear();
     m_currentRows.clear();
-    m_newRowIds.clear();
+    m_newRowIds = updatedNewRowIds;
+    m_dirtyRowIds = updatedDirtyRowIds;
     
     for (int r = 0; r < m_table->rowCount(); ++r) {
         QStringList rowData;

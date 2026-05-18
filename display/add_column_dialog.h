@@ -10,6 +10,14 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QDir>
+#include <QFileInfo>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSet>
+#include "../utils/table_manu/table_manu.h"
 
 struct ColumnConfig {
     QString name;
@@ -18,6 +26,10 @@ struct ColumnConfig {
     bool allowNull = true;
     bool primaryKey = false;
     bool unique = false;
+    QString referencedTable;
+    QStringList referencedColumns;
+    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction;
+    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction;
     QString checkConstraint;
     QString defaultValue;
 };
@@ -41,6 +53,13 @@ private:
     QCheckBox *m_nullCheck = nullptr;
     QCheckBox *m_pkCheck = nullptr;
     QCheckBox *m_uniqueCheck = nullptr;
+    QComboBox *m_referenceTableCombo = nullptr;
+    QComboBox *m_referenceColumnCombo = nullptr;
+    QComboBox *m_deleteActionCombo = nullptr;
+    QComboBox *m_updateActionCombo = nullptr;
+
+    void populateReferenceTables();
+    void onReferenceTableChanged(int index);
     QCheckBox *m_checkCheck = nullptr;
     QLineEdit *m_checkEdit = nullptr;
     QLineEdit *m_defaultEdit = nullptr;
