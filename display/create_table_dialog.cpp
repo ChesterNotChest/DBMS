@@ -445,7 +445,7 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     m_fieldTable->setColumnWidth(0, 110);
     m_fieldTable->setColumnWidth(1, 95);
     m_fieldTable->setColumnWidth(2, 70);
-    m_fieldTable->setColumnWidth(3, 50);
+    m_fieldTable->setColumnWidth(3, 65);
     m_fieldTable->setColumnWidth(4, 50);
     m_fieldTable->setColumnWidth(5, 50);
     m_fieldTable->setColumnWidth(6, 50);
@@ -549,15 +549,15 @@ void CreateTableDialog::onAddColumn()
     auto *chkNotNull = new QCheckBox();
     chkNotNull->setChecked(false);
     chkNotNull->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *notNullWidget = new QWidget();
     auto *notNullLayout = new QHBoxLayout(notNullWidget);
-    notNullLayout->setContentsMargins(2, 2, 2, 2);
+    notNullLayout->setContentsMargins(1, 1, 1, 1);
     notNullLayout->setSpacing(0);
     notNullLayout->addWidget(chkNotNull, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 3, notNullWidget);
@@ -565,15 +565,15 @@ void CreateTableDialog::onAddColumn()
     auto *chkPk = new QCheckBox();
     chkPk->setChecked(false);
     chkPk->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *pkWidget = new QWidget();
     auto *pkLayout = new QHBoxLayout(pkWidget);
-    pkLayout->setContentsMargins(2, 2, 2, 2);
+    pkLayout->setContentsMargins(1, 1, 1, 1);
     pkLayout->setSpacing(0);
     pkLayout->addWidget(chkPk, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 4, pkWidget);
@@ -581,15 +581,15 @@ void CreateTableDialog::onAddColumn()
     auto *chkUnique = new QCheckBox();
     chkUnique->setChecked(false);
     chkUnique->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *uniqueWidget = new QWidget();
     auto *uniqueLayout = new QHBoxLayout(uniqueWidget);
-    uniqueLayout->setContentsMargins(2, 2, 2, 2);
+    uniqueLayout->setContentsMargins(1, 1, 1, 1);
     uniqueLayout->setSpacing(0);
     uniqueLayout->addWidget(chkUnique, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 5, uniqueWidget);
@@ -597,15 +597,15 @@ void CreateTableDialog::onAddColumn()
     auto *chkAutoInc = new QCheckBox();
     chkAutoInc->setChecked(false);
     chkAutoInc->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *autoIncWidget = new QWidget();
     auto *autoIncLayout = new QHBoxLayout(autoIncWidget);
-    autoIncLayout->setContentsMargins(2, 2, 2, 2);
+    autoIncLayout->setContentsMargins(1, 1, 1, 1);
     autoIncLayout->setSpacing(0);
     autoIncLayout->addWidget(chkAutoInc, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 6, autoIncWidget);
@@ -689,7 +689,7 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     );
     auto *notNullWidget = new QWidget();
     auto *notNullLayout = new QHBoxLayout(notNullWidget);
-    notNullLayout->setContentsMargins(2, 2, 2, 2);
+    notNullLayout->setContentsMargins(1, 1, 1, 1);
     notNullLayout->setSpacing(0);
     notNullLayout->addWidget(chkNotNull, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 3, notNullWidget);
@@ -697,15 +697,15 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     auto *chkPk = new QCheckBox();
     chkPk->setChecked(cfg.primaryKey);
     chkPk->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *pkWidget = new QWidget();
     auto *pkLayout = new QHBoxLayout(pkWidget);
-    pkLayout->setContentsMargins(2, 2, 2, 2);
+    pkLayout->setContentsMargins(1, 1, 1, 1);
     pkLayout->setSpacing(0);
     pkLayout->addWidget(chkPk, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 4, pkWidget);
@@ -713,15 +713,15 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     auto *chkUnique = new QCheckBox();
     chkUnique->setChecked(cfg.unique);
     chkUnique->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *uniqueWidget = new QWidget();
     auto *uniqueLayout = new QHBoxLayout(uniqueWidget);
-    uniqueLayout->setContentsMargins(2, 2, 2, 2);
+    uniqueLayout->setContentsMargins(1, 1, 1, 1);
     uniqueLayout->setSpacing(0);
     uniqueLayout->addWidget(chkUnique, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 5, uniqueWidget);
@@ -729,15 +729,15 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     auto *chkAutoInc = new QCheckBox();
     chkAutoInc->setChecked(false);
     chkAutoInc->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
-        "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
+        "QCheckBox::indicator:checked { border: 1px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
     auto *autoIncWidget = new QWidget();
     auto *autoIncLayout = new QHBoxLayout(autoIncWidget);
-    autoIncLayout->setContentsMargins(2, 2, 2, 2);
+    autoIncLayout->setContentsMargins(1, 1, 1, 1);
     autoIncLayout->setSpacing(0);
     autoIncLayout->addWidget(chkAutoInc, 0, Qt::AlignCenter);
     m_fieldTable->setCellWidget(row, 6, autoIncWidget);
