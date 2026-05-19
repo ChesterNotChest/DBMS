@@ -52,6 +52,7 @@ private:
 
     void loadTableSchema(const QString &tableName, const QString &createTableText);
     ColumnConfig parseColumnDefinition(const QString &text) const;
+    ColumnConfig parseForeignKeyConstraint(const QString &text) const;
     ColumnConfig rowColumnConfig(int row) const;
     void onAddColumnWithConfig(const ColumnConfig &cfg);
     QString columnDefinitionText(const ColumnConfig &cfg) const;

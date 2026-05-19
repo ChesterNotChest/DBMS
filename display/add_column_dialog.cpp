@@ -31,7 +31,7 @@ AddColumnDialog::AddColumnDialog(QWidget *parent)
 
 
 
-    setFixedSize(420, 520);
+    setFixedSize(580, 720);
 
 
 
@@ -60,617 +60,24 @@ AddColumnDialog::AddColumnDialog(QWidget *parent)
 
 
 void AddColumnDialog::buildStyle()
-
-
-
 {
-
-
-
+    // 简化全局样式，控件样式在 buildLayout() 中单独设置
     setStyleSheet(R"(
-
-
-
         QDialog {
-
-
-
-            background-color: #F0F1F3;
-
-
-
+            background-color: #F8FAFC;
         }
-
-
-
-        QLabel {
-
-
-
-            font-size: 13px;
-
-
-
-            font-weight: 500;
-
-
-
-            color: #4A5568;
-
-
-
-            padding: 0;
-
-
-
-            min-width: 80px;
-
-
-
-        }
-
-
-
-        QLineEdit {
-
-
-
-            border: 1px solid #C8CCD1;
-
-
-
-            border-radius: 3px;
-
-
-
-            padding: 0px 8px;
-
-
-
-            background-color: white;
-
-
-
-            font-size: 13px;
-
-
-
-            color: #333;
-
-
-
-            min-height: 34px;
-
-
-
-            max-height: 34px;
-
-
-
-        }
-
-
-
-        QLineEdit:focus {
-
-
-
-            border-color: #9099A0;
-
-
-
-            outline: none;
-
-
-
-        }
-
-
-
-        QLineEdit::placeholder {
-
-
-
-            color: #A0A5AA;
-
-
-
-        }
-
-
-
-        QComboBox {
-
-
-
-            border: 1px solid #C8CCD1;
-
-
-
-            border-radius: 3px;
-
-
-
-            padding: 0px 8px;
-
-
-
-            background-color: white;
-
-
-
-            font-size: 13px;
-
-
-
-            color: #333;
-
-
-
-            min-height: 34px;
-
-
-
-            max-height: 34px;
-
-
-
-        }
-
-
-
-        QComboBox:focus {
-
-
-
-            border-color: #9099A0;
-
-
-
-            outline: none;
-
-
-
-        }
-
-
-
-        QComboBox::drop-down {
-
-
-
-            subcontrol-origin: padding;
-
-
-
-            subcontrol-position: center right;
-
-
-
-            width: 22px;
-
-
-
-            border-left: none;
-
-
-
-        }
-
-
-
-        QComboBox::down-arrow {
-
-
-
-            width: 10px;
-
-
-
-            height: 6px;
-
-
-
-        }
-
-
-
         QComboBox QAbstractItemView {
-
-
-
             background-color: white;
-
-
-
-            border: 1px solid #C8CCD1;
-
-
-
+            border: 1px solid #DCE0E5;
             font-size: 13px;
-
-
-
             color: #333;
-
-
-
-            selection-background-color: #E8EAED;
-
-
-
-            selection-color: #333;
-
-
-
+            selection-background-color: #E8F4FD;
+            selection-color: #409EFF;
         }
-
-
-
         QComboBox QAbstractItemView::item {
-
-
-
             padding: 6px 12px;
-
-
-
         }
-
-
-
-        QComboBox QAbstractItemView::item:hover {
-
-
-
-            background-color: #E8EAED;
-
-
-
-        }
-
-
-
-        QComboBox QAbstractItemView::item:selected {
-
-
-
-            background-color: #E8EAED;
-
-
-
-        }
-
-
-
-        QSpinBox {
-
-
-
-            border: 1px solid #C8CCD1;
-
-
-
-            border-radius: 3px;
-
-
-
-            padding: 0px 8px;
-
-
-
-            background-color: white;
-
-
-
-            font-size: 13px;
-
-
-
-            color: #333;
-
-
-
-            min-height: 34px;
-
-
-
-            max-height: 34px;
-
-
-
-        }
-
-
-
-        QSpinBox:focus {
-
-
-
-            border-color: #9099A0;
-
-
-
-            outline: none;
-
-
-
-        }
-
-
-
-        QSpinBox::up-button, QSpinBox::down-button {
-
-
-
-            width: 18px;
-
-
-
-            border: none;
-
-
-
-            background-color: #F5F6F7;
-
-
-
-        }
-
-
-
-        QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-
-
-
-            background-color: #E8EAED;
-
-
-
-        }
-
-
-
-        QSpinBox::up-arrow {
-
-
-
-            image: none;
-
-
-
-            border-left: 3px solid transparent;
-
-
-
-            border-right: 3px solid transparent;
-
-
-
-            border-bottom: 4px solid #888;
-
-
-
-        }
-
-
-
-        QSpinBox::down-arrow {
-
-
-
-            image: none;
-
-
-
-            border-left: 3px solid transparent;
-
-
-
-            border-right: 3px solid transparent;
-
-
-
-            border-top: 4px solid #888;
-
-
-
-        }
-
-
-
-        QCheckBox {
-
-
-
-            color: #4A5568;
-
-
-
-            font-size: 13px;
-
-
-
-            font-weight: 500;
-
-
-
-            spacing: 8px;
-
-
-
-        }
-
-
-
-        QCheckBox::indicator {
-
-
-
-            width: 16px;
-
-
-
-            height: 16px;
-
-
-
-            border: 1.5px solid #B0B5BA;
-
-
-
-            border-radius: 2px;
-
-
-
-            background-color: white;
-
-
-
-        }
-
-
-
-        QCheckBox::indicator:hover {
-
-
-
-            border-color: #9099A0;
-
-
-
-        }
-
-
-
-        QCheckBox::indicator:checked {
-
-
-
-            background-color: white;
-
-
-
-            border-color: #607080;
-
-
-
-            border-width: 1.8px;
-
-
-
-        }
-
-
-
-        QPushButton {
-
-
-
-            background-color: #F0F1F3;
-
-
-
-            color: #555;
-
-
-
-            border: 1px solid #C8CCD1;
-
-
-
-            border-radius: 4px;
-
-
-
-            padding: 8px 20px;
-
-
-
-            font-size: 13px;
-
-
-
-            font-weight: 500;
-
-
-
-            min-height: 32px;
-
-
-
-        }
-
-
-
-        QPushButton:hover {
-
-
-
-            background-color: #E5E7EA;
-
-
-
-            border-color: #B0B5BA;
-
-
-
-        }
-
-
-
-        QPushButton:pressed {
-
-
-
-            background-color: #DDDDE0;
-
-
-
-        }
-
-
-
-        QPushButton.primary {
-
-
-
-            background-color: #607080;
-
-
-
-            color: white;
-
-
-
-            border-color: #607080;
-
-
-
-        }
-
-
-
-        QPushButton.primary:hover {
-
-
-
-            background-color: #708090;
-
-
-
-            border-color: #708090;
-
-
-
-        }
-
-
-
     )");
-
-
-
 }
 
 
@@ -681,222 +88,509 @@ void AddColumnDialog::buildStyle()
 
 void AddColumnDialog::buildLayout()
 {
+    // ========== 整体布局 ==========
     auto *mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(16);
-    mainLayout->setContentsMargins(20, 20, 20, 20);
+    mainLayout->setSpacing(24);
+    mainLayout->setContentsMargins(28, 28, 28, 28);
 
-    // 标题行
-    auto *titleLabel = new QLabel("添加列");
-    titleLabel->setStyleSheet("font-size: 16px; font-weight: 600; color: #333;");
+    // ========== 标题区域 ==========
+    auto *titleLabel = new QLabel("新增列");
+    titleLabel->setStyleSheet(R"(
+        font-size: 20px;
+        font-weight: 600;
+        color: #2C3E50;
+    )");
     mainLayout->addWidget(titleLabel);
 
-    // 分隔线
-    auto *line = new QFrame();
-    line->setFrameShape(QFrame::HLine);
-    line->setStyleSheet("color: #E0E0E0;");
-    mainLayout->addWidget(line);
+    // 标题分隔线
+    auto *titleLine = new QFrame();
+    titleLine->setFrameShape(QFrame::HLine);
+    titleLine->setStyleSheet("background-color: #E8ECF0;");
+    mainLayout->addWidget(titleLine);
 
-    // 表单区域 - 使用简单的垂直布局
+    // ========== 表单区域 ==========
     auto *formLayout = new QVBoxLayout;
-    formLayout->setSpacing(14);
+    formLayout->setSpacing(20);
 
-    // === 列名 ===
-    auto *nameLayout = new QHBoxLayout;
-    nameLayout->setSpacing(10);
-    auto *nameLabel = new QLabel("列名：");
+    // --------------------------
+    // 模块1：基础属性
+    // --------------------------
+    auto *basicGroup = new QGroupBox("基础属性");
+    basicGroup->setStyleSheet(R"(
+        QGroupBox {
+            font-size: 14px;
+            font-weight: 600;
+            color: #34495E;
+            border: 1px solid #E8ECF0;
+            border-radius: 6px;
+            margin-top: 6px;
+            padding-top: 12px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+            background-color: #F8FAFC;
+        }
+    )");
+
+    auto *basicLayout = new QVBoxLayout(basicGroup);
+    basicLayout->setSpacing(14);
+    basicLayout->setContentsMargins(16, 8, 16, 16);
+
+    // 列名
+    auto *nameRow = new QHBoxLayout;
+    nameRow->setSpacing(12);
+    auto *nameLabel = new QLabel("列名");
     nameLabel->setFixedWidth(70);
     nameLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    nameLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
     m_nameEdit = new QLineEdit();
     m_nameEdit->setPlaceholderText("请输入列名");
-    m_nameEdit->setFixedHeight(32);
-    nameLayout->addWidget(nameLabel);
-    nameLayout->addWidget(m_nameEdit);
-    formLayout->addLayout(nameLayout);
+    m_nameEdit->setFixedHeight(36);
+    m_nameEdit->setStyleSheet(R"(
+        QLineEdit {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: white;
+            color: #333333;
+        }
+        QLineEdit:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+    )");
+    nameRow->addWidget(nameLabel);
+    nameRow->addWidget(m_nameEdit);
+    basicLayout->addLayout(nameRow);
 
-    // === 数据类型 ===
-    auto *typeLayout = new QHBoxLayout;
-    typeLayout->setSpacing(10);
-    auto *typeLabel = new QLabel("数据类型：");
+    // 数据类型 + 长度
+    auto *typeLenRow = new QHBoxLayout;
+    typeLenRow->setSpacing(12);
+
+    auto *typeLabel = new QLabel("数据类型");
     typeLabel->setFixedWidth(70);
     typeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    typeLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
+
     m_typeCombo = new QComboBox();
-    m_typeCombo->addItems({
-        "INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
-        "NUMBER", "VARCHAR", "CHAR", "TEXT", "DATE",
-        "DATETIME", "TIME", "BLOB", "BOOLEAN"
-    });
+    m_typeCombo->addItems({"INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
+                           "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME", "TIME", "BOOLEAN"});
     m_typeCombo->setCurrentText("VARCHAR");
-    m_typeCombo->setFixedHeight(32);
-    typeLayout->addWidget(typeLabel);
-    typeLayout->addWidget(m_typeCombo);
-    formLayout->addLayout(typeLayout);
+    m_typeCombo->setFixedHeight(36);
+    m_typeCombo->setStyleSheet(R"(
+        QComboBox {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: white;
+            min-width: 140px;
+            color: #333333;
+        }
+        QComboBox:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+        QComboBox::drop-down {
+            width: 24px;
+            border-left: none;
+        }
+    )");
 
-    // === 长度/精度 ===
-    auto *lenLayout = new QHBoxLayout;
-    lenLayout->setSpacing(10);
-    auto *lenLabel = new QLabel("长度：");
-    lenLabel->setFixedWidth(70);
+    auto *lenLabel = new QLabel("长度");
     lenLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_lengthSpin = new QSpinBox();
-    m_lengthSpin->setRange(0, 99999);
-    m_lengthSpin->setValue(255);
-    m_lengthSpin->setFixedSize(100, 32);
-    lenLayout->addWidget(lenLabel);
-    lenLayout->addWidget(m_lengthSpin);
-    lenLayout->addStretch();
-    formLayout->addLayout(lenLayout);
+    lenLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
 
-    // === 约束选项 ===
-    auto *constraintLayout = new QHBoxLayout;
-    constraintLayout->setSpacing(20);
-    constraintLayout->setContentsMargins(70, 0, 0, 0);
+    m_lengthEdit = new QLineEdit();
+    m_lengthEdit->setText("255");
+    m_lengthEdit->setFixedSize(80, 36);
+    m_lengthEdit->setStyleSheet(R"(
+        QLineEdit {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 8px;
+            font-size: 14px;
+            background-color: white;
+            text-align: center;
+            color: #333333;
+        }
+        QLineEdit:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+    )");
+
+    typeLenRow->addWidget(typeLabel);
+    typeLenRow->addWidget(m_typeCombo);
+    typeLenRow->addWidget(lenLabel);
+    typeLenRow->addWidget(m_lengthEdit);
+    typeLenRow->addStretch();
+    basicLayout->addLayout(typeLenRow);
+
+    formLayout->addWidget(basicGroup);
+
+    // --------------------------
+    // 模块2：约束选项
+    // --------------------------
+    auto *constraintGroup = new QGroupBox("约束选项");
+    constraintGroup->setStyleSheet(R"(
+        QGroupBox {
+            font-size: 14px;
+            font-weight: 600;
+            color: #34495E;
+            border: 1px solid #E8ECF0;
+            border-radius: 6px;
+            margin-top: 6px;
+            padding-top: 12px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+            background-color: #F8FAFC;
+        }
+    )");
+
+    auto *constraintLayout = new QHBoxLayout(constraintGroup);
+    constraintLayout->setSpacing(24);
+    constraintLayout->setContentsMargins(16, 8, 16, 16);
 
     m_nullCheck = new QCheckBox("允许空值");
     m_nullCheck->setChecked(true);
-    constraintLayout->addWidget(m_nullCheck);
+    m_nullCheck->setStyleSheet(R"(
+        QCheckBox {
+            font-size: 14px;
+            color: #4A5568;
+            spacing: 8px;
+        }
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #DCE0E5;
+            border-radius: 2px;
+            background-color: white;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #409EFF;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #409EFF;
+            border-color: #409EFF;
+        }
+    )");
 
     m_pkCheck = new QCheckBox("主键");
-    constraintLayout->addWidget(m_pkCheck);
+    m_pkCheck->setStyleSheet(R"(
+        QCheckBox {
+            font-size: 14px;
+            color: #4A5568;
+            spacing: 8px;
+        }
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #DCE0E5;
+            border-radius: 2px;
+            background-color: white;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #409EFF;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #409EFF;
+            border-color: #409EFF;
+        }
+    )");
 
     m_uniqueCheck = new QCheckBox("唯一");
+    m_uniqueCheck->setStyleSheet(R"(
+        QCheckBox {
+            font-size: 14px;
+            color: #4A5568;
+            spacing: 8px;
+        }
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #DCE0E5;
+            border-radius: 2px;
+            background-color: white;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #409EFF;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #409EFF;
+            border-color: #409EFF;
+        }
+    )");
+
+    constraintLayout->addWidget(m_nullCheck);
+    constraintLayout->addWidget(m_pkCheck);
     constraintLayout->addWidget(m_uniqueCheck);
-
     constraintLayout->addStretch();
-    formLayout->addLayout(constraintLayout);
 
-    // === 外键配置分隔线 ===
-    auto *fkLine = new QFrame();
-    fkLine->setFrameShape(QFrame::HLine);
-    fkLine->setStyleSheet("color: #F0F0F0;");
-    formLayout->addWidget(fkLine);
+    formLayout->addWidget(constraintGroup);
 
-    // === 引用表 ===
-    auto *refTableLayout = new QHBoxLayout;
-    refTableLayout->setSpacing(10);
-    auto *refTableLabel = new QLabel("引用表：");
+    // --------------------------
+    // 模块3：外键配置
+    // --------------------------
+    auto *fkGroup = new QGroupBox("外键配置");
+    fkGroup->setStyleSheet(R"(
+        QGroupBox {
+            font-size: 14px;
+            font-weight: 600;
+            color: #34495E;
+            border: 1px solid #E8ECF0;
+            border-radius: 6px;
+            margin-top: 6px;
+            padding-top: 12px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+            background-color: #F8FAFC;
+        }
+    )");
+
+    auto *fkLayout = new QVBoxLayout(fkGroup);
+    fkLayout->setSpacing(14);
+    fkLayout->setContentsMargins(16, 8, 16, 16);
+
+    // 引用表
+    auto *refTableRow = new QHBoxLayout;
+    refTableRow->setSpacing(12);
+    auto *refTableLabel = new QLabel("引用表");
     refTableLabel->setFixedWidth(70);
     refTableLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    refTableLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
     m_referenceTableCombo = new QComboBox();
     m_referenceTableCombo->setEditable(true);
     m_referenceTableCombo->setInsertPolicy(QComboBox::NoInsert);
     m_referenceTableCombo->setView(new QListView(this));
     m_referenceTableCombo->setMaxVisibleItems(8);
-    m_referenceTableCombo->setPlaceholderText("选择引用表（可选）");
-    m_referenceTableCombo->setFixedHeight(32);
+    m_referenceTableCombo->setPlaceholderText("选择引用表");
+    m_referenceTableCombo->setFixedHeight(36);
+    m_referenceTableCombo->setStyleSheet(R"(
+        QComboBox {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: white;
+            color: #333333;
+        }
+        QComboBox:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+    )");
     populateReferenceTables();
-    refTableLayout->addWidget(refTableLabel);
-    refTableLayout->addWidget(m_referenceTableCombo);
-    formLayout->addLayout(refTableLayout);
+    refTableRow->addWidget(refTableLabel);
+    refTableRow->addWidget(m_referenceTableCombo);
+    fkLayout->addLayout(refTableRow);
 
-    // === 引用字段 ===
-    auto *refColumnLayout = new QHBoxLayout;
-    refColumnLayout->setSpacing(10);
-    auto *refColumnLabel = new QLabel("引用字段：");
+    // 引用字段
+    auto *refColumnRow = new QHBoxLayout;
+    refColumnRow->setSpacing(12);
+    auto *refColumnLabel = new QLabel("引用字段");
     refColumnLabel->setFixedWidth(70);
     refColumnLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    refColumnLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
     m_referenceColumnCombo = new QComboBox();
     m_referenceColumnCombo->setEditable(true);
     m_referenceColumnCombo->setInsertPolicy(QComboBox::NoInsert);
     m_referenceColumnCombo->setView(new QListView(this));
     m_referenceColumnCombo->setMaxVisibleItems(8);
     m_referenceColumnCombo->setPlaceholderText("选择引用字段");
-    m_referenceColumnCombo->setFixedHeight(32);
-    refColumnLayout->addWidget(refColumnLabel);
-    refColumnLayout->addWidget(m_referenceColumnCombo);
-    formLayout->addLayout(refColumnLayout);
+    m_referenceColumnCombo->setFixedHeight(36);
+    m_referenceColumnCombo->setStyleSheet(R"(
+        QComboBox {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: white;
+            color: #333333;
+        }
+        QComboBox:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+    )");
+    refColumnRow->addWidget(refColumnLabel);
+    refColumnRow->addWidget(m_referenceColumnCombo);
+    fkLayout->addLayout(refColumnRow);
 
-    // === ON DELETE / ON UPDATE ===
-    auto *fkActionLayout = new QHBoxLayout;
-    fkActionLayout->setSpacing(10);
-    fkActionLayout->setContentsMargins(70, 0, 0, 0);
+    formLayout->addWidget(fkGroup);
 
-    auto *deleteLabel = new QLabel("ON DELETE：");
-    m_deleteActionCombo = new QComboBox();
-    m_deleteActionCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
-    m_deleteActionCombo->setCurrentText("NO ACTION");
-    m_deleteActionCombo->setFixedHeight(32);
-    m_deleteActionCombo->setFixedWidth(120);
+    // --------------------------
+    // 模块4：其他配置
+    // --------------------------
+    auto *otherGroup = new QGroupBox("其他配置");
+    otherGroup->setStyleSheet(R"(
+        QGroupBox {
+            font-size: 14px;
+            font-weight: 600;
+            color: #34495E;
+            border: 1px solid #E8ECF0;
+            border-radius: 6px;
+            margin-top: 6px;
+            padding-top: 12px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 12px;
+            padding: 0 8px;
+            background-color: #F8FAFC;
+        }
+    )");
 
-    auto *updateLabel = new QLabel("ON UPDATE：");
-    m_updateActionCombo = new QComboBox();
-    m_updateActionCombo->addItems({"NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"});
-    m_updateActionCombo->setCurrentText("NO ACTION");
-    m_updateActionCombo->setFixedHeight(32);
-    m_updateActionCombo->setFixedWidth(120);
+    auto *otherLayout = new QVBoxLayout(otherGroup);
+    otherLayout->setSpacing(14);
+    otherLayout->setContentsMargins(16, 8, 16, 16);
 
-    fkActionLayout->addWidget(deleteLabel);
-    fkActionLayout->addWidget(m_deleteActionCombo);
-    fkActionLayout->addWidget(updateLabel);
-    fkActionLayout->addWidget(m_updateActionCombo);
-    fkActionLayout->addStretch();
-    formLayout->addLayout(fkActionLayout);
-
-    // 连接引用表变化信号
-    connect(m_referenceTableCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AddColumnDialog::onReferenceTableChanged);
-
-    // === CHECK约束分隔线 ===
-    auto *checkLine = new QFrame();
-    checkLine->setFrameShape(QFrame::HLine);
-    checkLine->setStyleSheet("color: #F0F0F0;");
-    formLayout->addWidget(checkLine);
-
-    // === CHECK 约束 ===
-    auto *checkLayout = new QHBoxLayout;
-    checkLayout->setSpacing(10);
-    checkLayout->setContentsMargins(70, 0, 0, 0);
-
-    m_checkCheck = new QCheckBox("CHECK约束");
-    m_checkCheck->setChecked(false);
-    checkLayout->addWidget(m_checkCheck);
-
+    // CHECK约束
+    auto *checkRow = new QHBoxLayout;
+    checkRow->setSpacing(12);
+    auto *checkLabel = new QLabel("CHECK约束");
+    checkLabel->setFixedWidth(70);
+    checkLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    checkLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
+    m_checkCheck = new QCheckBox();
+    m_checkCheck->setStyleSheet(R"(
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #DCE0E5;
+            border-radius: 2px;
+            background-color: white;
+        }
+        QCheckBox::indicator:hover {
+            border-color: #409EFF;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #409EFF;
+            border-color: #409EFF;
+        }
+    )");
     m_checkEdit = new QLineEdit();
     m_checkEdit->setPlaceholderText("例如：age > 0");
     m_checkEdit->setEnabled(false);
-    m_checkEdit->setFixedHeight(32);
-    checkLayout->addWidget(m_checkEdit);
+    m_checkEdit->setFixedHeight(36);
+    m_checkEdit->setStyleSheet(R"(
+        QLineEdit {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: #F8FAFC;
+            color: #333333;
+        }
+        QLineEdit:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+        QLineEdit:enabled {
+            background-color: white;
+        }
+    )");
+    checkRow->addWidget(checkLabel);
+    checkRow->addWidget(m_checkCheck);
+    checkRow->addWidget(m_checkEdit);
+    otherLayout->addLayout(checkRow);
 
-    connect(m_checkCheck, &QCheckBox::checkStateChanged, this, [this](int state) {
-        m_checkEdit->setEnabled(state == Qt::Checked);
-        if (state != Qt::Checked) m_checkEdit->clear();
-    });
-
-    formLayout->addLayout(checkLayout);
-
-    // === 默认值 ===
-    auto *defaultLayout = new QHBoxLayout;
-    defaultLayout->setSpacing(10);
-    auto *defaultLabel = new QLabel("默认值：");
+    // 默认值
+    auto *defaultRow = new QHBoxLayout;
+    defaultRow->setSpacing(12);
+    auto *defaultLabel = new QLabel("默认值");
     defaultLabel->setFixedWidth(70);
     defaultLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    defaultLabel->setStyleSheet("font-size: 14px; color: #5A6C7D;");
     m_defaultEdit = new QLineEdit();
-    m_defaultEdit->setPlaceholderText("输入默认值（可选）");
-    m_defaultEdit->setFixedHeight(32);
-    defaultLayout->addWidget(defaultLabel);
-    defaultLayout->addWidget(m_defaultEdit);
-    formLayout->addLayout(defaultLayout);
+    m_defaultEdit->setPlaceholderText("输入默认值");
+    m_defaultEdit->setFixedHeight(36);
+    m_defaultEdit->setStyleSheet(R"(
+        QLineEdit {
+            border: 1px solid #DCE0E5;
+            border-radius: 4px;
+            padding: 0 12px;
+            font-size: 14px;
+            background-color: white;
+            color: #333333;
+        }
+        QLineEdit:focus {
+            border-color: #409EFF;
+            outline: none;
+        }
+    )");
+    defaultRow->addWidget(defaultLabel);
+    defaultRow->addWidget(m_defaultEdit);
+    otherLayout->addLayout(defaultRow);
+
+    formLayout->addWidget(otherGroup);
 
     mainLayout->addLayout(formLayout);
 
-    // === 底部按钮 ===
+    // ========== 底部按钮区域 ==========
     auto *btnLayout = new QHBoxLayout;
     btnLayout->setSpacing(12);
-    btnLayout->setContentsMargins(0, 10, 0, 0);
+    btnLayout->setContentsMargins(0, 16, 0, 0);
 
     auto *cancelBtn = new QPushButton("取消");
-    cancelBtn->setStyleSheet("QPushButton { background-color: #F0F0F0; color: #555; border: 1px solid #DDD; border-radius: 4px; padding: 8px 20px; font-size: 13px; min-height: 32px; } "
-                            "QPushButton:hover { background-color: #E5E5E5; }");
+    cancelBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #F5F7FA;
+            color: #606266;
+            border: 1px solid #DCDFE6;
+            border-radius: 4px;
+            padding: 8px 24px;
+            font-size: 14px;
+            min-height: 36px;
+        }
+        QPushButton:hover {
+            background-color: #E8ECF0;
+        }
+    )");
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 
     auto *okBtn = new QPushButton("确定");
-    okBtn->setStyleSheet("QPushButton { background-color: #555; color: white; border: 1px solid #555; border-radius: 4px; padding: 8px 20px; font-size: 13px; min-height: 32px; } "
-                         "QPushButton:hover { background-color: #333; }");
+    okBtn->setStyleSheet(R"(
+        QPushButton {
+            background-color: #409EFF;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 24px;
+            font-size: 14px;
+            min-height: 36px;
+        }
+        QPushButton:hover {
+            background-color: #66B1FF;
+        }
+        QPushButton:pressed {
+            background-color: #3A8EE6;
+        }
+    )");
     connect(okBtn, &QPushButton::clicked, this, &QDialog::accept);
 
     btnLayout->addStretch();
     btnLayout->addWidget(cancelBtn);
     btnLayout->addWidget(okBtn);
     mainLayout->addLayout(btnLayout);
+
+    // ========== 信号连接 ==========
+    connect(m_referenceTableCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &AddColumnDialog::onReferenceTableChanged);
+
+    connect(m_checkCheck, &QCheckBox::checkStateChanged, this, [this](int state) {
+        m_checkEdit->setEnabled(state == Qt::Checked);
+        if (state != Qt::Checked) m_checkEdit->clear();
+    });
 }
 
 
@@ -925,7 +619,8 @@ ColumnConfig AddColumnDialog::getConfig() const
 
 
 
-    cfg.length = m_lengthSpin->value();
+    QString lengthText = m_lengthEdit->text().trimmed();
+    cfg.length = lengthText.isEmpty() ? 0 : lengthText.toInt();
 
 
 
@@ -961,11 +656,9 @@ ColumnConfig AddColumnDialog::getConfig() const
 
 
 
-    tabledef::tryParseForeignKeyAction(m_deleteActionCombo->currentText().trimmed(), &cfg.onDeleteAction);
 
 
 
-    tabledef::tryParseForeignKeyAction(m_updateActionCombo->currentText().trimmed(), &cfg.onUpdateAction);
 
 
 

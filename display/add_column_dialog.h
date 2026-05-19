@@ -5,7 +5,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QCheckBox>
-#include <QSpinBox>
+#include <QLineEdit>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -28,8 +28,6 @@ struct ColumnConfig {
     bool unique = false;
     QString referencedTable;
     QStringList referencedColumns;
-    tabledef::ForeignKeyAction onDeleteAction = tabledef::ForeignKeyAction::NoAction;
-    tabledef::ForeignKeyAction onUpdateAction = tabledef::ForeignKeyAction::NoAction;
     QString checkConstraint;
     QString defaultValue;
 };
@@ -49,14 +47,12 @@ private:
 
     QLineEdit *m_nameEdit = nullptr;
     QComboBox *m_typeCombo = nullptr;
-    QSpinBox  *m_lengthSpin = nullptr;
+    QLineEdit *m_lengthEdit = nullptr;
     QCheckBox *m_nullCheck = nullptr;
     QCheckBox *m_pkCheck = nullptr;
     QCheckBox *m_uniqueCheck = nullptr;
     QComboBox *m_referenceTableCombo = nullptr;
     QComboBox *m_referenceColumnCombo = nullptr;
-    QComboBox *m_deleteActionCombo = nullptr;
-    QComboBox *m_updateActionCombo = nullptr;
 
     void populateReferenceTables();
     void onReferenceTableChanged(int index);

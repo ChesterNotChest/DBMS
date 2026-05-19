@@ -703,12 +703,14 @@ void MainWindow::onToolbarSave()
         int colIdx = cit.key();
         QString colDef = cit.value();
         
-        // 解析列定义：格式为 "列名:类型:约束"
+        // 解析列定义：格式为 "列名:类型:约束:外键约束"
         QStringList parts = colDef.split(':');
         QString colName = parts.value(0);
         QString colType = parts.value(1, "VARCHAR(255)");
         QString colConstraints = parts.value(2);
+        QString fkConstraint = parts.value(3);
         
+        // 第一步：添加列（只包含基本约束：NOT NULL、PRIMARY KEY、UNIQUE、DEFAULT、CHECK）
         QString sql;
         if (colConstraints.isEmpty()) {
             sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3;")
@@ -716,17 +718,52 @@ void MainWindow::onToolbarSave()
                     .arg(colName)
                     .arg(colType);
         } else {
-            sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3 %4;")
-                    .arg(m_currentTable)
-                    .arg(colName)
-                    .arg(colType)
-                    .arg(colConstraints);
+            // 从约束中移除 FOREIGN KEY 部分，因为外键需要单独添加
+            QString basicConstraints = colConstraints;
+            int fkIndex = basicConstraints.indexOf("FOREIGN KEY", 0, Qt::CaseInsensitive);
+            if (fkIndex != -1) {
+                basicConstraints = basicConstraints.left(fkIndex).trimmed();
+                // 移除末尾的逗号
+                if (basicConstraints.endsWith(',')) {
+                    basicConstraints.chop(1);
+                    basicConstraints = basicConstraints.trimmed();
+                }
+            }
+            
+            if (basicConstraints.isEmpty()) {
+                sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3;")
+                        .arg(m_currentTable)
+                        .arg(colName)
+                        .arg(colType);
+            } else {
+                sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3 %4;")
+                        .arg(m_currentTable)
+                        .arg(colName)
+                        .arg(colType)
+                        .arg(basicConstraints);
+            }
         }
         m_resultPanel->showLog(sql);
         auto r = executeSqlForGui(sql);
         if (!r.success) {
             m_resultPanel->showError(QString("❌ ADD COLUMN 失败: %1\n%2").arg(r.errorMessage).arg(sql));
             return;
+        }
+        
+        // 第二步：如果有外键约束，单独添加
+        int fkStart = colConstraints.indexOf("FOREIGN KEY", 0, Qt::CaseInsensitive);
+        if (fkStart != -1) {
+            QString fkSql = QString("ALTER TABLE %1 ADD CONSTRAINT fk_%2_%3 %4;")
+                            .arg(m_currentTable)
+                            .arg(m_currentTable)
+                            .arg(colName)
+                            .arg(colConstraints.mid(fkStart));
+            m_resultPanel->showLog(fkSql);
+            auto fkResult = executeSqlForGui(fkSql);
+            if (!fkResult.success) {
+                m_resultPanel->showError(QString("❌ ADD FOREIGN KEY 失败: %1\n%2").arg(fkResult.errorMessage).arg(fkSql));
+                return;
+            }
         }
     }
 

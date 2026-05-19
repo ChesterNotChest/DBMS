@@ -1,5 +1,6 @@
 #include "result_panel.h"
 #include "add_column_dialog.h"
+#include "utils/table_manu/table_manu.h"
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QCheckBox>
@@ -435,7 +436,55 @@ void ResultPanel::onAddColumn() {
     // 重新连接 cellChanged 信号
     connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
 
-    m_addedColumns.append(cfg.name + ":" + typeStr);
+    // 构建完整的列定义字符串，包含外键约束信息
+    QString columnDef = cfg.name + ":" + typeStr;
+    
+    // 添加约束信息
+    QString constraints;
+    
+    // 非空约束
+    if (!cfg.allowNull) {
+        constraints += "NOT NULL";
+    }
+    
+    // 主键约束
+    if (cfg.primaryKey) {
+        if (!constraints.isEmpty()) constraints += ",";
+        constraints += "PRIMARY KEY";
+    }
+    
+    // 唯一约束
+    if (cfg.unique) {
+        if (!constraints.isEmpty()) constraints += ",";
+        constraints += "UNIQUE";
+    }
+    
+    // 默认值
+    if (!cfg.defaultValue.isEmpty()) {
+        if (!constraints.isEmpty()) constraints += ",";
+        constraints += "DEFAULT " + cfg.defaultValue;
+    }
+    
+    // CHECK约束
+    if (!cfg.checkConstraint.isEmpty()) {
+        if (!constraints.isEmpty()) constraints += ",";
+        constraints += "CHECK(" + cfg.checkConstraint + ")";
+    }
+    
+    // 外键约束
+    if (!cfg.referencedTable.isEmpty() && !cfg.referencedColumns.isEmpty()) {
+        if (!constraints.isEmpty()) constraints += ",";
+        constraints += QString("FOREIGN KEY (%1) REFERENCES %2(%3)")
+                        .arg(cfg.name)
+                        .arg(cfg.referencedTable)
+                        .arg(cfg.referencedColumns.join(","));
+    }
+    
+    if (!constraints.isEmpty()) {
+        columnDef += ":" + constraints;
+    }
+    
+    m_addedColumns.append(columnDef);
     m_lastColumns.append(cfg.name);
 
     if (m_statsLabel) {

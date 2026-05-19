@@ -346,10 +346,11 @@ void StructurePanel::setupUI()
     m_treeWidget = new QTreeWidget(this);
     m_treeWidget->setHeaderHidden(true); // Hide the header to remove "Object" label
     m_treeWidget->setFont(QFont("Microsoft YaHei", 12));
-    m_treeWidget->setAnimated(true);
+    m_treeWidget->setAnimated(false); // Disable expansion animation for faster tree interaction
     m_treeWidget->setIndentation(16);
     m_treeWidget->setRootIsDecorated(true);
     m_treeWidget->setUniformRowHeights(true);
+    m_treeWidget->setExpandsOnDoubleClick(false);
     // VS Code Light tree styling.
     m_treeWidget->setStyleSheet(
         "QTreeWidget { border:none; background:#F3F3F3; padding:4px 0; outline:none; }"
@@ -421,6 +422,7 @@ void StructurePanel::loadStructure()
 {
     // Avoid selection signals while the tree is being rebuilt.
     m_treeWidget->blockSignals(true);
+    m_treeWidget->setUpdatesEnabled(false);
     m_treeWidget->clear();
 
     QStringList dbNames = firstColumnValuesFromSql(QStringLiteral("SHOW DATABASES;"));
@@ -435,31 +437,25 @@ void StructurePanel::loadStructure()
         dbItem->setText(0, QStringLiteral("[DB] %1").arg(dbName));
         dbItem->setIcon(0, QIcon(":/icons/database.png"));
         dbItem->setData(0, Qt::UserRole, "database:" + dbName);
-
+        dbItem->setFont(0, QFont("Microsoft YaHei", 9));
         if (dbName == m_currentDatabase) {
-            dbItem->setFont(0, QFont("Microsoft YaHei", 9, QFont::Bold));
             dbItem->setForeground(0, QColor("#0066cc"));
-            dbItem->setExpanded(true);
-            
-            // Load tables for current database immediately
-            loadTablesForDatabase(dbItem, dbName);
-        } else {
-            dbItem->setFont(0, QFont("Microsoft YaHei", 9));
-            // Add a dummy child to show expand arrow (lazy loading indicator)
-            new QTreeWidgetItem(dbItem);
         }
+        dbItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
     }
 
+    m_treeWidget->setUpdatesEnabled(true);
     m_treeWidget->blockSignals(false);
     updateStatusLabel();
 }
 
 void StructurePanel::loadTablesForDatabase(QTreeWidgetItem *dbItem, const QString &dbName)
 {
-    // Clear any existing children (dummy indicator)
+    // Clear any existing children before loading
     while (dbItem->childCount() > 0) {
         delete dbItem->takeChild(0);
     }
+    m_treeWidget->setUpdatesEnabled(false);
 
     QStringList tblNames = firstColumnValuesFromSql(QStringLiteral("USE %1; SHOW TABLES;").arg(dbName));
     tblNames.sort();
@@ -472,14 +468,9 @@ void StructurePanel::loadTablesForDatabase(QTreeWidgetItem *dbItem, const QStrin
         tItem->setFont(0, QFont("Consolas", 9));
         tItem->setForeground(0, QColor("#666666"));
 
-        if (dbName == m_currentDatabase && tblName == m_currentTable) {
-                addColumnsToTableItem(tItem, dbName, tblName);
-                tItem->setExpanded(true);
-            } else {
-            // Add a dummy child to show expand arrow
-            new QTreeWidgetItem(tItem);
-        }
+        tItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
     }
+    m_treeWidget->setUpdatesEnabled(true);
 }
 
 void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
@@ -519,79 +510,20 @@ void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
 
     QStringList constraintTypes;
     
+    m_treeWidget->setUpdatesEnabled(false);
     for (const ColumnDescriptor &desc : columnDescriptors) {
-        // Skip invalid columns (empty name or only contains special characters)
-        if (desc.name.isEmpty() || 
-            desc.name.trimmed().isEmpty() || 
-            desc.name.trimmed() == "-" ||
-            desc.name.trimmed() == ":" ||
-            desc.name.trimmed().startsWith("[PK]", Qt::CaseInsensitive) ||
-            desc.name.trimmed().startsWith("[FK]", Qt::CaseInsensitive) ||
-            desc.name.trimmed().startsWith("[UK]", Qt::CaseInsensitive) ||
-            desc.name.trimmed().contains("约束", Qt::CaseInsensitive) ||
-            desc.name.trimmed().contains("CONSTRAINT", Qt::CaseInsensitive)) {
+        if (desc.name.isEmpty() || desc.name.trimmed().isEmpty()) {
             continue;
         }
-        
-        // Ensure type info contains length only once
-        QString typeInfo = desc.type;
-        // Skip if type is also invalid
-        if (typeInfo.isEmpty() || typeInfo.trimmed() == "-" || typeInfo.trimmed() == "NULL") {
-            continue;
-        }
-        
-        // Don't append length again if it's already part of the type string
-        if (desc.length > 0 && !typeInfo.contains('(')) {
-            typeInfo += QStringLiteral("(%1)").arg(desc.length);
-        }
 
-        QString nullInfo = desc.notNull ? QStringLiteral(" NOT NULL") : QStringLiteral(" NULL");
-
-        QString displayText;
-        if (desc.primaryKey) {
-            displayText = QStringLiteral("[PK] %1: %2 %3").arg(desc.name, typeInfo, nullInfo);
-        } else if (desc.foreignKey) {
-            if (!desc.referencedTable.isEmpty() && !desc.referencedColumn.isEmpty()) {
-                displayText = QStringLiteral("[FK] %1: %2 %3 -> %4.%5").arg(desc.name, typeInfo, nullInfo, desc.referencedTable, desc.referencedColumn);
-            } else {
-                displayText = QStringLiteral("[FK] %1: %2 %3").arg(desc.name, typeInfo, nullInfo);
-            }
-        } else if (desc.unique) {
-            displayText = QStringLiteral("[UK] %1: %2 %3").arg(desc.name, typeInfo, nullInfo);
-        } else {
-            // No constraint - just show the field without any prefix
-            displayText = QStringLiteral("%1: %2 %3").arg(desc.name, typeInfo, nullInfo);
-        }
-
+        QString displayText = QStringLiteral("%1").arg(desc.name);
         QTreeWidgetItem *cItem = new QTreeWidgetItem(tItem);
         cItem->setText(0, displayText);
         cItem->setData(0, Qt::UserRole, "column:" + dbName + ":" + tableName + ":" + desc.name);
         cItem->setFont(0, QFont("Consolas", 8));
-        
-        if (desc.primaryKey) {
-            cItem->setForeground(0, QColor("#E53935"));
-        } else if (desc.foreignKey) {
-            cItem->setForeground(0, QColor("#1E88E5"));
-        } else if (desc.unique) {
-            cItem->setForeground(0, QColor("#FB8C00"));
-        } else {
-            cItem->setForeground(0, QColor("#888888"));
-        }
-        
-        QString tooltip = QStringLiteral("字段: %1\n").arg(desc.name);
-        tooltip += QStringLiteral("类型: %1").arg(typeInfo);
-        tooltip += QStringLiteral("\n是否为空: %1").arg(desc.notNull ? "否" : "是");
-        if (desc.primaryKey) tooltip += QStringLiteral("\n主键: 是");
-        if (desc.unique) tooltip += QStringLiteral("\n唯一键: 是");
-        if (desc.foreignKey) {
-            tooltip += QStringLiteral("\n外键: 是");
-            tooltip += QStringLiteral("\n引用: %1.%2").arg(desc.referencedTable, desc.referencedColumn);
-        }
-        if (!desc.defaultValue.isEmpty()) {
-            tooltip += QStringLiteral("\n默认值: %1").arg(desc.defaultValue);
-        }
-        cItem->setToolTip(0, tooltip);
+        cItem->setForeground(0, QColor("#888888"));
     }
+    m_treeWidget->setUpdatesEnabled(true);
 }
 
 void StructurePanel::addConstraintsToTableItem(QTreeWidgetItem *tItem,
@@ -607,29 +539,18 @@ void StructurePanel::onTreeItemExpanded(QTreeWidgetItem *item)
     QString data = item->data(0, Qt::UserRole).toString();
 
     if (data.startsWith("database:")) {
-        // Lazy load tables for database
         QString dbName = data.mid(9);
-        loadTablesForDatabase(item, dbName);
-    } else if (data.startsWith("table:")) {
-        // Check if already loaded (lazy loading optimization)
-        if (item->childCount() > 0) {
-            // Check if children are just dummy items
-            QTreeWidgetItem *firstChild = item->child(0);
-            if (firstChild && firstChild->text(0).isEmpty()) {
-                // Remove dummy child and load real data
-                delete item->takeChild(0);
-            } else {
-                // Already loaded with real data
-                return;
-            }
+        if (item->childCount() == 0) {
+            loadTablesForDatabase(item, dbName);
         }
-        
+    } else if (data.startsWith("table:")) {
+        if (item->childCount() > 0) {
+            return; // already loaded
+        }
         QStringList parts = data.mid(6).split(":");
         if (parts.size() == 2) {
             QString dbName = parts[0];
             QString tableName = parts[1];
-            
-            // Load columns only (constraints section removed)
             addColumnsToTableItem(item, dbName, tableName);
         }
     }
@@ -645,7 +566,6 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
         m_currentDatabase = dbName;
         m_currentTable.clear();
         updateStatusLabel();
-        loadStructure();
         emit databaseSelected(dbName);
 
     } else if (data.startsWith("table:")) {
@@ -654,7 +574,6 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
             m_currentDatabase = parts[0];
             m_currentTable = parts[1];
             updateStatusLabel();
-            loadStructure();
             emit tableSelected(parts[0], parts[1]);
         }
 
