@@ -1406,12 +1406,6 @@ TextResult describeTable(const QString &tableName)
 
     lines.append(QStringLiteral("+--------+-------------+--------+---------+--------+----------------+"));
 
-    lines.append(QStringLiteral(""));
-    lines.append(QStringLiteral("约束信息:"));
-    for (const tabledef::Constraint &constraint : schema.constraints) {
-        lines.append(QStringLiteral("  - %1").arg(formatConstraintDefinition(constraint)));
-    }
-
     result.success = true;
     result.text = lines.join(QStringLiteral("\n"));
     return result;

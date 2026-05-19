@@ -547,17 +547,14 @@ void StructurePanel::onTreeItemExpanded(QTreeWidgetItem *item)
 
     if (data.startsWith("database:")) {
         QString dbName = data.mid(9);
-        if (item->childCount() == 0) {
-            loadTablesForDatabase(item, dbName);
-        }
+        // Always reload tables when expanding database to get latest schema
+        loadTablesForDatabase(item, dbName);
     } else if (data.startsWith("table:")) {
-        if (item->childCount() > 0) {
-            return; // already loaded
-        }
         QStringList parts = data.mid(6).split(":");
         if (parts.size() == 2) {
             QString dbName = parts[0];
             QString tableName = parts[1];
+            // Always reload columns when expanding table to get latest schema
             addColumnsToTableItem(item, dbName, tableName);
         }
     }
@@ -581,6 +578,13 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
             m_currentDatabase = parts[0];
             m_currentTable = parts[1];
             updateStatusLabel();
+            
+            // Expand the table node to show columns
+            item->setExpanded(true);
+            
+            // Load columns for the table
+            addColumnsToTableItem(item, parts[0], parts[1]);
+            
             emit tableSelected(parts[0], parts[1]);
         }
 

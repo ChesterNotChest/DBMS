@@ -53,6 +53,7 @@ public:
 
 signals:
     void saveRequested();
+    void refreshRequested();
 
 private slots:
     void onAddRow();

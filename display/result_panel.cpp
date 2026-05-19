@@ -33,9 +33,9 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     auto* delRowBtn = new QPushButton("- 行", this);
     auto* addColBtn = new QPushButton("+ 列", this);
     auto* delColBtn = new QPushButton("- 列", this);
-    auto* undoBtn = new QPushButton("↩ 撤销", this);
+    auto* refreshBtn = new QPushButton("🔄 刷新", this);
 
-    for (QPushButton* btn : {addRowBtn, delRowBtn, addColBtn, delColBtn, undoBtn}) {
+    for (QPushButton* btn : {addRowBtn, delRowBtn, addColBtn, delColBtn, refreshBtn}) {
         btn->setStyleSheet("QPushButton { background:#F0F0F0; color:#333; border:1px solid #DDD; border-radius:3px; padding:4px 12px; font-size:12px; } "
                            "QPushButton:hover { background:#E0E0E0; }");
         topLayout->addWidget(btn);
@@ -153,7 +153,7 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     connect(delRowBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteRow);
     connect(addColBtn, &QPushButton::clicked, this, &ResultPanel::onAddColumn);
     connect(delColBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteColumn);
-    connect(undoBtn, &QPushButton::clicked, this, &ResultPanel::undoLastChange);
+    connect(refreshBtn, &QPushButton::clicked, this, [this]() { emit refreshRequested(); });
     connect(m_logToggleBtn, &QPushButton::clicked, this, &ResultPanel::onToggleLogFooter);
     connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
 }

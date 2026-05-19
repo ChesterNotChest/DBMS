@@ -51,6 +51,7 @@ private slots:
 
     void onToggleLeftPanel();
     void onToggleBottomPanel();
+    void onRefreshData();
 
     void onDatabaseSelected(const QString &dbName);
     void onTableSelected(const QString &dbName, const QString &tableName);
@@ -86,6 +87,7 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
 
     QSplitter *m_mainSplitter = nullptr;
+    QSplitter *m_rightSplitter = nullptr;
     QWidget *m_rightPanel = nullptr;
 
     StructurePanel *m_structurePanel = nullptr;

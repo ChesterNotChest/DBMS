@@ -280,22 +280,26 @@ void MainWindow::setupLayout()
     leftLayout->addWidget(m_structurePanel);
     m_mainSplitter->addWidget(leftContainer);
 
-    m_rightPanel = new QWidget(this);
-    m_rightPanel->setStyleSheet("QWidget { background:#FFFFFF; }");
-    QVBoxLayout *rightLayout = new QVBoxLayout(m_rightPanel);
-    rightLayout->setContentsMargins(4, 4, 4, 4);
-    rightLayout->setSpacing(4);
+    m_rightSplitter = new QSplitter(Qt::Vertical, this);
+    m_rightSplitter->setHandleWidth(2);
+    m_rightSplitter->setStyleSheet(
+        "QSplitter::handle { background:#E0E0E0; height:2px; }"
+        "QSplitter::handle:hover { background:#CCCCCC; }");
 
     m_editorPanel = new EditorPanel(this);
-    m_editorPanel->setMinimumHeight(120);
-    rightLayout->addWidget(m_editorPanel, 1);
+    m_editorPanel->setMinimumHeight(150);
+    m_rightSplitter->addWidget(m_editorPanel);
 
     m_resultPanel = new ResultPanel(this);
-    m_resultPanel->setMinimumHeight(420);
-    m_resultPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    rightLayout->addWidget(m_resultPanel, 3);
+    m_resultPanel->setMinimumHeight(200);
+    m_resultPanel->setMaximumHeight(500);
+    m_rightSplitter->addWidget(m_resultPanel);
 
-    m_mainSplitter->addWidget(m_rightPanel);
+    // Set initial sizes: editor takes 35%, result panel takes 65%
+    m_rightSplitter->setStretchFactor(0, 1);
+    m_rightSplitter->setStretchFactor(1, 2);
+
+    m_mainSplitter->addWidget(m_rightSplitter);
     m_mainSplitter->setStretchFactor(0, 0);
     m_mainSplitter->setStretchFactor(1, 1);
     m_mainSplitter->setSizes({220, 1180});
@@ -333,6 +337,10 @@ void MainWindow::setupLayout()
     // editor 执行请求 -> 主窗口统一执行
     connect(m_editorPanel, &EditorPanel::executeRequested,
             this, &MainWindow::onExecuteRequested);
+
+    // result panel refresh request
+    connect(m_resultPanel, &ResultPanel::refreshRequested,
+            this, &MainWindow::onRefreshData);
 
 }
 
@@ -634,6 +642,17 @@ void MainWindow::onRefreshStructure()
 {
     m_structurePanel->refresh();
     m_resultPanel->showLog("结构已刷新 " + QTime::currentTime().toString("hh:mm:ss"));
+}
+
+void MainWindow::onRefreshData()
+{
+    if (!m_currentDatabase.isEmpty() && !m_currentTable.isEmpty()) {
+        QString sql = QString("SELECT * FROM %1").arg(m_currentTable);
+        executeSqlForGui(sql);
+        m_resultPanel->showLog("数据已刷新 " + QTime::currentTime().toString("hh:mm:ss"));
+    } else {
+        m_resultPanel->showLog("请先选择一个表");
+    }
 }
 
 void MainWindow::onToggleLeftPanel()
