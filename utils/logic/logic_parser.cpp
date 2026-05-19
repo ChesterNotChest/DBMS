@@ -452,6 +452,35 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
         return {true, node, {}};
     }
 
+    if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Not
+        && state.index + 1 < state.tokens.size()
+        && state.tokens.at(state.index + 1).type == LogicTokenType::Keyword
+        && state.tokens.at(state.index + 1).keywordType == LogicKeywordType::Between) {
+        state.index += 2;
+        LogicNode lower;
+        LogicError error;
+        if (!parseLiteralOrReference(state, &lower, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        if (isAtEnd(state) || peekToken(state).type != LogicTokenType::Keyword
+            || peekToken(state).keywordType != LogicKeywordType::And) {
+            return makeParseError(QStringLiteral("BETWEEN requires AND"), token.position);
+        }
+        ++state.index;
+        LogicNode upper;
+        if (!parseLiteralOrReference(state, &upper, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        LogicNode node;
+        node.type = LogicNodeType::Between;
+        node.negated = true;
+        node.children.append(lhs);
+        node.children.append(lower);
+        node.children.append(upper);
+        node.rawText = token.rawText;
+        return {true, node, {}};
+    }
+
     if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Between) {
         ++state.index;
         LogicNode lower;

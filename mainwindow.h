@@ -35,6 +35,7 @@ public:
     ~MainWindow();
 
     QString guiClientId() const;
+    const client::ClientSession *guiClientSession();
     const client::ClientSession *guiClientSession() const;
     service::SqlExecResult executeSqlForGui(const QString &sql);
 

@@ -359,6 +359,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state);
 - 比较谓词：`a = b`、`a >= b`
 - `IS NULL / IS NOT NULL`
 - `IN (...) / NOT IN (...)`
+- `BETWEEN ... AND ... / NOT BETWEEN ... AND ...`
 - `EXISTS (...)`
 - `a = ANY (...)`
 - `a > ALL (...)`
@@ -371,6 +372,7 @@ LogicParseResult parsePredicateExpression(LogicParserState &state);
 -> 比较运算则解析 rhs primary
 -> IS NULL / IS NOT NULL 构造 NullTest
 -> IN / NOT IN 进入集合谓词分支
+-> BETWEEN / NOT BETWEEN 进入范围谓词分支
 -> 比较符 + ANY/ALL 进入量化比较分支
 -> 若没有后续谓词，则直接返回 lhs
 ```
@@ -618,7 +620,28 @@ LogicEvalResult evaluateQuantifiedSetComparison(const LogicNode &node,
 - `a = ANY (subquery)`
 - `a > ALL (subquery)`
 
-### 8.4 空集、空值细则
+### 8.4 范围谓词
+
+```cpp
+LogicEvalResult evaluateBetweenNode(const LogicNode &node,
+                                    const LogicRowContext &rowContext);
+```
+
+支持：
+
+- `col BETWEEN 1 AND 10`
+- `col NOT BETWEEN 1 AND 10`
+
+实现边界：
+
+- `BETWEEN` 节点固定包含 `lhs / lower / upper` 三个子节点。
+- `lower` 和 `upper` 第一版沿用当前谓词解析边界，只接收字面量或列引用，不引入算术表达式。
+- 求值等价于 `lhs >= lower AND lhs <= upper`，上下界均为闭区间。
+- 比较复用 `compareValues(...)`，不新增一套类型比较规则。
+- 任一侧为 `NULL` 或比较无法得到确定真值时，整体按三值逻辑返回 `UNKNOWN`。
+- `NOT BETWEEN` 等价于对 `BETWEEN` 结果应用现有 `negateTruth(...)`。
+
+### 8.5 空集、空值细则
 
 本计划第一版正式采用如下规则：
 
@@ -1240,6 +1263,8 @@ tuple_service::updateRows(...)
 - `IS NOT NULL`
 - `IN (literal list)`
 - `NOT IN (literal list)`
+- `BETWEEN literal AND literal`
+- `NOT BETWEEN literal AND literal`
 
 ### 阶段 C：非相关子查询
 
@@ -1276,6 +1301,7 @@ tuple_service::updateRows(...)
 - `a = 1 AND b = 2`
 - `NOT (a = 1 OR b = 2)`
 - `a IN (1, 2, 3)`
+- `a BETWEEN 1 AND 10`
 - `a = ANY (SELECT id FROM t)`
 - `EXISTS (SELECT id FROM t WHERE t.id = outer.id)`
 
@@ -1285,6 +1311,7 @@ tuple_service::updateRows(...)
 - `NULL` 比较得到 `UNKNOWN`
 - `AND / OR / NOT` 三值逻辑传播
 - `IN` 和 `NOT IN`
+- `BETWEEN` 和 `NOT BETWEEN`
 - `ANY / ALL`
 - `EXISTS`
 
@@ -1292,6 +1319,7 @@ tuple_service::updateRows(...)
 
 - `CHECK` 遇子查询直接拒绝
 - `WHERE` 过滤保留 `TRUE`
+- `WHERE` 中 `BETWEEN` 只保留闭区间命中行
 - 非相关子查询通过 `QueryExecutor::executeSelectSql`
 - 相关子查询通过 `QueryExecutor::executeCorrelatedSelect`
 

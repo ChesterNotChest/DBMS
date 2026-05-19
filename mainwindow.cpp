@@ -80,6 +80,19 @@ const client::ClientSession *MainWindow::guiClientSession() const
     return m_clientSessionPool.session(m_guiClientId);
 }
 
+const client::ClientSession *MainWindow::guiClientSession()
+{
+    const client::ClientSession *session = m_clientSessionPool.session(m_guiClientId);
+    if (session != nullptr) {
+        return session;
+    }
+
+    if (initializeClientSession()) {
+        return m_clientSessionPool.session(m_guiClientId);
+    }
+    return nullptr;
+}
+
 bool MainWindow::initializeClientSession()
 {
     m_guiClientId = m_clientSessionPool.createSession(dataRoot(), QString::fromLatin1(cliclient::kRootUserName));

@@ -1,5 +1,9 @@
 #include "mainwindow.h"
+#include "tests/test_entry.h"
+
 #include <QApplication>
+#include <QDebug>
+#include <QTextStream>
 
 int main(int argc, char *argv[])
 {

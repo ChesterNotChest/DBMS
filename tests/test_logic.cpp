@@ -665,6 +665,36 @@ private slots:
         QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
     }
 
+    void test_betweenRangeComparison()
+    {
+        const QString expr = QStringLiteral("score BETWEEN 60 AND 90");
+        const auto tokenized = logic::tokenizeLogicExpression(expr);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+
+        const auto parsed = logic::parseLogicTokens(expr, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::Between);
+
+        logic::LogicRowContext row;
+        row.cellsByName.insert(QStringLiteral("score"),
+                              logic::LogicCellValue{QStringLiteral("70"), tabledef::ColumnType::Int, false});
+        auto res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::True);
+
+        row.cellsByName.insert(QStringLiteral("score"),
+                              logic::LogicCellValue{QStringLiteral("50"), tabledef::ColumnType::Int, false});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::False);
+
+        row.cellsByName.insert(QStringLiteral("score"),
+                              logic::LogicCellValue{QString(), tabledef::ColumnType::Int, true});
+        res = logic::evaluateLogicExpression(parsed.root, row, {});
+        QVERIFY2(res.success, qPrintable(res.error.message));
+        QCOMPARE(res.truth, logic::LogicTruthValue::Unknown);
+    }
+
     void test_inListEmptyAndNullRules()
     {
         const QString expr = QStringLiteral("id IN (1, 2, NULL)");

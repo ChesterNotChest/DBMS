@@ -84,6 +84,12 @@ CMakeLists.txt.user*
 /data/*
 !/data/.gitkeep
 *.dbf
+*.tab
+*.meta
+*.con
+*.idx
+*.dat
+*.rid
 
 *.bat
 *.pptx

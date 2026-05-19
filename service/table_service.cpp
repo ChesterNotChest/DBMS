@@ -1391,12 +1391,15 @@ TextResult describeTable(const QString &tableName)
         }
 
         QString notNullStr = column.notNull ? QString("YES") : QString("NO");
+        const QString defaultStr = column.defaultValue.isEmpty()
+                                       ? QString()
+                                       : QStringLiteral("DEFAULT %1").arg(column.defaultValue);
         QString line = QString("| %1 | %2 | %3 | %4 | %5 | %6 |")
                           .arg(column.name.leftJustified(6),
                                typeStr.leftJustified(11),
                                notNullStr.leftJustified(8),
                                pkMark.leftJustified(7),
-                               column.defaultValue.leftJustified(6),
+                               defaultStr.leftJustified(6),
                                fkInfo.leftJustified(14));
         lines.append(line);
     }
