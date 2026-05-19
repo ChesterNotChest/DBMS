@@ -91,8 +91,18 @@ FlatFileTableStore::FlatFileTableStore(QString dataRoot)
 
 QString FlatFileTableStore::defaultDataRoot()
 {
+    const QString configuredRoot = qEnvironmentVariable("DBMS_DATA_ROOT");
+    if (!configuredRoot.trimmed().isEmpty()) {
+        return QDir::cleanPath(configuredRoot);
+    }
+
+#ifdef DBMS_REPO_ROOT
+    return QDir::cleanPath(
+        QDir(QString::fromUtf8(DBMS_REPO_ROOT)).absoluteFilePath(RepoPathConfig::getDataDirectoryName()));
+#else
     return QDir::cleanPath(
         QDir::current().absoluteFilePath(RepoPathConfig::getDataDirectoryName()));
+#endif
 }
 
 QString FlatFileTableStore::getDataRoot() const

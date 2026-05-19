@@ -73,6 +73,8 @@ set(DBMS_CORE_SOURCES
         client/client_session.h
         client/client_session_pool.h
         client/client_session_pool.cpp
+        client/sql_result_formatter.h
+        client/sql_result_formatter.cpp
         client/sql_client_engine.h
         client/sql_client_engine.cpp
 )
@@ -171,6 +173,14 @@ target_include_directories(DBMS_CLI PRIVATE
 
 target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Test)
 target_link_libraries(DBMS_CLI PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+
+target_compile_definitions(DBMS PRIVATE
+    DBMS_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(DBMS_CLI PRIVATE
+    DBMS_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
 
 set_target_properties(DBMS_CLI PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"

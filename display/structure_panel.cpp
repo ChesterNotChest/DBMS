@@ -439,7 +439,10 @@ void StructurePanel::loadStructure()
         dbItem->setData(0, Qt::UserRole, "database:" + dbName);
         dbItem->setFont(0, QFont("Microsoft YaHei", 9));
         if (dbName == m_currentDatabase) {
+            dbItem->setFont(0, QFont("Microsoft YaHei", 9, QFont::Bold));
             dbItem->setForeground(0, QColor("#0066cc"));
+            loadTablesForDatabase(dbItem, dbName);
+            dbItem->setExpanded(true);
         }
         dbItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
     }
@@ -468,6 +471,10 @@ void StructurePanel::loadTablesForDatabase(QTreeWidgetItem *dbItem, const QStrin
         tItem->setFont(0, QFont("Consolas", 9));
         tItem->setForeground(0, QColor("#666666"));
 
+        if (dbName == m_currentDatabase && tblName == m_currentTable) {
+            addColumnsToTableItem(tItem, dbName, tblName);
+            tItem->setExpanded(true);
+        }
         tItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
     }
     m_treeWidget->setUpdatesEnabled(true);

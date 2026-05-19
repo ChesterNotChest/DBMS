@@ -15,6 +15,8 @@
 #include "mainwindow.h"
 #include "constants/cli_client_def.h"
 #include "controller/sql_dispatcher.h"
+#include "client/sql_result_formatter.h"
+#include "repo/repo.h"
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QHeaderView>
@@ -43,7 +45,7 @@ QString MainWindow::dataRoot() const
     if (!configuredRoot.trimmed().isEmpty()) {
         return configuredRoot;
     }
-    return QApplication::applicationDirPath() + "/data";
+    return repo::FlatFileTableStore::defaultDataRoot();
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -285,11 +287,13 @@ void MainWindow::setupLayout()
     rightLayout->setSpacing(4);
 
     m_editorPanel = new EditorPanel(this);
+    m_editorPanel->setMinimumHeight(120);
     rightLayout->addWidget(m_editorPanel, 1);
 
     m_resultPanel = new ResultPanel(this);
-    m_resultPanel->setMaximumHeight(360);
-    rightLayout->addWidget(m_resultPanel);
+    m_resultPanel->setMinimumHeight(420);
+    m_resultPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    rightLayout->addWidget(m_resultPanel, 3);
 
     m_mainSplitter->addWidget(m_rightPanel);
     m_mainSplitter->setStretchFactor(0, 0);
@@ -383,10 +387,7 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
         return false;
     }
 
-    if (!r.text.isEmpty())
-        m_resultPanel->showLog(r.text);
-    else
-        m_resultPanel->showLog("执行成功");
+    m_resultPanel->showLog(client::formatSqlExecResultForText(r));
 
     if (r.commandType == "SHOW_CREATE_TABLE" && !r.text.isEmpty()) {
         const QString tableName = r.payload["tableName"].toString();

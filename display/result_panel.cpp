@@ -217,7 +217,13 @@ void ResultPanel::showTable(const QStringList& cols, const QList<QStringList>& r
 
 void ResultPanel::appendLog(const QString& msg, const QString& color) {
     QString ts = QTime::currentTime().toString("HH:mm:ss");
-    QString colored = color.isEmpty() ? msg : QString("<span style='color:%1'>%2</span>").arg(color, msg);
+    QString escaped = msg.toHtmlEscaped();
+    escaped.replace(QLatin1Char('\t'), QStringLiteral("    "));
+    escaped.replace(QLatin1Char(' '), QStringLiteral("&nbsp;"));
+    escaped.replace(QLatin1Char('\n'), QStringLiteral("<br>"));
+    QString colored = color.isEmpty()
+                          ? escaped
+                          : QString("<span style='color:%1'>%2</span>").arg(color, escaped);
     m_logText->append(QString("<span style='color:#999'>[%1]</span> %2").arg(ts, colored));
     m_logCount++;
     m_logCountLabel->setText(QString("%1 条").arg(m_logCount));

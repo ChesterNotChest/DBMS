@@ -42,11 +42,6 @@ private:
     bool isHelpCommand(const QString &line) const;
     void printHelp();
     void printResult(const service::SqlExecResult &result);
-    QString formatTable(const QStringList &headers, const QList<QStringList> &rows) const;
-    QString formatSelectResult(const service::SelectRowsResult &result) const;
-    QString formatDescResult(const QString &text) const;
-    QString formatShowCreateTableResult(const service::SqlExecResult &result) const;
-    QString rowCountText(int rowCount) const;
 
     client::ClientSessionPool *m_sessionPool = nullptr;
     client::SqlClientEngine *m_clientEngine = nullptr;
