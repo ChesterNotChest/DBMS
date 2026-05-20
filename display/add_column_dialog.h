@@ -5,13 +5,12 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QCheckBox>
-#include <QLineEdit>
+#include <QTextEdit>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QDir>
-#include <QFileInfo>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -23,7 +22,7 @@ struct ColumnConfig {
     QString name;
     QString type;
     int length = 0;
-    bool allowNull = true;
+    bool notNull = false;
     bool primaryKey = false;
     bool unique = false;
     QString referencedTable;
@@ -37,28 +36,34 @@ class AddColumnDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit AddColumnDialog(QWidget *parent = nullptr);
+    explicit AddColumnDialog(const QString &currentDb,
+                             QWidget *parent = nullptr);
 
     ColumnConfig getConfig() const;
 
+private slots:
+    void onReferenceTableChanged();
+    void updateSqlPreview();
+
 private:
-    void buildLayout();
-    void buildStyle();
+    void buildUi();
+    static QString defaultDataRoot();
+    void populateRefTables();
+    void populateRefColumns();
 
-    QLineEdit *m_nameEdit = nullptr;
-    QComboBox *m_typeCombo = nullptr;
-    QLineEdit *m_lengthEdit = nullptr;
-    QCheckBox *m_nullCheck = nullptr;
-    QCheckBox *m_pkCheck = nullptr;
-    QCheckBox *m_uniqueCheck = nullptr;
-    QComboBox *m_referenceTableCombo = nullptr;
-    QComboBox *m_referenceColumnCombo = nullptr;
+    QLineEdit   *m_nameEdit             = nullptr;
+    QComboBox   *m_typeCombo            = nullptr;
+    QLineEdit   *m_lengthEdit           = nullptr;
+    QCheckBox   *m_notNullCheck         = nullptr;
+    QCheckBox   *m_pkCheck              = nullptr;
+    QCheckBox   *m_uniqueCheck          = nullptr;
+    QLineEdit   *m_defaultEdit          = nullptr;
+    QComboBox   *m_refTableCombo        = nullptr;
+    QComboBox   *m_refColumnCombo       = nullptr;
+    QLineEdit   *m_checkEdit            = nullptr;
+    QTextEdit   *m_sqlPreview           = nullptr;
 
-    void populateReferenceTables();
-    void onReferenceTableChanged(int index);
-    QCheckBox *m_checkCheck = nullptr;
-    QLineEdit *m_checkEdit = nullptr;
-    QLineEdit *m_defaultEdit = nullptr;
+    QString m_currentDb;
 };
 
-#endif // ADD_COLUMN_DIALOG_H
+#endif

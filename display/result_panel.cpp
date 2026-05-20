@@ -393,7 +393,7 @@ void ResultPanel::onAddColumn() {
         return;
     }
 
-    AddColumnDialog dlg(this);
+    AddColumnDialog dlg(m_currentDb, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -449,7 +449,7 @@ void ResultPanel::onAddColumn() {
     QString constraints;
     
     // 非空约束
-    if (!cfg.allowNull) {
+    if (cfg.notNull) {
         constraints += "NOT NULL";
     }
     

@@ -435,6 +435,7 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
             m_currentTable.clear();
             updateStatusDbLabel();
             m_structurePanel->selectDatabase(m_currentDatabase);
+            m_resultPanel->setCurrentDb(m_currentDatabase);
         }
     }
 
@@ -949,22 +950,9 @@ void MainWindow::onToolbarSave()
     onExecuteRequested(sql);
 }
 
-// Visual table creation / edit current table
+// Visual table creation
 void MainWindow::onToolbarNewTable()
 {
-    if (!m_currentDatabase.isEmpty() && !m_currentTable.isEmpty()) {
-        const QString showSql = QStringLiteral("SHOW CREATE TABLE %1;").arg(m_currentTable);
-        auto r = executeSqlForGui(showSql);
-        if (r.success && !r.text.isEmpty()) {
-            CreateTableDialog dlg(this, m_currentDatabase, m_currentTable, r.text);
-            if (dlg.exec() != QDialog::Accepted) return;
-            QString sql = dlg.getGeneratedSql();
-            if (sql.isEmpty()) return;
-            onExecuteRequested(sql);
-            return;
-        }
-    }
-
     CreateTableDialog dlg(this, m_currentDatabase);
     if (dlg.exec() != QDialog::Accepted) return;
     QString sql = dlg.getGeneratedSql();

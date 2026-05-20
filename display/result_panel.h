@@ -25,6 +25,8 @@ public:
     void showError(const QString &message);
     void addHistory(const QString &sql);
     void clear();
+    void setCurrentDb(const QString &db) { m_currentDb = db; }
+    QString currentDb() const { return m_currentDb; }
     QTableWidget *getTable() { return m_table; }
     QStringList getLastColumns() const { return m_lastColumns; }
     QSet<QString> getDeletedColumnNames() const { return m_deletedColumnNames; }
@@ -117,6 +119,8 @@ private:
     QMap<int, QString> m_deletedColumnsWithIndex;
     // 原始列名列表（用于撤销）
     QStringList m_originalColumns;
+    // 当前数据库名（用于新增列时加载外键表/字段）
+    QString m_currentDb;
 };
 
 #endif // RESULT_PANEL_H

@@ -136,6 +136,7 @@ static QList<ColumnDescriptor> parseDescribeColumns(const QString &text)
                 firstCell.contains("字段名", Qt::CaseInsensitive) ||
                 firstCell.contains("Type", Qt::CaseInsensitive) ||
                 firstCell.contains("类型", Qt::CaseInsensitive) ||
+                firstCell.contains("唯一", Qt::CaseInsensitive) ||
                 firstCell.contains("Constraint", Qt::CaseInsensitive) ||
                 firstCell.contains("约束", Qt::CaseInsensitive) ||
                 firstCell.contains("PK", Qt::CaseInsensitive) ||
@@ -207,31 +208,57 @@ static QList<ColumnDescriptor> parseDescribeColumns(const QString &text)
                 }
             }
             
-            if (rowCells.size() > 2) {
-                desc.notNull = (rowCells.at(2).compare("YES", Qt::CaseInsensitive) == 0);
-            }
-            
-            if (rowCells.size() > 3) {
-                QString keyType = rowCells.at(3).toLower();
-                if (keyType.contains("pri")) {
-                    desc.primaryKey = true;
+            // New format (7 columns): 字段名 | 类型 | NOT NULL | 主键 | 唯一 | 默认值 | 外键引用
+            if (rowCells.size() >= 7) {
+                if (rowCells.size() > 2)
+                    desc.notNull = (rowCells.at(2).compare("YES", Qt::CaseInsensitive) == 0);
+                if (rowCells.size() > 3)
+                    desc.primaryKey = rowCells.at(3).contains(QStringLiteral("✓"));
+                if (rowCells.size() > 4)
+                    desc.unique = rowCells.at(4).contains(QStringLiteral("✓"));
+                if (rowCells.size() > 5) {
+                    QString defaultVal = rowCells.at(5);
+                    if (!defaultVal.isEmpty() && defaultVal.compare("NULL", Qt::CaseInsensitive) != 0)
+                        desc.defaultValue = defaultVal;
                 }
-                if (keyType.contains("uni")) {
-                    desc.unique = true;
+                if (rowCells.size() > 6) {
+                    QString fkCell = rowCells.at(6);
+                    if (!fkCell.isEmpty()) {
+                        desc.foreignKey = true;
+                        int dotPos = fkCell.indexOf('.');
+                        if (dotPos > 0) {
+                            desc.referencedTable = fkCell.left(dotPos).trimmed();
+                            desc.referencedColumn = fkCell.mid(dotPos + 1).trimmed();
+                        }
+                    }
                 }
-            }
-            
-            if (rowCells.size() > 4) {
-                QString defaultVal = rowCells.at(4);
-                if (!defaultVal.isEmpty() && defaultVal.compare("NULL", Qt::CaseInsensitive) != 0) {
-                    desc.defaultValue = defaultVal;
+            } else {
+                // Old format (6 columns): 字段名 | 类型 | NOT NULL | 主键 | 默认值 | 外键引用
+                if (rowCells.size() > 2) {
+                    desc.notNull = (rowCells.at(2).compare("YES", Qt::CaseInsensitive) == 0);
                 }
-            }
-            
-            if (rowCells.size() > 5) {
-                QString extra = rowCells.at(5);
-                if (extra.toLower().contains("auto_increment")) {
-                    desc.defaultValue = "(auto)";
+                if (rowCells.size() > 3) {
+                    QString keyType = rowCells.at(3).toLower();
+                    if (keyType.contains("pri"))
+                        desc.primaryKey = true;
+                    if (keyType.contains("uni"))
+                        desc.unique = true;
+                }
+                if (rowCells.size() > 4) {
+                    QString defaultVal = rowCells.at(4);
+                    if (!defaultVal.isEmpty() && defaultVal.compare("NULL", Qt::CaseInsensitive) != 0)
+                        desc.defaultValue = defaultVal;
+                }
+                if (rowCells.size() > 5) {
+                    QString fkCell = rowCells.at(5);
+                    if (!fkCell.isEmpty()) {
+                        desc.foreignKey = true;
+                        int dotPos = fkCell.indexOf('.');
+                        if (dotPos > 0) {
+                            desc.referencedTable = fkCell.left(dotPos).trimmed();
+                            desc.referencedColumn = fkCell.mid(dotPos + 1).trimmed();
+                        }
+                    }
                 }
             }
             
@@ -460,7 +487,17 @@ void StructurePanel::loadTablesForDatabase(QTreeWidgetItem *dbItem, const QStrin
     }
     m_treeWidget->setUpdatesEnabled(false);
 
-    QStringList tblNames = firstColumnValuesFromSql(QStringLiteral("USE %1; SHOW TABLES;").arg(dbName));
+    // First switch to the target database (this changes current database context)
+    service::SqlExecResult useResult = m_clientEngine->executeSql(m_clientId, 
+        QStringLiteral("USE %1;").arg(dbName));
+    if (!useResult.success) {
+        qDebug() << "Failed to switch to database:" << dbName << useResult.errorMessage;
+        m_treeWidget->setUpdatesEnabled(true);
+        return;
+    }
+    
+    // Now show tables from the current database
+    QStringList tblNames = firstColumnValuesFromSql(QStringLiteral("SHOW TABLES;"));
     tblNames.sort();
 
     for (const QString &tblName : tblNames) {
@@ -487,13 +524,21 @@ void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
     if (tItem->childCount() > 0) {
         return;
     }
+    
+    // Ensure we're in the correct database context
+    service::SqlExecResult useResult = m_clientEngine->executeSql(m_clientId,
+        QStringLiteral("USE %1;").arg(dbName));
+    if (!useResult.success) {
+        qDebug() << "Failed to switch to database for DESC:" << dbName << useResult.errorMessage;
+        return;
+    }
 
     QStringList columns;
     service::SqlExecResult result;
     if (m_clientEngine != nullptr && !m_clientId.isEmpty() && !tableName.isEmpty()) {
-        result = m_clientEngine->executeSqlPreservingDatabase(
-            m_clientId,
-            QStringLiteral("USE %1; DESC %2;").arg(dbName, tableName));
+        // Database context already set above with USE statement
+        result = m_clientEngine->executeSql(m_clientId,
+            QStringLiteral("DESC %1;").arg(tableName));
         if (result.success) {
             columns = columnNamesFromDescribeText(result.text);
         }
@@ -515,20 +560,33 @@ void StructurePanel::addColumnsToTableItem(QTreeWidgetItem *tItem,
         return;
     }
 
-    QStringList constraintTypes;
-    
     m_treeWidget->setUpdatesEnabled(false);
     for (const ColumnDescriptor &desc : columnDescriptors) {
         if (desc.name.isEmpty() || desc.name.trimmed().isEmpty()) {
             continue;
         }
 
-        QString displayText = QStringLiteral("%1").arg(desc.name);
+        QStringList marks;
+        if (desc.primaryKey) marks.append("PK");
+        if (desc.foreignKey) marks.append("FK");
+        if (desc.unique)     marks.append("UQ");
+        if (desc.notNull)    marks.append("NN");
+
+        QString displayText = desc.name;
+        if (!desc.type.isEmpty())
+            displayText += QStringLiteral(" %1").arg(desc.type.toUpper());
+        if (!marks.isEmpty())
+            displayText += QStringLiteral(" [%1]").arg(marks.join(" "));
+        if (!desc.defaultValue.isEmpty())
+            displayText += QStringLiteral(" DEFAULT '%1'").arg(desc.defaultValue);
+        if (desc.foreignKey && !desc.referencedTable.isEmpty())
+            displayText += QStringLiteral(" -> %1.%2").arg(desc.referencedTable, desc.referencedColumn);
+
         QTreeWidgetItem *cItem = new QTreeWidgetItem(tItem);
         cItem->setText(0, displayText);
         cItem->setData(0, Qt::UserRole, "column:" + dbName + ":" + tableName + ":" + desc.name);
         cItem->setFont(0, QFont("Consolas", 8));
-        cItem->setForeground(0, QColor("#888888"));
+        cItem->setForeground(0, QColor("#666666"));
     }
     m_treeWidget->setUpdatesEnabled(true);
 }
