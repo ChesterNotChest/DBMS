@@ -159,7 +159,6 @@ struct LogicEvalContext {
     ISubqueryExecutor *subqueryExecutor = nullptr;
     QString currentDatabase;
     QString dataRoot;
-    QStringList skipSharedReadLockTables;
     bool allowSubquery = false;
 };
 

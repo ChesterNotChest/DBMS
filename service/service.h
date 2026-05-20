@@ -224,17 +224,6 @@ SelectRowsResult selectRows(const QString &tableName,
                             int limit,
                             const OrderByClause &orderBy);
 
-SelectRowsResult selectRowsUnlocked(const QString &tableName,
-                                    const QStringList &projectionColumns,
-                                    const QList<SimpleCondition> &conditions,
-                                    int limit = -1);
-
-SelectRowsResult selectRowsUnlocked(const QString &tableName,
-                                    const QStringList &projectionColumns,
-                                    const QList<SimpleCondition> &conditions,
-                                    int limit,
-                                    const OrderByClause &orderBy);
-
 TaskResult insertRows(const QString &tableName,
                       const QList<QMap<QString, QString>> &rows);
 

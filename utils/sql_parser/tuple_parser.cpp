@@ -1447,11 +1447,15 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
                 QString col = tokens[i].lexeme;
                 if (i + 1 < tokens.size() && tokens[i + 1].type == TokenType::EQ && i + 2 < tokens.size()) {
                     QString val = tokens[i + 2].lexeme;
-                    bool isInt; int intVal = val.toInt(&isInt);
-                    if (isInt) assignments.insert(col, intVal);
-                    else { bool isFloat; double fv = val.toDouble(&isFloat);
-                           if (isFloat) assignments.insert(col, fv);
-                           else assignments.insert(col, val); }
+                    if (tokens[i + 2].type == TokenType::NULL_VAL) {
+                        assignments.insert(col, QString());
+                    } else {
+                        bool isInt; int intVal = val.toInt(&isInt);
+                        if (isInt) assignments.insert(col, intVal);
+                        else { bool isFloat; double fv = val.toDouble(&isFloat);
+                               if (isFloat) assignments.insert(col, fv);
+                               else assignments.insert(col, val); }
+                    }
                     i += 2;
                 }
             }

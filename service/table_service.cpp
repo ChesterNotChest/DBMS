@@ -1413,6 +1413,21 @@ TextResult describeTable(const QString &tableName)
 
     lines.append(QStringLiteral("+----------+--------------+----------+------+------+-------------+---------------------------+"));
 
+    QStringList constraintLines;
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        const QString definition = formatConstraintDefinition(constraint);
+        if (!definition.trimmed().isEmpty()) {
+            constraintLines.append(definition);
+        }
+    }
+    if (!constraintLines.isEmpty()) {
+        lines.append(QString());
+        lines.append(QStringLiteral("Constraints:"));
+        for (const QString &definition : constraintLines) {
+            lines.append(QStringLiteral("  %1").arg(definition));
+        }
+    }
+
     result.success = true;
     result.text = lines.join(QStringLiteral("\n"));
     return result;

@@ -351,6 +351,12 @@ private slots:
                  QStringLiteral("alice"));
         QCOMPARE(updated.payload.value(QStringLiteral("conditions")).toList().size(), 2);
 
+        const sqlparser::ParseResult nullUpdate = sqlparser::parseSql(
+            QStringLiteral("UPDATE student SET age = NULL WHERE id = 1"));
+        QVERIFY2(nullUpdate.success, qPrintable(nullUpdate.errorMessage));
+        QCOMPARE(nullUpdate.payload.value(QStringLiteral("assignments")).toMap().value(QStringLiteral("age")).toString(),
+                 QString());
+
         const sqlparser::ParseResult deleted = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE id = 1"));
         QVERIFY2(deleted.success, qPrintable(deleted.errorMessage));
@@ -487,6 +493,47 @@ private slots:
         for (const repo::TableRow &row : updatedRows.resultTable.rows) {
             QCOMPARE(row.value(3), QStringLiteral("matched"));
         }
+    }
+
+    void test_dispatcherUpdateSubqueryReadsRelatedLockedTable()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_subquery_reentrant_db");
+        ensureDatabase(databaseName);
+
+        SqlDispatcher dispatcher;
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "CREATE TABLE course ("
+                     "cno INT PRIMARY KEY, "
+                     "cname VARCHAR(64) NOT NULL"
+                     ");")).success,
+                 "create course failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "CREATE TABLE sc ("
+                     "sno INT, "
+                     "cno INT, "
+                     "grade INT, "
+                     "CONSTRAINT fk_sc_course FOREIGN KEY (cno) "
+                     "REFERENCES course(cno) ON DELETE NO ACTION ON UPDATE CASCADE"
+                     ");")).success,
+                 "create sc failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "INSERT INTO course (cno, cname) VALUES (1, '数据结构'), (2, '数据库');")).success,
+                 "insert course failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "INSERT INTO sc (sno, cno, grade) VALUES (10, 1, 90), (11, 2, 80);")).success,
+                 "insert sc failed");
+
+        const SqlExecResult updateResult = dispatcher.execute(QStringLiteral(
+            "UPDATE sc SET grade = NULL "
+            "WHERE cno IN (SELECT cno FROM course WHERE cname = '数据结构');"));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult rows = selectAllRows(QStringLiteral("sc"));
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.size(), 2);
+        QCOMPARE(rows.resultTable.rows.at(0), QStringList({QStringLiteral("10"), QStringLiteral("1"), QString()}));
+        QCOMPARE(rows.resultTable.rows.at(1), QStringList({QStringLiteral("11"), QStringLiteral("2"), QStringLiteral("80")}));
     }
 
     void test_dispatchSelectKeepsQualifiedWhereOnAstPath()

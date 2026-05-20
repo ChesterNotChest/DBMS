@@ -16,18 +16,10 @@ struct QueryExecutionScope
 {
     QString previousDatabase;
     QString previousDataRoot;
-    QStringList previousSkipSharedReadLockTables;
-
-    static QStringList &skipSharedReadLockTables()
-    {
-        static thread_local QStringList tables;
-        return tables;
-    }
 
     explicit QueryExecutionScope(const QueryExecuteContext &context)
         : previousDatabase(currentDatabase),
-          previousDataRoot(getDataRoot()),
-          previousSkipSharedReadLockTables(skipSharedReadLockTables())
+          previousDataRoot(getDataRoot())
     {
         if (!context.dataRoot.trimmed().isEmpty()) {
             setDataRoot(context.dataRoot);
@@ -35,14 +27,12 @@ struct QueryExecutionScope
         if (!context.currentDatabase.trimmed().isEmpty()) {
             currentDatabase = context.currentDatabase.trimmed();
         }
-        skipSharedReadLockTables() = context.skipSharedReadLockTables;
     }
 
     ~QueryExecutionScope()
     {
         currentDatabase = previousDatabase;
         setDataRoot(previousDataRoot);
-        skipSharedReadLockTables() = previousSkipSharedReadLockTables;
     }
 };
 
@@ -338,17 +328,10 @@ bool loadSourcesFromPayload(const QVariantMap &payload,
             return false;
         }
 
-        const QStringList skipLockedTables = QueryExecutionScope::skipSharedReadLockTables();
-        const bool skipSharedReadLock = skipLockedTables.contains(tableName, Qt::CaseInsensitive);
-        const SelectRowsResult rows = skipSharedReadLock
-                                          ? tuple_service::selectRowsUnlocked(tableName,
-                                                                              QStringList{},
-                                                                              QList<SimpleCondition>{},
-                                                                              -1)
-                                          : tuple_service::selectRows(tableName,
-                                                                      QStringList{},
-                                                                      QList<SimpleCondition>{},
-                                                                      -1);
+        const SelectRowsResult rows = tuple_service::selectRows(tableName,
+                                                                QStringList{},
+                                                                QList<SimpleCondition>{},
+                                                                -1);
         if (!rows.success) {
             if (error != nullptr) {
                 *error = rows.errorMessage;
@@ -767,7 +750,6 @@ bool buildJoinedFilteredRows(QueryExecutor *executor,
     evalContext.subqueryExecutor = executor;
     evalContext.currentDatabase = currentDatabase;
     evalContext.dataRoot = getDataRoot();
-    evalContext.skipSharedReadLockTables = QueryExecutionScope::skipSharedReadLockTables();
     evalContext.allowSubquery = true;
 
     logic::LogicNode whereAst;
@@ -1456,7 +1438,6 @@ QueryExecuteResult execAggregateSelect(QueryExecutor *executor,
     evalContext.subqueryExecutor = executor;
     evalContext.currentDatabase = currentDatabase;
     evalContext.dataRoot = getDataRoot();
-    evalContext.skipSharedReadLockTables = QueryExecutionScope::skipSharedReadLockTables();
     evalContext.allowSubquery = true;
     logic::LogicNode havingAst;
     const bool hasHavingAst = parsed.payload.contains(QStringLiteral("havingAst"));
@@ -1722,17 +1703,10 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
         return result;
     }
 
-    const QStringList skipLockedTables = QueryExecutionScope::skipSharedReadLockTables();
-    const bool skipSharedReadLock = skipLockedTables.contains(tableName, Qt::CaseInsensitive);
-    const SelectRowsResult fullCandidateRows = skipSharedReadLock
-                                                   ? tuple_service::selectRowsUnlocked(tableName,
-                                                                                       QStringList{},
-                                                                                       QList<SimpleCondition>{},
-                                                                                       -1)
-                                                   : tuple_service::selectRows(tableName,
-                                                                               QStringList{},
-                                                                               QList<SimpleCondition>{},
-                                                                               -1);
+    const SelectRowsResult fullCandidateRows = tuple_service::selectRows(tableName,
+                                                                         QStringList{},
+                                                                         QList<SimpleCondition>{},
+                                                                         -1);
     if (!fullCandidateRows.success) {
         result.success = false;
         result.errorMessage = fullCandidateRows.errorMessage;
@@ -1745,7 +1719,6 @@ QueryExecuteResult QueryExecutor::execSelect(const sqlparser::ParseResult &parse
     evalContext.subqueryExecutor = this;
     evalContext.currentDatabase = currentDatabase;
     evalContext.dataRoot = getDataRoot();
-    evalContext.skipSharedReadLockTables = QueryExecutionScope::skipSharedReadLockTables();
     evalContext.allowSubquery = true;
 
     logic::LogicNode whereAst;

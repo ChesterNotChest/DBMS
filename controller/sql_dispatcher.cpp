@@ -957,7 +957,6 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
         evalContext.currentDatabase = currentDatabase;
         evalContext.dataRoot = getDataRoot();
         evalContext.allowSubquery = true;
-        evalContext.skipSharedReadLockTables = QStringList{table};
 
         const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
         auto r = tuple_service::updateRows(table, assignMap, conditions, &whereAst, &evalContext);

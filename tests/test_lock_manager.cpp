@@ -2,6 +2,7 @@
 #include "../utils/thread_runtime/lock_manager.h"
 
 #include <QDir>
+#include <future>
 #include <QtTest>
 
 #include "test_entry.h"
@@ -64,7 +65,7 @@ private slots:
         QVERIFY2(second.isValid(), qPrintable(error));
     }
 
-    void test_exclusiveLockBlocksSharedLock()
+    void test_exclusiveLockAllowsSameThreadSharedReentry()
     {
         QString error;
         thread_runtime::ScopedRuntimeLock exclusive = thread_runtime::RuntimeLockManager::instance().acquireLock(
@@ -79,8 +80,8 @@ private slots:
             thread_runtime::RuntimeLockMode::Shared,
             1,
             &error);
-        QVERIFY(!shared.isValid());
-        QVERIFY(!error.isEmpty());
+        QVERIFY2(shared.isValid(), qPrintable(error));
+        QVERIFY(error.isEmpty());
     }
 
     void test_sharedExclusiveBlocks()
@@ -102,7 +103,7 @@ private slots:
         QVERIFY(error.contains(QStringLiteral("runtime lock")));
     }
 
-    void test_exclusiveExclusiveBlocks()
+    void test_exclusiveLockAllowsSameThreadExclusiveReentry()
     {
         QString error;
         thread_runtime::ScopedRuntimeLock first = thread_runtime::RuntimeLockManager::instance().acquireLock(
@@ -117,28 +118,58 @@ private slots:
             thread_runtime::RuntimeLockMode::Exclusive,
             1,
             &error);
-        QVERIFY(!second.isValid());
-        QVERIFY(error.contains(QStringLiteral("runtime lock")));
+        QVERIFY2(second.isValid(), qPrintable(error));
+        QVERIFY(error.isEmpty());
     }
 
-    void test_timeoutReturnsError()
+    void test_exclusiveLockBlocksOtherThreadSharedLock()
     {
         QString error;
         thread_runtime::ScopedRuntimeLock exclusive = thread_runtime::RuntimeLockManager::instance().acquireLock(
-            testKey(QStringLiteral("timeout_table")),
+            testKey(QStringLiteral("other_thread_shared_timeout_table")),
             thread_runtime::RuntimeLockMode::Exclusive,
             threadperf::kTableLockAcquireTimeoutMs,
             &error);
         QVERIFY2(exclusive.isValid(), qPrintable(error));
 
-        thread_runtime::ScopedRuntimeLock shared = thread_runtime::RuntimeLockManager::instance().acquireLock(
-            testKey(QStringLiteral("timeout_table")),
-            thread_runtime::RuntimeLockMode::Shared,
-            1,
+        std::future<QString> future = std::async(std::launch::async, []() {
+            QString lockError;
+            thread_runtime::ScopedRuntimeLock shared = thread_runtime::RuntimeLockManager::instance().acquireLock(
+                testKey(QStringLiteral("other_thread_shared_timeout_table")),
+                thread_runtime::RuntimeLockMode::Shared,
+                1,
+                &lockError);
+            return shared.isValid() ? QString() : lockError;
+        });
+
+        const QString lockError = future.get();
+        QVERIFY(lockError.contains(QStringLiteral("failed to acquire runtime lock")));
+        QVERIFY(lockError.contains(QStringLiteral("other_thread_shared_timeout_table")));
+    }
+
+    void test_exclusiveLockBlocksOtherThreadExclusiveLock()
+    {
+        QString error;
+        thread_runtime::ScopedRuntimeLock exclusive = thread_runtime::RuntimeLockManager::instance().acquireLock(
+            testKey(QStringLiteral("other_thread_exclusive_timeout_table")),
+            thread_runtime::RuntimeLockMode::Exclusive,
+            threadperf::kTableLockAcquireTimeoutMs,
             &error);
-        QVERIFY(!shared.isValid());
-        QVERIFY(error.contains(QStringLiteral("failed to acquire runtime lock")));
-        QVERIFY(error.contains(QStringLiteral("timeout_table")));
+        QVERIFY2(exclusive.isValid(), qPrintable(error));
+
+        std::future<QString> future = std::async(std::launch::async, []() {
+            QString lockError;
+            thread_runtime::ScopedRuntimeLock second = thread_runtime::RuntimeLockManager::instance().acquireLock(
+                testKey(QStringLiteral("other_thread_exclusive_timeout_table")),
+                thread_runtime::RuntimeLockMode::Exclusive,
+                1,
+                &lockError);
+            return second.isValid() ? QString() : lockError;
+        });
+
+        const QString lockError = future.get();
+        QVERIFY(lockError.contains(QStringLiteral("failed to acquire runtime lock")));
+        QVERIFY(lockError.contains(QStringLiteral("other_thread_exclusive_timeout_table")));
     }
 
     void test_acquireOrderedLocksDeduplicatesAndSorts()
@@ -163,12 +194,23 @@ private slots:
     void test_failedOrderedAcquireRollsBackPartialLocks()
     {
         QString error;
-        thread_runtime::ScopedRuntimeLock blocker = thread_runtime::RuntimeLockManager::instance().acquireLock(
-            testKey(QStringLiteral("ordered_z_blocked")),
-            thread_runtime::RuntimeLockMode::Exclusive,
-            threadperf::kTableLockAcquireTimeoutMs,
-            &error);
-        QVERIFY2(blocker.isValid(), qPrintable(error));
+        std::promise<QString> lockAcquired;
+        std::promise<void> releaseSignal;
+        std::shared_future<void> releaseLock = releaseSignal.get_future().share();
+        std::future<void> blockerFuture = std::async(std::launch::async, [&lockAcquired, releaseLock]() {
+            QString lockError;
+            thread_runtime::ScopedRuntimeLock blocker = thread_runtime::RuntimeLockManager::instance().acquireLock(
+                testKey(QStringLiteral("ordered_z_blocked")),
+                thread_runtime::RuntimeLockMode::Exclusive,
+                threadperf::kTableLockAcquireTimeoutMs,
+                &lockError);
+            lockAcquired.set_value(blocker.isValid() ? QString() : lockError);
+            if (blocker.isValid()) {
+                releaseLock.wait();
+            }
+        });
+        const QString blockerError = lockAcquired.get_future().get();
+        QVERIFY2(blockerError.isEmpty(), qPrintable(blockerError));
 
         QList<thread_runtime::RuntimeLockKey> keys{
             testKey(QStringLiteral("ordered_a_partial")),
@@ -182,6 +224,9 @@ private slots:
                 &error);
         QVERIFY(locks.empty());
         QVERIFY(error.contains(QStringLiteral("runtime lock")));
+
+        releaseSignal.set_value();
+        blockerFuture.wait();
 
         thread_runtime::ScopedRuntimeLock partialKeyLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
             testKey(QStringLiteral("ordered_a_partial")),

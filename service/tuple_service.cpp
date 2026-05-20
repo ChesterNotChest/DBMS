@@ -30,6 +30,33 @@ std::vector<thread_runtime::ScopedRuntimeLock> acquireMutationLocks(const QStrin
         error);
 }
 
+service::SelectRowsResult selectRowsAfterRuntimeLock(const QString &tableName,
+                                                     const QStringList &projectionColumns,
+                                                     const QList<service::SimpleCondition> &conditions,
+                                                     int limit,
+                                                     const service::OrderByClause &orderBy)
+{
+    service::SelectRowsResult result;
+    const QString databaseName = service::normalizeDatabaseName(QString());
+    QString error;
+
+    const tabledef::TableSchema schema = service::loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    service::TableDmlService dmlService;
+    return dmlService.selectRows(databaseName,
+                                 tableName,
+                                 service::TargetTableKind::TableDat,
+                                 schema,
+                                 projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
+                                 conditions,
+                                 limit,
+                                 orderBy);
+}
+
 } // namespace
 
 namespace service::tuple_service {
@@ -64,42 +91,7 @@ SelectRowsResult selectRows(const QString &tableName,
         }
     }
 
-    return selectRowsUnlocked(tableName, projectionColumns, conditions, limit, orderBy);
-}
-
-SelectRowsResult selectRowsUnlocked(const QString &tableName,
-                                    const QStringList &projectionColumns,
-                                    const QList<SimpleCondition> &conditions,
-                                    int limit)
-{
-    return selectRowsUnlocked(tableName, projectionColumns, conditions, limit, {});
-}
-
-SelectRowsResult selectRowsUnlocked(const QString &tableName,
-                                    const QStringList &projectionColumns,
-                                    const QList<SimpleCondition> &conditions,
-                                    int limit,
-                                    const OrderByClause &orderBy)
-{
-    SelectRowsResult result;
-    const QString databaseName = normalizeDatabaseName(QString());
-    QString error;
-
-    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
-    if (!error.isEmpty()) {
-        result.errorMessage = error;
-        return result;
-    }
-
-    TableDmlService dmlService;
-    return dmlService.selectRows(databaseName,
-                                 tableName,
-                                 TargetTableKind::TableDat,
-                                 schema,
-                                 projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
-                                 conditions,
-                                 limit,
-                                 orderBy);
+    return selectRowsAfterRuntimeLock(tableName, projectionColumns, conditions, limit, orderBy);
 }
 
 TaskResult insertRows(const QString &tableName,
