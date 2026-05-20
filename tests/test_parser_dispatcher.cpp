@@ -430,6 +430,65 @@ private slots:
         QCOMPARE(remainingRows.resultTable.rows.first(), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
     }
 
+    void test_dispatcherUpdateAppliesFullWherePredicates()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_full_where_db");
+        const QString tableName = QStringLiteral("student_update_full_where");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 64, true),
+            makeColumn(QStringLiteral("score"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("note"), tabledef::ColumnType::Varchar, 64),
+        };
+        schema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+        };
+
+        ensureTable(tableName, schema);
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")},
+                              {QStringLiteral("score"), QStringLiteral("55")},
+                              {QStringLiteral("note"), QStringLiteral("")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")},
+                              {QStringLiteral("score"), QStringLiteral("70")},
+                              {QStringLiteral("note"), QStringLiteral("ready")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                              {QStringLiteral("name"), QStringLiteral("carol")},
+                              {QStringLiteral("score"), QStringLiteral("88")},
+                              {QStringLiteral("note"), QStringLiteral("")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("4")},
+                              {QStringLiteral("name"), QStringLiteral("dave")},
+                              {QStringLiteral("score"), QStringLiteral("95")},
+                              {QStringLiteral("note"), QStringLiteral("ready")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("UPDATE %1 SET note = 'matched' "
+                           "WHERE (score BETWEEN 60 AND 90 AND name LIKE 'b%') "
+                           "OR id IN (1, 3) "
+                           "OR note IS NULL "
+                           "OR id IN (SELECT id FROM %1 WHERE name = 'dave')")
+                .arg(tableName));
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 4);
+
+        const SelectRowsResult updatedRows = selectAllRows(tableName);
+        QVERIFY2(updatedRows.success, qPrintable(updatedRows.errorMessage));
+        QCOMPARE(updatedRows.resultTable.rows.size(), 4);
+        for (const repo::TableRow &row : updatedRows.resultTable.rows) {
+            QCOMPARE(row.value(3), QStringLiteral("matched"));
+        }
+    }
+
     void test_dispatchSelectKeepsQualifiedWhereOnAstPath()
     {
         const QString databaseName = QStringLiteral("test_parser_dispatcher_qualified_select_db");

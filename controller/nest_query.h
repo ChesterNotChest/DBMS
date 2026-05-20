@@ -11,6 +11,7 @@ struct QueryExecuteContext
 {
     QString currentDatabase;
     QString dataRoot;
+    QStringList skipSharedReadLockTables;
 };
 
 struct QueryExecuteResult
