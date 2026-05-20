@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .title { font: 700 26px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1f2937; }
+      .subtitle { font: 400 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #526071; }
+      .axis { stroke: #9aa6b2; stroke-width: 1; }
+      .grid { stroke: #d7dde5; stroke-width: 1; stroke-dasharray: 4 6; }
+      .label { font: 600 15px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #253142; }
+      .small { font: 400 13px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #4b5563; }
+      .week { font: 600 13px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #374151; }
+      .barText { font: 600 13px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #172033; }
+      .note { font: 400 12px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #667085; }
+      .box { fill: #ffffff; stroke: #2f3a4a; stroke-width: 1.6; rx: 12; }
+      .bar1 { fill: #dbeafe; stroke: #2563eb; }
+      .bar2 { fill: #dcfce7; stroke: #16803c; }
+      .bar3 { fill: #fef3c7; stroke: #b7791f; }
+      .bar4 { fill: #ede9fe; stroke: #7c3aed; }
+      .bar5 { fill: #fee2e2; stroke: #dc2626; }
+      .bar6 { fill: #e0f2fe; stroke: #0284c7; }
+      .bar7 { fill: #fce7f3; stroke: #be185d; }
+      .bar8 { fill: #ecfccb; stroke: #65a30d; }
+      .milestone { fill: #ffffff; stroke: #243143; stroke-width: 1.5; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#2f3a4a"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1280" height="720"/>
+  <text class="title" x="640" y="44" text-anchor="middle">项目启动阶段排期计划</text>
+  <text class="subtitle" x="640" y="70" text-anchor="middle">依据提交历史抽象为阶段计划，用于说明启动报告中的实施节奏与交付边界</text>
+
+  <rect class="box" x="50" y="100" width="1180" height="540"/>
+
+  <g transform="translate(265,132)">
+    <line class="axis" x1="0" y1="0" x2="870" y2="0"/>
+    <line class="grid" x1="0" y1="22" x2="0" y2="440"/>
+    <line class="grid" x1="145" y1="22" x2="145" y2="440"/>
+    <line class="grid" x1="290" y1="22" x2="290" y2="440"/>
+    <line class="grid" x1="435" y1="22" x2="435" y2="440"/>
+    <line class="grid" x1="580" y1="22" x2="580" y2="440"/>
+    <line class="grid" x1="725" y1="22" x2="725" y2="440"/>
+    <line class="grid" x1="870" y1="22" x2="870" y2="440"/>
+    <text class="week" x="0" y="-12" text-anchor="middle">4/09</text>
+    <text class="week" x="145" y="-12" text-anchor="middle">4/16</text>
+    <text class="week" x="290" y="-12" text-anchor="middle">4/23</text>
+    <text class="week" x="435" y="-12" text-anchor="middle">4/30</text>
+    <text class="week" x="580" y="-12" text-anchor="middle">5/07</text>
+    <text class="week" x="725" y="-12" text-anchor="middle">5/14</text>
+    <text class="week" x="870" y="-12" text-anchor="middle">5/20</text>
+  </g>
+
+  <g>
+    <text class="label" x="84" y="178">工程初始化与文件存储</text>
+    <rect class="bar1" x="265" y="154" width="206" height="34" rx="17"/>
+    <text class="barText" x="368" y="176" text-anchor="middle">仓储、命名、表结构对象</text>
+
+    <text class="label" x="84" y="232">服务层与基础 SQL 能力</text>
+    <rect class="bar2" x="429" y="208" width="185" height="34" rx="17"/>
+    <text class="barText" x="522" y="230" text-anchor="middle">DDL / DML / 索引 / FK</text>
+
+    <text class="label" x="84" y="286">复杂谓词与前后端对齐</text>
+    <rect class="bar3" x="554" y="262" width="155" height="34" rx="17"/>
+    <text class="barText" x="632" y="284" text-anchor="middle">WHERE / CHECK / 测试</text>
+
+    <text class="label" x="84" y="340">并发控制与性能优化</text>
+    <rect class="bar4" x="690" y="316" width="142" height="34" rx="17"/>
+    <text class="barText" x="761" y="338" text-anchor="middle">锁、缓存、压测</text>
+
+    <text class="label" x="84" y="394">客户端会话与权限认证</text>
+    <rect class="bar5" x="743" y="370" width="126" height="34" rx="17"/>
+    <text class="barText" x="806" y="392" text-anchor="middle">CLI / Auth / GUI 会话</text>
+
+    <text class="label" x="84" y="448">查询扩展与界面能力</text>
+    <rect class="bar6" x="891" y="424" width="156" height="34" rx="17"/>
+    <text class="barText" x="969" y="446" text-anchor="middle">JOIN / LIKE / 可视化表</text>
+
+    <text class="label" x="84" y="502">聚合查询与合并收口</text>
+    <rect class="bar7" x="1025" y="478" width="94" height="34" rx="17"/>
+    <text class="barText" x="1072" y="500" text-anchor="middle">GROUP BY / HAVING</text>
+
+    <text class="label" x="84" y="556">报告、图示与验收准备</text>
+    <rect class="bar8" x="1095" y="532" width="40" height="34" rx="17"/>
+    <rect class="milestone" x="1139" y="534" width="30" height="30" transform="rotate(45 1154 549)"/>
+    <text class="barText" x="1048" y="554" text-anchor="end">文档分册与答辩材料</text>
+  </g>
+
+  <g>
+    <path d="M 471 171 L 429 225" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 614 225 L 554 279" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 709 279 L 690 333" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 832 333 L 743 387" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 869 387 L 891 441" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 1047 441 L 1025 495" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M 1119 495 L 1115 549" fill="none" stroke="#2f3a4a" stroke-width="1.4" marker-end="url(#arrow)"/>
+  </g>
+
+  <text class="note" x="70" y="672">说明：色块表示阶段工作窗口，箭头表示主要依赖关系，末端菱形表示验收材料收口节点。日期按提交历史抽象为项目排期，不等同于逐日工时统计。</text>
+</svg>

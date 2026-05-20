@@ -1,0 +1,56 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "background": "#ffffff",
+    "mainBkg": "#ffffff",
+    "primaryColor": "#e0f2fe",
+    "primaryBorderColor": "#0284c7",
+    "primaryTextColor": "#1f2937",
+    "sectionBkgColor": "#f3f7ff",
+    "altSectionBkgColor": "#fff8ed",
+    "taskBkgColor": "#e0f2fe",
+    "taskBorderColor": "#0284c7",
+    "taskTextColor": "#111827",
+    "activeTaskBkgColor": "#dcfce7",
+    "activeTaskBorderColor": "#16a34a",
+    "doneTaskBkgColor": "#ede9fe",
+    "doneTaskBorderColor": "#7c3aed",
+    "critBkgColor": "#fed7aa",
+    "critBorderColor": "#ea580c",
+    "gridColor": "#d8dee9",
+    "todayLineColor": "#ffffff"
+  }
+}}%%
+gantt
+    title 项目启动阶段排期计划
+    dateFormat  YYYY-MM-DD
+    axisFormat  %m/%d
+    excludes    weekends
+    todayMarker off
+
+    section 基础建设
+    工程初始化                         :base, 2026-04-09, 5d
+    表结构仓储                         :repo, 2026-04-16, 4d
+
+    section 核心能力
+    服务与 DDL/DML                     :crit, service, 2026-04-16, 6d
+    约束索引                           :idx, 2026-04-16, 6d
+    外键与回滚                         :crit, fk, 2026-04-23, 4d
+    谓词与 CHECK                       :logic, 2026-04-24, 5d
+    核心功能冻结                       :milestone, m1, 2026-05-01, 0d
+
+    section 稳定性建设
+    并发缓存                           :runtime, 2026-05-01, 5d
+    会话认证                           :client, 2026-05-08, 3d
+
+    section 交互与查询扩展
+    GUI 与建表                         :gui, 2026-05-14, 4d
+    JOIN 与子查询                      :crit, join, 2026-05-14, 4d
+    聚合与 HAVING                      :crit, groupby, 2026-05-18, 4d
+    功能全部完成                       :milestone, m2, 2026-05-19, 0d
+
+    section 收口验收
+    报告收口启动                       :milestone, m3, 2026-05-18, 0d
+    合并同源                           :crit, merge, 2026-05-19, 2d
+    分册答辩                           :active, report, 2026-05-18, 5d
+    答辩启动                           :milestone, m4, 2026-05-20, 0d

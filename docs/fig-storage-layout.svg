@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="720" viewBox="0 0 1300 720">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .folder { fill: #ffffff; stroke: #2f3a4a; stroke-width: 2; rx: 12; ry: 12; }
+      .box { fill: #eef4ff; stroke: #3057a6; stroke-width: 2; rx: 12; ry: 12; }
+      .table { fill: #f5faf7; stroke: #2f7a45; stroke-width: 2; rx: 12; ry: 12; }
+      .title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 21px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 16px; fill: #1f2a37; }
+      .small { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 14px; fill: #4b5563; }
+      .arrow { stroke: #2f3a4a; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2f3a4a"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1300" height="720"/>
+  <text class="title" x="650" y="42" text-anchor="middle">数据根目录的分层组织</text>
+
+  <rect class="folder" x="70" y="90" width="220" height="80"/>
+  <text class="title" x="180" y="124" text-anchor="middle">data /</text>
+  <text class="small" x="180" y="150" text-anchor="middle">统一数据根目录</text>
+
+  <rect class="table" x="360" y="90" width="220" height="80"/>
+  <text class="title" x="470" y="124" text-anchor="middle">root.dbf</text>
+  <text class="small" x="470" y="150" text-anchor="middle">数据库清单</text>
+
+  <rect class="box" x="650" y="90" width="220" height="80"/>
+  <text class="title" x="760" y="124" text-anchor="middle">database /</text>
+  <text class="small" x="760" y="150" text-anchor="middle">业务库或系统库目录</text>
+
+  <rect class="table" x="940" y="90" width="220" height="80"/>
+  <text class="title" x="1050" y="124" text-anchor="middle">database.tab</text>
+  <text class="small" x="1050" y="150" text-anchor="middle">库内表清单</text>
+
+  <rect class="box" x="580" y="250" width="220" height="90"/>
+  <text class="title" x="690" y="286" text-anchor="middle">table_name /</text>
+  <text class="small" x="690" y="314" text-anchor="middle">单表文件目录</text>
+
+  <rect class="table" x="290" y="430" width="190" height="80"/>
+  <text class="label" x="385" y="462" text-anchor="middle">table.meta</text>
+  <text class="small" x="385" y="488" text-anchor="middle">列结构</text>
+
+  <rect class="table" x="505" y="430" width="190" height="80"/>
+  <text class="label" x="600" y="462" text-anchor="middle">table.con</text>
+  <text class="small" x="600" y="488" text-anchor="middle">约束定义</text>
+
+  <rect class="table" x="720" y="430" width="190" height="80"/>
+  <text class="label" x="815" y="462" text-anchor="middle">table.idx</text>
+  <text class="small" x="815" y="488" text-anchor="middle">索引元数据</text>
+
+  <rect class="table" x="935" y="430" width="190" height="80"/>
+  <text class="label" x="1030" y="462" text-anchor="middle">table.dat / rid</text>
+  <text class="small" x="1030" y="488" text-anchor="middle">行数据与行标识</text>
+
+  <rect class="box" x="870" y="250" width="220" height="90"/>
+  <text class="title" x="980" y="286" text-anchor="middle">indexes /</text>
+  <text class="small" x="980" y="314" text-anchor="middle">排序索引与辅助文件</text>
+
+  <rect class="box" x="90" y="588" width="150" height="74"/>
+  <text class="label" x="165" y="620" text-anchor="middle">并发锁</text>
+  <text class="small" x="165" y="644" text-anchor="middle">读写顺序控制</text>
+
+  <rect class="folder" x="310" y="585" width="780" height="80"/>
+  <text class="title" x="700" y="620" text-anchor="middle">repo 模块</text>
+  <text class="small" x="700" y="646" text-anchor="middle">统一管理元数据、约束、索引和真实行内容的读写</text>
+
+  <path class="arrow" d="M290 130 L360 130"/>
+  <path class="arrow" d="M580 130 L650 130"/>
+  <path class="arrow" d="M870 130 L940 130"/>
+  <path class="arrow" d="M1050 170 L1050 205 L690 205 L690 250"/>
+
+  <path class="arrow" d="M690 340 L690 385 L385 385 L385 430"/>
+  <path class="arrow" d="M690 340 L690 385 L600 385 L600 430"/>
+  <path class="arrow" d="M690 340 L690 385 L815 385 L815 430"/>
+  <path class="arrow" d="M690 340 L690 385 L1030 385 L1030 430"/>
+
+  <path class="arrow" d="M800 295 L870 295"/>
+  <path class="arrow" d="M870 340 L870 385 L815 385 L815 430"/>
+
+  <path class="arrow" d="M385 510 L385 585"/>
+  <path class="arrow" d="M410 585 L410 510"/>
+  <path class="arrow" d="M600 510 L600 585"/>
+  <path class="arrow" d="M625 585 L625 510"/>
+  <path class="arrow" d="M815 510 L815 585"/>
+  <path class="arrow" d="M840 585 L840 510"/>
+  <path class="arrow" d="M1030 510 L1030 585"/>
+  <path class="arrow" d="M1005 585 L1005 510"/>
+  <path class="arrow" d="M240 625 L310 625"/>
+</svg>

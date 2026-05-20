@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .box { fill: #ffffff; stroke: #2f3a4a; stroke-width: 2; rx: 14; ry: 14; }
+      .accent { fill: #eef4ff; stroke: #3057a6; stroke-width: 2; rx: 14; ry: 14; }
+      .layer { fill: #f4f7fb; stroke: #627084; stroke-width: 2; rx: 14; ry: 14; }
+      .title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 22px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 18px; fill: #1f2a37; }
+      .small { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 15px; fill: #4b5563; }
+      .arrow { stroke: #2f3a4a; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke-dasharray: 8 8; }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2f3a4a"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1400" height="620"/>
+
+  <rect class="accent" x="50" y="60" width="170" height="90"/>
+  <text class="title" x="135" y="98" text-anchor="middle">GUI</text>
+  <text class="label" x="135" y="126" text-anchor="middle">主窗口 / 结构树</text>
+
+  <rect class="accent" x="50" y="220" width="170" height="90"/>
+  <text class="title" x="135" y="258" text-anchor="middle">CLI</text>
+  <text class="label" x="135" y="286" text-anchor="middle">REPL / 脚本执行</text>
+
+  <rect class="layer" x="280" y="95" width="180" height="180"/>
+  <text class="title" x="370" y="145" text-anchor="middle">客户端运行时</text>
+  <text class="small" x="370" y="178" text-anchor="middle">ClientSession</text>
+  <text class="small" x="370" y="204" text-anchor="middle">SessionPool</text>
+  <text class="small" x="370" y="230" text-anchor="middle">SqlClientEngine</text>
+
+  <rect class="layer" x="520" y="95" width="180" height="180"/>
+  <text class="title" x="610" y="145" text-anchor="middle">解析与分发</text>
+  <text class="small" x="610" y="178" text-anchor="middle">Tokenizer / Parser</text>
+  <text class="small" x="610" y="204" text-anchor="middle">SqlDispatcher</text>
+  <text class="small" x="610" y="230" text-anchor="middle">QueryExecutor</text>
+
+  <rect class="layer" x="760" y="70" width="240" height="230"/>
+  <text class="title" x="880" y="120" text-anchor="middle">服务层</text>
+  <text class="small" x="880" y="154" text-anchor="middle">DatabaseService</text>
+  <text class="small" x="880" y="180" text-anchor="middle">TableService / TupleService</text>
+  <text class="small" x="880" y="206" text-anchor="middle">AuthService</text>
+  <text class="small" x="880" y="232" text-anchor="middle">Logic / Constraint / Index</text>
+  <text class="small" x="880" y="258" text-anchor="middle">Runtime Lock / Cache</text>
+
+  <rect class="box" x="1060" y="95" width="150" height="180"/>
+  <text class="title" x="1135" y="145" text-anchor="middle">repo</text>
+  <text class="small" x="1135" y="178" text-anchor="middle">DatabaseRepo</text>
+  <text class="small" x="1135" y="204" text-anchor="middle">Table / Meta</text>
+  <text class="small" x="1135" y="230" text-anchor="middle">Constraint / Index</text>
+
+  <rect class="box" x="1260" y="95" width="100" height="180"/>
+  <text class="title" x="1310" y="145" text-anchor="middle">data</text>
+  <text class="small" x="1310" y="178" text-anchor="middle">root.dbf</text>
+  <text class="small" x="1310" y="204" text-anchor="middle">库 / 表 / 文件</text>
+  <text class="small" x="1310" y="230" text-anchor="middle">元数据 / 索引</text>
+
+  <rect class="box" x="490" y="350" width="460" height="180"/>
+  <text class="title" x="720" y="392" text-anchor="middle">展示层 / SqlExecResult</text>
+  <text class="small" x="720" y="426" text-anchor="middle">统一结果对象先归并执行结果，再分别进入 CLI 和 GUI</text>
+  <rect class="layer" x="520" y="450" width="170" height="44"/>
+  <rect class="layer" x="750" y="450" width="170" height="44"/>
+  <text class="small" x="605" y="478" text-anchor="middle">CLI text formatter</text>
+  <text class="small" x="835" y="478" text-anchor="middle">GUI result panel / log</text>
+
+  <text class="label" x="101" y="370" text-anchor="middle">统一入口</text>
+
+  <path class="arrow" d="M220 105 L280 105"/>
+  <path class="arrow" d="M220 265 L280 265"/>
+  <path class="arrow" d="M460 185 L520 185"/>
+  <path class="arrow" d="M700 185 L760 185"/>
+  <path class="arrow" d="M1000 185 L1060 185"/>
+  <path class="arrow" d="M1210 185 L1260 185"/>
+  <path class="arrow" d="M880 300 L880 350"/>
+  <path class="arrow" d="M720 530 L605 494"/>
+  <path class="arrow" d="M720 530 L835 494"/>
+
+  <path class="arrow dashed" d="M220 265 L220 325 L610 325 L610 350"/>
+  <text class="small" x="335" y="319">输出同源</text>
+</svg>
