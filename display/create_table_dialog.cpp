@@ -445,7 +445,7 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     m_fieldTable->setColumnWidth(0, 110);
     m_fieldTable->setColumnWidth(1, 95);
     m_fieldTable->setColumnWidth(2, 70);
-    m_fieldTable->setColumnWidth(3, 65);
+    m_fieldTable->setColumnWidth(3, 90);
     m_fieldTable->setColumnWidth(4, 50);
     m_fieldTable->setColumnWidth(5, 50);
     m_fieldTable->setColumnWidth(6, 50);
@@ -686,9 +686,9 @@ void CreateTableDialog::onAddColumnWithConfig(const ColumnConfig &cfg)
     auto *chkNotNull = new QCheckBox();
     chkNotNull->setChecked(!cfg.allowNull);
     chkNotNull->setStyleSheet(
-        "QCheckBox { padding: 0px; margin: 0px; min-width: 14px; min-height: 14px; }"
-        "QCheckBox::indicator { width: 14px; height: 14px; min-width: 14px; min-height: 14px; border-radius: 2px; }"
-        "QCheckBox::indicator:unchecked { border: 2px solid #666; background-color: white; }"
+        "QCheckBox { padding: 0px; margin: 0px; }"
+        "QCheckBox::indicator { width: 12px; height: 12px; min-width: 12px; min-height: 12px; border-radius: 2px; }"
+        "QCheckBox::indicator:unchecked { border: 1px solid #888; background-color: white; }"
         "QCheckBox::indicator:checked { border: 2px solid #4A90D9; background-color: #4A90D9; }"
         "QCheckBox::indicator:checked::text { color: white; }"
     );
