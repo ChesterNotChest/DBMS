@@ -950,30 +950,17 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
 
-    TableDmlService dmlService;
     if (hasComplexWhere) {
-        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
-        if (!conditionError.isEmpty()) {
-            return {false, conditionError};
-        }
-
         QueryExecutor executor;
         logic::LogicEvalContext evalContext;
         evalContext.subqueryExecutor = &executor;
         evalContext.currentDatabase = currentDatabase;
         evalContext.dataRoot = getDataRoot();
         evalContext.allowSubquery = true;
+        evalContext.skipSharedReadLockTables = QStringList{table};
 
         const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
-        const TableDmlResult r = dmlService.updateRows(currentDatabase,
-                                                       table,
-                                                       TargetTableKind::TableDat,
-                                                       schema,
-                                                       assignMap,
-                                                       conditions,
-                                                       ValidationMode::UserData,
-                                                       &whereAst,
-                                                       &evalContext);
+        auto r = tuple_service::updateRows(table, assignMap, conditions, &whereAst, &evalContext);
         if (r.success)
             return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
                     r.affectedRowCount};

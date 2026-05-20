@@ -64,6 +64,27 @@ SelectRowsResult selectRows(const QString &tableName,
         }
     }
 
+    return selectRowsUnlocked(tableName, projectionColumns, conditions, limit, orderBy);
+}
+
+SelectRowsResult selectRowsUnlocked(const QString &tableName,
+                                    const QStringList &projectionColumns,
+                                    const QList<SimpleCondition> &conditions,
+                                    int limit)
+{
+    return selectRowsUnlocked(tableName, projectionColumns, conditions, limit, {});
+}
+
+SelectRowsResult selectRowsUnlocked(const QString &tableName,
+                                    const QStringList &projectionColumns,
+                                    const QList<SimpleCondition> &conditions,
+                                    int limit,
+                                    const OrderByClause &orderBy)
+{
+    SelectRowsResult result;
+    const QString databaseName = normalizeDatabaseName(QString());
+    QString error;
+
     const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
     if (!error.isEmpty()) {
         result.errorMessage = error;
@@ -147,6 +168,15 @@ TaskResult updateRows(const QString &tableName,
                       const QMap<QString, QString> &assignmentMap,
                       const QList<SimpleCondition> &conditions)
 {
+    return updateRows(tableName, assignmentMap, conditions, nullptr, nullptr);
+}
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext)
+{
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
@@ -169,7 +199,9 @@ TaskResult updateRows(const QString &tableName,
                                                           schema,
                                                           assignmentMap,
                                                           conditions,
-                                                          ValidationMode::UserData);
+                                                          ValidationMode::UserData,
+                                                          complexWhereAst,
+                                                          evalContext);
     result.success = dmlResult.success;
     result.errorMessage = dmlResult.errorMessage;
     result.affectedRowCount = dmlResult.affectedRowCount;

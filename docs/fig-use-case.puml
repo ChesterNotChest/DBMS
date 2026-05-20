@@ -1,0 +1,50 @@
+@startuml
+left to right direction
+skinparam backgroundColor #fbfcfe
+skinparam shadowing false
+skinparam roundcorner 18
+skinparam defaultFontName "Microsoft YaHei"
+skinparam actorStyle awesome
+skinparam usecase {
+  BackgroundColor #eef4ff
+  BorderColor #3057a6
+}
+skinparam rectangle {
+  BorderColor #2f3a4a
+  BackgroundColor #ffffff
+}
+
+actor "管理员" as Admin
+actor "普通授权用户" as User
+User <|-- Admin
+Admin -down[hidden]- User
+
+rectangle "数据库系统" {
+  usecase "管理用户权限" as UC_Auth
+  usecase "维护系统运行状态" as UC_System
+  usecase "管理数据库" as UC_DB
+
+  usecase "登录系统" as UC_Login
+  usecase "切换数据库" as UC_Switch
+  usecase "维护表结构与索引" as UC_Schema
+  usecase "查看结构与执行结果" as UC_View
+  usecase "数据增删改查" as UC_CRUD
+
+  UC_Auth -[hidden]right- UC_System
+  UC_System -[hidden]right- UC_DB
+  UC_Login -[hidden]right- UC_Switch
+  UC_Switch -[hidden]right- UC_Schema
+  UC_Schema -[hidden]right- UC_View
+  UC_View -[hidden]right- UC_CRUD
+}
+
+Admin --> UC_DB
+Admin --> UC_Auth
+Admin --> UC_System
+
+User -right-> UC_Login
+User -right-> UC_Switch
+User -right-> UC_Schema
+User -right-> UC_View
+User -right-> UC_CRUD
+@enduml

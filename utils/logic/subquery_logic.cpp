@@ -77,7 +77,9 @@ static QueryExecuteResult executeSubquery(const LogicNode &node,
         return result;
     }
 
-    const QueryExecuteContext queryContext{evalContext.currentDatabase, evalContext.dataRoot};
+    const QueryExecuteContext queryContext{evalContext.currentDatabase,
+                                           evalContext.dataRoot,
+                                           evalContext.skipSharedReadLockTables};
     if (correlated) {
         const CorrelationBindings bindings = buildCorrelationBindings(rowContext, node.referencedOuterNames);
         for (const QString &referencedName : node.referencedOuterNames) {

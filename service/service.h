@@ -224,6 +224,17 @@ SelectRowsResult selectRows(const QString &tableName,
                             int limit,
                             const OrderByClause &orderBy);
 
+SelectRowsResult selectRowsUnlocked(const QString &tableName,
+                                    const QStringList &projectionColumns,
+                                    const QList<SimpleCondition> &conditions,
+                                    int limit = -1);
+
+SelectRowsResult selectRowsUnlocked(const QString &tableName,
+                                    const QStringList &projectionColumns,
+                                    const QList<SimpleCondition> &conditions,
+                                    int limit,
+                                    const OrderByClause &orderBy);
+
 TaskResult insertRows(const QString &tableName,
                       const QList<QMap<QString, QString>> &rows);
 
@@ -233,6 +244,12 @@ TaskResult deleteRows(const QString &tableName,
 TaskResult updateRows(const QString &tableName,
                       const QMap<QString, QString> &assignmentMap,
                       const QList<SimpleCondition> &conditions);
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext);
 
 } // namespace tuple_service
 
