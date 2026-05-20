@@ -1,6 +1,5 @@
-#include "cli_app.h"
+#include "sql_server.h"
 
-#include "../client/remote_sql_client.h"
 #include "../constants/cli_client_def.h"
 
 #include <QCoreApplication>
@@ -8,24 +7,19 @@
 
 namespace {
 
-struct ConnectionOptions
+struct ServerOptions
 {
     QString host = QString::fromLatin1(cliclient::kDefaultServerHost);
     quint16 port = static_cast<quint16>(cliclient::kDefaultServerPort);
-    QStringList cliArguments;
+    bool showHelp = false;
 };
 
-ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString *error)
+ServerOptions parseOptions(const QStringList &arguments, QString *error)
 {
     if (error != nullptr) {
         error->clear();
     }
-
-    ConnectionOptions options;
-    if (!arguments.isEmpty()) {
-        options.cliArguments.append(arguments.first());
-    }
-
+    ServerOptions options;
     for (int index = 1; index < arguments.size(); ++index) {
         const QString argument = arguments.at(index);
         auto requireValue = [&](const QString &name) -> QString {
@@ -39,6 +33,10 @@ ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString
             return arguments.at(index);
         };
 
+        if (argument == QStringLiteral("--help") || argument == QStringLiteral("-h")) {
+            options.showHelp = true;
+            continue;
+        }
         if (argument == QStringLiteral("--host")) {
             options.host = requireValue(argument);
             if (error != nullptr && !error->isEmpty()) {
@@ -53,9 +51,9 @@ ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString
             }
             bool ok = false;
             const int port = rawPort.toInt(&ok);
-            if (!ok || port <= 0 || port > 65535) {
+            if (!ok || port < 0 || port > 65535) {
                 if (error != nullptr) {
-                    *error = QStringLiteral("--port must be 1..65535");
+                    *error = QStringLiteral("--port must be 0..65535");
                 }
                 return {};
             }
@@ -63,9 +61,18 @@ ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString
             continue;
         }
 
-        options.cliArguments.append(argument);
+        if (error != nullptr) {
+            *error = QStringLiteral("unknown option '%1'").arg(argument);
+        }
+        return {};
     }
     return options;
+}
+
+void printHelp(QTextStream &out)
+{
+    out << QStringLiteral("DBMS_SERVER usage:") << Qt::endl;
+    out << QStringLiteral("  DBMS_SERVER [--host HOST] [--port PORT]") << Qt::endl;
 }
 
 } // namespace
@@ -73,22 +80,30 @@ ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
-
-    QTextStream input(stdin);
-    QTextStream output(stdout);
-    QTextStream errorOutput(stderr);
+    QTextStream out(stdout);
+    QTextStream err(stderr);
 
     QString optionError;
-    const ConnectionOptions connection = extractConnectionOptions(app.arguments(), &optionError);
+    const ServerOptions options = parseOptions(app.arguments(), &optionError);
     if (!optionError.isEmpty()) {
-        errorOutput << optionError << Qt::endl;
+        err << optionError << Qt::endl;
         return 2;
     }
+    if (options.showHelp) {
+        printHelp(out);
+        return 0;
+    }
 
-    client::RemoteSqlClient remoteClient(connection.host,
-                                         connection.port,
-                                         cliclient::kRpcDefaultTimeoutMs);
-    cli::CliApp cliApp(&remoteClient, &input, &output, &errorOutput);
-
-    return cliApp.run(connection.cliArguments);
+    server::DbmsServer dbmsServer;
+    QString error;
+    if (!dbmsServer.start(options.host, options.port, &error)) {
+        err << QStringLiteral("failed to start DBMS server: ") << error << Qt::endl;
+        return 1;
+    }
+    out << QStringLiteral("DBMS_SERVER listening on %1:%2")
+               .arg(options.host)
+               .arg(dbmsServer.serverPort())
+        << Qt::endl;
+    out.flush();
+    return app.exec();
 }

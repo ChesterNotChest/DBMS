@@ -1,6 +1,7 @@
 #include "../cli/cli_app.h"
-#include "../client/client_session_pool.h"
-#include "../client/sql_client_engine.h"
+#include "../client/remote_sql_client.h"
+#include "../constants/cli_client_def.h"
+#include "../server/sql_server.h"
 #include "../service/service.h"
 
 #include <QDir>
@@ -22,6 +23,25 @@ void removeTestDataRoot(const QString &path)
         directory.removeRecursively();
     }
 }
+
+class RemoteCliFixture
+{
+public:
+    bool start()
+    {
+        QString error;
+        return server.start(QString::fromLatin1(cliclient::kDefaultServerHost), 0, &error);
+    }
+
+    client::RemoteSqlClient makeClient() const
+    {
+        return client::RemoteSqlClient(QString::fromLatin1(cliclient::kDefaultServerHost),
+                                       server.serverPort(),
+                                       cliclient::kRpcDefaultTimeoutMs);
+    }
+
+    server::DbmsServer server;
+};
 
 } // namespace
 
@@ -56,9 +76,10 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
@@ -83,9 +104,10 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
@@ -109,9 +131,10 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
@@ -121,7 +144,7 @@ private slots:
                                       QStringLiteral("-p")});
 
         QCOMPARE(exitCode, 0);
-        QCOMPARE(pool.sessionCount(), 1);
+        QCOMPARE(remoteClient.sessionCount(), 1);
         QVERIFY(errorText.isEmpty());
     }
 
@@ -134,9 +157,10 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
@@ -151,9 +175,10 @@ private slots:
 
     void test_passwordValueDoesNotPrompt()
     {
-        client::ClientSessionPool setupPool;
-        client::SqlClientEngine setupEngine(&setupPool);
-        const QString setupClient = setupPool.createSession(m_dataRoot);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient setupEngine = fixture.makeClient();
+        const QString setupClient = setupEngine.createSession(m_dataRoot);
         service::SqlExecResult setupResult =
             setupEngine.login(setupClient, QStringLiteral("root"), QString());
         QVERIFY2(setupResult.success, qPrintable(setupResult.errorMessage));
@@ -168,9 +193,8 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),
@@ -209,9 +233,10 @@ private slots:
         QTextStream output(&outputText, QIODevice::WriteOnly);
         QTextStream errors(&errorText, QIODevice::WriteOnly);
 
-        client::ClientSessionPool pool;
-        client::SqlClientEngine engine(&pool);
-        cli::CliApp app(&pool, &engine, &input, &output, &errors);
+        RemoteCliFixture fixture;
+        QVERIFY(fixture.start());
+        client::RemoteSqlClient remoteClient = fixture.makeClient();
+        cli::CliApp app(&remoteClient, &input, &output, &errors);
 
         const int exitCode = app.run({QStringLiteral("DBMS_CLI"),
                                       QStringLiteral("--data-root"),

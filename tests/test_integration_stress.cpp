@@ -180,6 +180,99 @@ QString cliExecutablePath()
     return {};
 }
 
+QString serverExecutablePath()
+{
+    const QString executableName =
+#ifdef Q_OS_WIN
+        QStringLiteral("DBMS_SERVER.exe");
+#else
+        QStringLiteral("DBMS_SERVER");
+#endif
+
+    const QStringList candidates = {
+        QDir::current().absoluteFilePath(QStringLiteral("bin/%1").arg(executableName)),
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(executableName),
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../bin/%1").arg(executableName)),
+    };
+
+    for (const QString &candidate : candidates) {
+        const QFileInfo info(candidate);
+        if (info.exists() && info.isFile()) {
+            return info.absoluteFilePath();
+        }
+    }
+    return {};
+}
+
+bool startServerProcess(QProcess *process,
+                        const QString &serverPath,
+                        QString *host,
+                        quint16 *port,
+                        QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (process == nullptr) {
+        if (error != nullptr) *error = QStringLiteral("server process pointer is null");
+        return false;
+    }
+
+    const QString listenHost = QStringLiteral("127.0.0.1");
+    process->setProgram(serverPath);
+    process->setArguments({QStringLiteral("--host"), listenHost, QStringLiteral("--port"), QStringLiteral("0")});
+    process->start();
+    if (!process->waitForStarted(10000)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("failed to start DBMS_SERVER: %1").arg(process->errorString());
+        }
+        return false;
+    }
+
+    QByteArray output;
+    const QRegularExpression listenPattern(QStringLiteral("listening on ([^:]+):(\\d+)"));
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10000) {
+        if (process->waitForReadyRead(100)) {
+            output.append(process->readAllStandardOutput());
+            const QString text = QString::fromLocal8Bit(output);
+            const QRegularExpressionMatch match = listenPattern.match(text);
+            if (match.hasMatch()) {
+                if (host != nullptr) {
+                    *host = listenHost;
+                }
+                if (port != nullptr) {
+                    *port = static_cast<quint16>(match.captured(2).toUShort());
+                }
+                return true;
+            }
+        }
+        if (process->state() == QProcess::NotRunning) {
+            break;
+        }
+    }
+
+    if (error != nullptr) {
+        *error = QStringLiteral("DBMS_SERVER did not report a listening port: stdout=%1 stderr=%2")
+                     .arg(QString::fromLocal8Bit(output),
+                          QString::fromLocal8Bit(process->readAllStandardError()));
+    }
+    return false;
+}
+
+void stopServerProcess(QProcess *process)
+{
+    if (process == nullptr || process->state() == QProcess::NotRunning) {
+        return;
+    }
+    process->terminate();
+    if (!process->waitForFinished(5000)) {
+        process->kill();
+        process->waitForFinished(5000);
+    }
+}
+
 int stressRowCount(int defaultValue)
 {
     bool ok = false;
@@ -313,12 +406,18 @@ QString clientCrudSql(const QString &databaseName, int rowCount)
         .arg(targetId);
 }
 
-QStringList parallelClientArguments(const QString &dataRoot,
+QStringList parallelClientArguments(const QString &host,
+                                    quint16 port,
+                                    const QString &dataRoot,
                                     const QString &databaseName,
                                     int rowCount)
 {
     const QString sql = clientCrudSql(databaseName, rowCount);
-    return {QStringLiteral("--data-root"),
+    return {QStringLiteral("--host"),
+            host,
+            QStringLiteral("--port"),
+            QString::number(port),
+            QStringLiteral("--data-root"),
             dataRoot,
             QStringLiteral("-u"),
             QStringLiteral("root"),
@@ -611,6 +710,8 @@ protected:
 
         const QString cliPath = cliExecutablePath();
         QVERIFY2(!cliPath.isEmpty(), "DBMS_CLI executable is required for multi-client stress tests.");
+        const QString serverPath = serverExecutablePath();
+        QVERIFY2(!serverPath.isEmpty(), "DBMS_SERVER executable is required for C/S multi-client stress tests.");
 
         for (const int rowCount : stressScaleRowCounts()) {
             {
@@ -647,6 +748,17 @@ protected:
                                            QStringLiteral("count"));
             }
 
+            QProcess serverProcess;
+            QString serverHost;
+            quint16 serverPort = 0;
+            QString serverError;
+            QVERIFY2(startServerProcess(&serverProcess,
+                                        serverPath,
+                                        &serverHost,
+                                        &serverPort,
+                                        &serverError),
+                     qPrintable(serverError));
+
             client::ClientSessionPool setupPool;
             client::SqlClientEngine setupEngine(&setupPool);
             const QString setupClient = setupPool.createSession(m_dataRoot);
@@ -672,6 +784,8 @@ protected:
                     QProcess *process = new QProcess;
                     process->setProgram(cliPath);
                     process->setArguments(parallelClientArguments(
+                        serverHost,
+                        serverPort,
                         m_dataRoot,
                         QStringLiteral("stress_parallel_%1_%2").arg(rowCount).arg(i + 1),
                         rowCount));
@@ -712,14 +826,16 @@ protected:
                                             .arg(output, errorOutput)));
                     delete process;
                 }
+                stopServerProcess(&serverProcess);
                 appendPerformanceMetricRow(QStringLiteral("concurrent_crud"),
                                            QStringLiteral("concurrent_crud.success_count"),
                                            rowCount,
                                            QStringLiteral("four_client_parallel"),
-                                           QStringLiteral("success_count"),
-                                           successCount,
-                                           QStringLiteral("count"));
+                                               QStringLiteral("success_count"),
+                                               successCount,
+                                               QStringLiteral("count"));
             }
+            stopServerProcess(&serverProcess);
         }
     }
 

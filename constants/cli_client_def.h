@@ -13,6 +13,11 @@ inline constexpr const char *kUserTableName = "sys_users";
 inline constexpr const char *kPrivilegeTableName = "sys_database_privileges";
 inline constexpr const char *kGuiDefaultClientName = "gui-root-client";
 inline constexpr bool kEnableGuiAutoRootLogin = true;
+inline constexpr const char *kDefaultServerHost = "127.0.0.1";
+inline constexpr int kDefaultServerPort = 54545;
+inline constexpr int kRpcProtocolVersion = 1;
+inline constexpr int kRpcMaxFrameBytes = 16 * 1024 * 1024;
+inline constexpr int kRpcDefaultTimeoutMs = 10000;
 
 } // namespace cliclient
 

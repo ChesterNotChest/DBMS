@@ -87,6 +87,24 @@ SqlClientEngine::SqlClientEngine(ClientSessionPool *sessionPool)
 {
 }
 
+QString SqlClientEngine::createSession(const QString &dataRoot, const QString &userName)
+{
+    if (m_sessionPool == nullptr) {
+        return {};
+    }
+    return m_sessionPool->createSession(dataRoot, userName);
+}
+
+bool SqlClientEngine::closeSession(const QString &clientId)
+{
+    return m_sessionPool != nullptr && m_sessionPool->closeSession(clientId);
+}
+
+int SqlClientEngine::sessionCount() const
+{
+    return m_sessionPool == nullptr ? 0 : m_sessionPool->sessionCount();
+}
+
 service::SqlExecResult SqlClientEngine::login(const QString &clientId,
                                               const QString &userName,
                                               const QString &password)

@@ -1,8 +1,7 @@
 #ifndef CLI_CLI_APP_H
 #define CLI_CLI_APP_H
 
-#include "../client/client_session_pool.h"
-#include "../client/sql_client_engine.h"
+#include "../client/sql_client_runtime.h"
 
 #include <QTextStream>
 #include <QString>
@@ -13,8 +12,7 @@ namespace cli {
 class CliApp
 {
 public:
-    CliApp(client::ClientSessionPool *sessionPool,
-           client::SqlClientEngine *clientEngine,
+    explicit CliApp(client::SqlClientRuntime *clientRuntime,
            QTextStream *input,
            QTextStream *output,
            QTextStream *errorOutput);
@@ -43,8 +41,7 @@ private:
     void printHelp();
     void printResult(const service::SqlExecResult &result);
 
-    client::ClientSessionPool *m_sessionPool = nullptr;
-    client::SqlClientEngine *m_clientEngine = nullptr;
+    client::SqlClientRuntime *m_clientRuntime = nullptr;
     QTextStream *m_input = nullptr;
     QTextStream *m_output = nullptr;
     QTextStream *m_errorOutput = nullptr;

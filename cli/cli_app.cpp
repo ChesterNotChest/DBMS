@@ -5,13 +5,11 @@
 
 namespace cli {
 
-CliApp::CliApp(client::ClientSessionPool *sessionPool,
-               client::SqlClientEngine *clientEngine,
+CliApp::CliApp(client::SqlClientRuntime *clientRuntime,
                QTextStream *input,
                QTextStream *output,
                QTextStream *errorOutput)
-    : m_sessionPool(sessionPool)
-    , m_clientEngine(clientEngine)
+    : m_clientRuntime(clientRuntime)
     , m_input(input)
     , m_output(output)
     , m_errorOutput(errorOutput)
@@ -20,7 +18,7 @@ CliApp::CliApp(client::ClientSessionPool *sessionPool,
 
 int CliApp::run(const QStringList &arguments)
 {
-    if (m_sessionPool == nullptr || m_clientEngine == nullptr
+    if (m_clientRuntime == nullptr
         || m_input == nullptr || m_output == nullptr || m_errorOutput == nullptr) {
         return 2;
     }
@@ -36,7 +34,11 @@ int CliApp::run(const QStringList &arguments)
         return 0;
     }
 
-    const QString clientId = m_sessionPool->createSession(options.dataRoot, options.userName);
+    const QString clientId = m_clientRuntime->createSession(options.dataRoot, options.userName);
+    if (clientId.isEmpty()) {
+        *m_errorOutput << QStringLiteral("ERROR: failed to create server session") << Qt::endl;
+        return 1;
+    }
     if (!ensureAuthenticated(clientId, options)) {
         return 1;
     }
@@ -129,7 +131,7 @@ bool CliApp::ensureAuthenticated(const QString &clientId, const Options &options
         }
     }
 
-    const service::SqlExecResult result = m_clientEngine->login(clientId, userName, password);
+    const service::SqlExecResult result = m_clientRuntime->login(clientId, userName, password);
     if (!result.success) {
         printResult(result);
         return false;
@@ -159,7 +161,7 @@ QString CliApp::promptValue(const QString &label, bool *ok)
 
 int CliApp::runExecuteMode(const QString &clientId, const QString &sql)
 {
-    const service::SqlExecResult result = m_clientEngine->executeSql(clientId, sql);
+    const service::SqlExecResult result = m_clientRuntime->executeSql(clientId, sql);
     printResult(result);
     return result.success ? 0 : 1;
 }
@@ -193,7 +195,7 @@ int CliApp::runRepl(const QString &clientId)
             continue;
         }
 
-        const service::SqlExecResult result = m_clientEngine->executeSql(clientId, buffer);
+        const service::SqlExecResult result = m_clientRuntime->executeSql(clientId, buffer);
         printResult(result);
         buffer.clear();
     }
