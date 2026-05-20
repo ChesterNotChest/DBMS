@@ -61,6 +61,7 @@ private slots:
     void onAddColumn();
     void onDeleteColumn();
     void onSave();
+    void onRefresh();
     void onCellChanged(QTableWidgetItem *item);
     void onToggleLogFooter();
 

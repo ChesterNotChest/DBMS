@@ -471,9 +471,14 @@ void CreateTableDialog::buildLayout(const QString &defaultDb)
     clearBtn->setObjectName("danger");
     connect(clearBtn, &QPushButton::clicked, this, &CreateTableDialog::onClearAll);
 
+    auto *refreshBtn = new QPushButton("🔄 刷新");
+    refreshBtn->setObjectName("refresh");
+    connect(refreshBtn, &QPushButton::clicked, this, &CreateTableDialog::onRefresh);
+
     btnLayout->addWidget(addBtn);
     btnLayout->addWidget(delBtn);
     btnLayout->addWidget(clearBtn);
+    btnLayout->addWidget(refreshBtn);
     btnLayout->addStretch();
     mainLayout->addLayout(btnLayout);
 
@@ -822,6 +827,37 @@ void CreateTableDialog::onClearAll()
     }
 }
 
+void CreateTableDialog::onRefresh()
+{
+    auto reply = QMessageBox::question(this, "确认刷新", "确定要撤销所有修改并恢复到初始状态吗？",
+                                       QMessageBox::Yes | QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    m_fieldTable->setUpdatesEnabled(false);
+    
+    while (m_fieldTable->rowCount() > 0) {
+        m_fieldTable->removeRow(0);
+    }
+
+    if (!m_originalTableName.isEmpty()) {
+        m_tableNameEdit->setText(m_originalTableName);
+    }
+
+    for (const ColumnConfig &cfg : m_originalColumns) {
+        onAddColumnWithConfig(cfg);
+    }
+
+    if (m_originalColumns.isEmpty()) {
+        for (int i = 0; i < 3; i++) {
+            onAddColumn();
+        }
+    }
+
+    m_fieldTable->setUpdatesEnabled(true);
+}
+
 QString CreateTableDialog::buildSql() const
 {
     QString table = m_tableNameEdit->text().trimmed();
@@ -958,6 +994,7 @@ void CreateTableDialog::loadTableSchema(const QString &tableName, const QString 
     m_tableNameEdit->setText(tableName);
     m_tableNameEdit->setEnabled(false);
 
+    m_originalTableName = tableName;
     m_originalColumns.clear();
     while (m_fieldTable->rowCount() > 0) {
         m_fieldTable->removeRow(0);

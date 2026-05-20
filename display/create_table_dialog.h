@@ -42,6 +42,7 @@ private slots:
     void onDeleteColumn();
     void onClearAll();
     void onExecuteCreate();
+    void onRefresh();
 
 private:
     QString buildSql() const;
@@ -66,6 +67,7 @@ private:
     QString m_sourceTableName;
     bool m_isEditMode = false;
     QList<ColumnConfig> m_originalColumns;
+    QString m_originalTableName;
 
     void setRowForeignKeyData(int row, const ColumnConfig &cfg);
     ColumnConfig getRowForeignKeyData(int row) const;

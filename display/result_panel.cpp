@@ -153,7 +153,7 @@ ResultPanel::ResultPanel(QWidget* parent) : QWidget(parent) {
     connect(delRowBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteRow);
     connect(addColBtn, &QPushButton::clicked, this, &ResultPanel::onAddColumn);
     connect(delColBtn, &QPushButton::clicked, this, &ResultPanel::onDeleteColumn);
-    connect(refreshBtn, &QPushButton::clicked, this, [this]() { emit refreshRequested(); });
+    connect(refreshBtn, &QPushButton::clicked, this, &ResultPanel::onRefresh);
     connect(m_logToggleBtn, &QPushButton::clicked, this, &ResultPanel::onToggleLogFooter);
     connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
 }
@@ -750,6 +750,96 @@ void ResultPanel::undoLastChange() {
     }
 
     m_statsLabel->setText(QStringLiteral("没有可撤销的操作"));
+}
+
+void ResultPanel::onRefresh() {
+    if (!hasUnsavedChanges()) {
+        m_statsLabel->setText(QStringLiteral("<span style='color:#757575'>没有未保存的修改</span>"));
+        return;
+    }
+
+    auto reply = QMessageBox::question(this, "确认刷新", 
+                                       "确定要撤销所有未保存的修改并恢复到原始状态吗？",
+                                       QMessageBox::Yes | QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    m_table->setUpdatesEnabled(false);
+
+    // 1. 清除所有新增的行
+    if (!m_newRowIds.isEmpty()) {
+        QList<int> newRows = m_newRowIds.values();
+        std::sort(newRows.begin(), newRows.end(), std::greater<int>());
+        for (int r : newRows) {
+            m_table->removeRow(r);
+            m_currentRows.remove(r);
+        }
+        m_newRowIds.clear();
+    }
+
+    // 2. 恢复所有被修改的单元格到原始值
+    for (auto it = m_originalRows.begin(); it != m_originalRows.end(); ++it) {
+        int row = it.key();
+        const QStringList& originalData = it.value();
+        for (int col = 0; col < originalData.size(); ++col) {
+            QTableWidgetItem* item = m_table->item(row, col);
+            if (item && item->text() != originalData[col]) {
+                item->setText(originalData[col]);
+            }
+        }
+        m_currentRows[row] = originalData;
+    }
+    m_dirtyRowIds.clear();
+
+    // 3. 恢复所有删除的列
+    if (!m_deletedColumnsWithIndex.isEmpty()) {
+        QList<int> sortedIndexes = m_deletedColumnsWithIndex.keys();
+        std::sort(sortedIndexes.begin(), sortedIndexes.end(), std::greater<int>());
+        for (int idx : sortedIndexes) {
+            QString colName = m_deletedColumnsWithIndex[idx];
+            int insertPos = qMin(idx, m_table->columnCount());
+            m_table->insertColumn(insertPos);
+            m_table->setHorizontalHeaderItem(insertPos, new QTableWidgetItem(colName));
+            for (int r = 0; r < m_table->rowCount(); ++r) {
+                QTableWidgetItem* item = new QTableWidgetItem("");
+                item->setTextAlignment(Qt::AlignCenter);
+                m_table->setItem(r, insertPos, item);
+            }
+            m_deletedColumnNames.remove(colName);
+        }
+        m_deletedColumnsWithIndex.clear();
+    }
+
+    // 4. 清除所有新增的列
+    if (!m_addedColumns.isEmpty()) {
+        QList<int> colsToRemove;
+        for (int c = m_table->columnCount() - 1; c >= 0; --c) {
+            QString colName = m_table->horizontalHeaderItem(c)->text();
+            if (m_addedColumns.contains(colName)) {
+                colsToRemove.append(c);
+            }
+        }
+        for (int c : colsToRemove) {
+            m_table->removeColumn(c);
+        }
+        m_addedColumns.clear();
+    }
+
+    // 5. 恢复列名列表
+    m_lastColumns.clear();
+    for (int c = 0; c < m_table->columnCount(); ++c) {
+        m_lastColumns.append(m_table->horizontalHeaderItem(c)->text());
+    }
+
+    // 6. 清除删除行标记
+    m_deletedRows.clear();
+
+    m_table->setUpdatesEnabled(true);
+
+    expandLogFooter();
+    appendLog(QStringLiteral("🔄 已刷新：所有未保存的修改已撤销"), "#4CAF50");
+    m_statsLabel->setText(QStringLiteral("已刷新，数据已恢复到原始状态"));
 }
 
 void ResultPanel::onExport() {
