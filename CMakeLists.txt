@@ -25,6 +25,8 @@ set(DBMS_CORE_SOURCES
         utils/thread_runtime/lock_manager.cpp
         utils/thread_runtime/catalog_cache.h
         utils/thread_runtime/catalog_cache.cpp
+        utils/console_encoding.h
+        utils/console_encoding.cpp
         utils/service_common/name_normalize.cpp
         utils/service_common/constraint_worker.cpp
         utils/service_common/sql_stringifier.cpp

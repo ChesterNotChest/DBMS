@@ -2,6 +2,7 @@
 
 #include "../client/remote_sql_client.h"
 #include "../constants/cli_client_def.h"
+#include "../utils/console_encoding.h"
 
 #include <QCoreApplication>
 #include <QTextStream>
@@ -73,10 +74,14 @@ ConnectionOptions extractConnectionOptions(const QStringList &arguments, QString
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    utils::configureUtf8Console();
 
     QTextStream input(stdin);
     QTextStream output(stdout);
     QTextStream errorOutput(stderr);
+    utils::configureUtf8TextStream(input);
+    utils::configureUtf8TextStream(output);
+    utils::configureUtf8TextStream(errorOutput);
 
     QString optionError;
     const ConnectionOptions connection = extractConnectionOptions(app.arguments(), &optionError);

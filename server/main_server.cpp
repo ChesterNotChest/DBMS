@@ -1,6 +1,7 @@
 #include "sql_server.h"
 
 #include "../constants/cli_client_def.h"
+#include "../utils/console_encoding.h"
 
 #include <QCoreApplication>
 #include <QTextStream>
@@ -80,8 +81,11 @@ void printHelp(QTextStream &out)
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    utils::configureUtf8Console();
     QTextStream out(stdout);
     QTextStream err(stderr);
+    utils::configureUtf8TextStream(out);
+    utils::configureUtf8TextStream(err);
 
     QString optionError;
     const ServerOptions options = parseOptions(app.arguments(), &optionError);
