@@ -376,6 +376,15 @@ private slots:
         QCOMPARE(qualifiedUpdate.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
         QVERIFY(!qualifiedUpdate.payload.contains(QStringLiteral("conditions")));
 
+        const sqlparser::ParseResult expressionUpdate = sqlparser::parseSql(
+            QStringLiteral("UPDATE student SET age = age * 1.04 WHERE id = 1"));
+        QVERIFY2(expressionUpdate.success, qPrintable(expressionUpdate.errorMessage));
+        QCOMPARE(expressionUpdate.payload.value(QStringLiteral("assignmentExpressions"))
+                     .toMap()
+                     .value(QStringLiteral("age"))
+                     .toString(),
+                 QStringLiteral("age * 1.04"));
+
         const sqlparser::ParseResult qualifiedDelete = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE student.id = 1"));
         QVERIFY2(qualifiedDelete.success, qPrintable(qualifiedDelete.errorMessage));
@@ -434,6 +443,53 @@ private slots:
         QVERIFY2(remainingRows.success, qPrintable(remainingRows.errorMessage));
         QCOMPARE(remainingRows.resultTable.rows.size(), 1);
         QCOMPARE(remainingRows.resultTable.rows.first(), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
+    }
+
+    void test_dispatcherUpdateEvaluatesArithmeticAssignment()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_expr_db");
+        const QString tableName = QStringLiteral("sc_update_expr");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("sno"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("cno"), tabledef::ColumnType::Varchar, 16),
+            makeColumn(QStringLiteral("grade"), tabledef::ColumnType::Int),
+        };
+        ensureTable(tableName, schema);
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("1")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QStringLiteral("100")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("2")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QStringLiteral("75")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("3")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QString()}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        QVERIFY2(dispatcher.execute(QStringLiteral("USE %1").arg(databaseName)).success,
+                 "use database failed");
+
+        const SqlExecResult updateResult = dispatcher.execute(QStringLiteral(
+            "UPDATE %1 SET grade = grade * 1.04 "
+            "WHERE cno = '800003' AND grade > 75 AND grade IS NOT NULL").arg(tableName));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult rows = selectAllRows(tableName);
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("800003"), QStringLiteral("104")}));
+        QCOMPARE(rows.resultTable.rows.at(1),
+                 QStringList({QStringLiteral("2"), QStringLiteral("800003"), QStringLiteral("75")}));
+        QCOMPARE(rows.resultTable.rows.at(2),
+                 QStringList({QStringLiteral("3"), QStringLiteral("800003"), QString()}));
     }
 
     void test_dispatcherUpdateAppliesFullWherePredicates()

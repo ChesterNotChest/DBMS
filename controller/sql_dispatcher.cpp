@@ -940,6 +940,8 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
+    const QVariantMap assignmentExpressions =
+        p.payload.value(QStringLiteral("assignmentExpressions")).toMap();
     QList<SimpleCondition> conditions;
     QString conditionError;
     const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
@@ -952,6 +954,9 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
+    QMap<QString, QString> assignExpressionMap;
+    for (auto it = assignmentExpressions.begin(); it != assignmentExpressions.end(); ++it)
+        assignExpressionMap[it.key()] = it.value().toString();
 
     if (hasComplexWhere) {
         QueryExecutor executor;
@@ -962,14 +967,14 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
         evalContext.allowSubquery = true;
 
         const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
-        auto r = tuple_service::updateRows(table, assignMap, conditions, &whereAst, &evalContext);
+        auto r = tuple_service::updateRows(table, assignMap, assignExpressionMap, conditions, &whereAst, &evalContext);
         if (r.success)
             return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
                     r.affectedRowCount};
         return {false, r.errorMessage};
     }
 
-    auto r = tuple_service::updateRows(table, assignMap, conditions);
+    auto r = tuple_service::updateRows(table, assignMap, assignExpressionMap, conditions);
     if (r.success)
         return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
                 r.affectedRowCount};

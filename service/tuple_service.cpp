@@ -169,6 +169,16 @@ TaskResult updateRows(const QString &tableName,
                       const logic::LogicNode *complexWhereAst,
                       const logic::LogicEvalContext *evalContext)
 {
+    return updateRows(tableName, assignmentMap, {}, conditions, complexWhereAst, evalContext);
+}
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QMap<QString, QString> &assignmentExpressionMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext)
+{
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
@@ -193,7 +203,8 @@ TaskResult updateRows(const QString &tableName,
                                                           conditions,
                                                           ValidationMode::UserData,
                                                           complexWhereAst,
-                                                          evalContext);
+                                                          evalContext,
+                                                          assignmentExpressionMap);
     result.success = dmlResult.success;
     result.errorMessage = dmlResult.errorMessage;
     result.affectedRowCount = dmlResult.affectedRowCount;
