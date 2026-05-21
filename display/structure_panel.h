@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QFont>
 #include <QColor>
+#include <QPoint>
 
 namespace client {
 class SqlClientEngine;
@@ -33,6 +34,8 @@ signals:
     void databaseSelected(const QString &dbName);
     void tableSelected(const QString &dbName, const QString &tableName);
     void columnSelected(const QString &dbName, const QString &tableName, const QString &columnName);
+    void editConstraintsRequested(const QString &dbName, const QString &tableName);
+    void editColumnRequested(const QString &dbName, const QString &tableName, const QString &columnName);
     void newDatabaseRequested();
     void openDatabaseRequested();
     void deleteDatabaseRequested();
@@ -40,6 +43,7 @@ signals:
 private slots:
     void onTreeItemDoubleClicked(QTreeWidgetItem *item, int column);
     void onTreeItemExpanded(QTreeWidgetItem *item);
+    void onTreeContextMenuRequested(const QPoint &pos);
 
 private:
     void setupUI();

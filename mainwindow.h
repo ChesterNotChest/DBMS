@@ -22,6 +22,8 @@
 #include "display/editor_panel.h"
 #include "display/result_panel.h"
 #include "display/create_table_dialog.h"
+#include "display/constraint_dialog.h"
+#include "display/column_property_dialog.h"
 #include "client/client_session_pool.h"
 #include "client/sql_client_engine.h"
 #include "controller/sql_dispatcher.h"
@@ -56,6 +58,8 @@ private slots:
     void onDatabaseSelected(const QString &dbName);
     void onTableSelected(const QString &dbName, const QString &tableName);
     void onColumnSelected(const QString &dbName, const QString &tableName, const QString &columnName);
+    void onEditConstraintsRequested(const QString &dbName, const QString &tableName);
+    void onEditColumnRequested(const QString &dbName, const QString &tableName, const QString &columnName);
 
     void onExecuteRequested(const QString &sql);
 

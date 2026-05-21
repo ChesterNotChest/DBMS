@@ -327,6 +327,10 @@ void MainWindow::setupLayout()
             this, &MainWindow::onTableSelected);
     connect(m_structurePanel, &StructurePanel::columnSelected,
             this, &MainWindow::onColumnSelected);
+    connect(m_structurePanel, &StructurePanel::editConstraintsRequested,
+            this, &MainWindow::onEditConstraintsRequested);
+    connect(m_structurePanel, &StructurePanel::editColumnRequested,
+            this, &MainWindow::onEditColumnRequested);
     connect(m_structurePanel, &StructurePanel::newDatabaseRequested,
             this, &MainWindow::onNewDatabase);
     connect(m_structurePanel, &StructurePanel::openDatabaseRequested,
@@ -486,6 +490,75 @@ void MainWindow::onColumnSelected(const QString &dbName,
     // 自动执行查询：SELECT <column> FROM <table>
     QString sql = QString("SELECT %1 FROM %2;").arg(columnName).arg(tableName);
     onExecuteRequested(sql);
+}
+
+void MainWindow::onEditConstraintsRequested(const QString &dbName,
+                                            const QString &tableName)
+{
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
+    }
+
+    m_currentTable = tableName;
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
+
+    const service::SqlExecResult showCreate =
+        executeSqlForGui(QStringLiteral("SHOW CREATE TABLE %1;").arg(tableName));
+    if (!showCreate.success) {
+        m_resultPanel->showError(QStringLiteral("读取约束失败: ") + showCreate.errorMessage);
+        return;
+    }
+
+    ConstraintDialog dialog(tableName, showCreate.text, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString sql = dialog.generatedSql().trimmed();
+    if (sql.isEmpty()) {
+        m_resultPanel->showLog(QStringLiteral("约束未变更，无需保存"));
+        return;
+    }
+
+    onExecuteRequested(sql);
+    m_structurePanel->refresh();
+}
+
+void MainWindow::onEditColumnRequested(const QString &dbName,
+                                       const QString &tableName,
+                                       const QString &columnName)
+{
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
+    }
+
+    m_currentTable = tableName;
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
+
+    const service::SqlExecResult showCreate =
+        executeSqlForGui(QStringLiteral("SHOW CREATE TABLE %1;").arg(tableName));
+    if (!showCreate.success) {
+        m_resultPanel->showError(QStringLiteral("读取列属性失败: ") + showCreate.errorMessage);
+        return;
+    }
+
+    ColumnPropertyDialog dialog(tableName, columnName, showCreate.text, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString sql = dialog.generatedSql().trimmed();
+    if (sql.isEmpty()) {
+        m_resultPanel->showLog(QStringLiteral("列属性未变更，无需保存"));
+        return;
+    }
+
+    onExecuteRequested(sql);
+    m_structurePanel->refresh();
 }
 
 bool MainWindow::switchGuiDatabase(const QString &dbName)

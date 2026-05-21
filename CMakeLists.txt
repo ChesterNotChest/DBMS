@@ -99,6 +99,10 @@ set(DBMS_GUI_SOURCES
         display/create_table_dialog.cpp
         display/add_column_dialog.h
         display/add_column_dialog.cpp
+        display/constraint_dialog.h
+        display/constraint_dialog.cpp
+        display/column_property_dialog.h
+        display/column_property_dialog.cpp
         resources/resources.qrc
 )
 

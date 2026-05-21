@@ -9,8 +9,10 @@
 #include "client/sql_client_engine.h"
 #include "service/service.h"
 
+#include <QAction>
 #include <QFile>
 #include <QHeaderView>
+#include <QMenu>
 #include <QTextStream>
 #include <QRegularExpression>
 
@@ -396,6 +398,9 @@ void StructurePanel::setupUI()
             this, &StructurePanel::onTreeItemDoubleClicked);
     connect(m_treeWidget, &QTreeWidget::itemExpanded,
             this, &StructurePanel::onTreeItemExpanded);
+    m_treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_treeWidget, &QTreeWidget::customContextMenuRequested,
+            this, &StructurePanel::onTreeContextMenuRequested);
 
     layout->addWidget(m_treeWidget, 1);
 
@@ -653,6 +658,57 @@ void StructurePanel::onTreeItemDoubleClicked(QTreeWidgetItem *item, int column)
             m_currentTable = parts[1];
             updateStatusLabel();
             emit columnSelected(parts[0], parts[1], parts[2]);
+        }
+    }
+}
+
+void StructurePanel::onTreeContextMenuRequested(const QPoint &pos)
+{
+    QTreeWidgetItem *item = m_treeWidget->itemAt(pos);
+    if (item == nullptr) {
+        return;
+    }
+
+    const QString data = item->data(0, Qt::UserRole).toString();
+    QString dbName;
+    QString tableName;
+    QString columnName;
+
+    if (data.startsWith(QStringLiteral("table:"))) {
+        const QStringList parts = data.mid(6).split(QLatin1Char(':'));
+        if (parts.size() != 2) {
+            return;
+        }
+        dbName = parts.at(0);
+        tableName = parts.at(1);
+    } else if (data.startsWith(QStringLiteral("column:"))) {
+        const QStringList parts = data.mid(7).split(QLatin1Char(':'));
+        if (parts.size() != 3) {
+            return;
+        }
+        dbName = parts.at(0);
+        tableName = parts.at(1);
+        columnName = parts.at(2);
+    } else {
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *editAction = nullptr;
+    if (columnName.isEmpty()) {
+        editAction = menu.addAction(QStringLiteral("编辑表约束"));
+    } else {
+        editAction = menu.addAction(QStringLiteral("编辑列属性"));
+    }
+    QAction *selected = menu.exec(m_treeWidget->viewport()->mapToGlobal(pos));
+    if (selected == editAction) {
+        m_currentDatabase = dbName;
+        m_currentTable = tableName;
+        updateStatusLabel();
+        if (columnName.isEmpty()) {
+            emit editConstraintsRequested(dbName, tableName);
+        } else {
+            emit editColumnRequested(dbName, tableName, columnName);
         }
     }
 }
