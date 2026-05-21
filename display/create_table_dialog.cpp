@@ -225,8 +225,8 @@ void CreateTableDialog::buildUi(const QString &defaultDb)
     m_fieldTable->setColumnWidth(ColType,     110);
     m_fieldTable->setColumnWidth(ColLength,   55);
     m_fieldTable->setColumnWidth(ColNotNull,  65);
-    m_fieldTable->setColumnWidth(ColPk,       50);
-    m_fieldTable->setColumnWidth(ColUnique,   50);
+    m_fieldTable->setColumnWidth(ColPk,       65);
+    m_fieldTable->setColumnWidth(ColUnique,   65);
     m_fieldTable->setColumnWidth(ColDefault,  110);
     m_fieldTable->setColumnWidth(ColFkTable,  120);
     m_fieldTable->setColumnWidth(ColFkColumn, 120);
@@ -302,8 +302,21 @@ void CreateTableDialog::populateRefTables(QComboBox *combo)
         m_currentDb + "/" + m_currentDb + ".tab");
 
     QFile f(tabPath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QDir dbDir(QDir(dataRoot).absoluteFilePath(m_currentDb));
+        if (!dbDir.exists()) return;
+        QStringList tables;
+        for (const QFileInfo &fi : dbDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            if (QFileInfo::exists(fi.absoluteFilePath() + "/table.meta"))
+                tables.append(fi.fileName());
+        }
+        if (!tables.isEmpty()) {
+            tables.sort();
+            for (const QString &t : tables)
+                combo->addItem(t);
+        }
         return;
+    }
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
     f.close();
     if (!doc.isObject()) return;
@@ -350,6 +363,18 @@ void CreateTableDialog::populateRefColumns(QComboBox *refTableCombo, QComboBox *
     }
 }
 
+static QWidget *makeCheckCell(QCheckBox *&cb)
+{
+    cb = new QCheckBox;
+    cb->setFocusPolicy(Qt::StrongFocus);
+    auto *w = new QWidget;
+    auto *l = new QHBoxLayout(w);
+    l->setContentsMargins(0, 0, 0, 0);
+    l->setAlignment(Qt::AlignCenter);
+    l->addWidget(cb);
+    return w;
+}
+
 // ── Add a new row ──
 void CreateTableDialog::onAddRow()
 {
@@ -380,23 +405,13 @@ void CreateTableDialog::onAddRow()
     m_fieldTable->setItem(row, ColLength, lenItem);
 
     // Col 3: NOT NULL checkbox
-    auto *nnCb = new QCheckBox;
-    auto *nnW = new QWidget;
-    auto *nnL = new QHBoxLayout(nnW);
-    nnL->setContentsMargins(0, 0, 0, 0);
-    nnL->setAlignment(Qt::AlignCenter);
-    nnL->addWidget(nnCb);
-    m_fieldTable->setCellWidget(row, ColNotNull, nnW);
+    QCheckBox *nnCb = nullptr;
+    m_fieldTable->setCellWidget(row, ColNotNull, makeCheckCell(nnCb));
     connect(nnCb, &QCheckBox::toggled, this, [this, row]() { onCellChanged(row, ColNotNull); });
 
     // Col 4: PK checkbox
-    auto *pkCb = new QCheckBox;
-    auto *pkW = new QWidget;
-    auto *pkL = new QHBoxLayout(pkW);
-    pkL->setContentsMargins(0, 0, 0, 0);
-    pkL->setAlignment(Qt::AlignCenter);
-    pkL->addWidget(pkCb);
-    m_fieldTable->setCellWidget(row, ColPk, pkW);
+    QCheckBox *pkCb = nullptr;
+    m_fieldTable->setCellWidget(row, ColPk, makeCheckCell(pkCb));
     connect(pkCb, &QCheckBox::toggled, this, [this, row](bool checked) {
         if (checked) {
             for (int r = 0; r < m_fieldTable->rowCount(); ++r) {
@@ -416,13 +431,8 @@ void CreateTableDialog::onAddRow()
     });
 
     // Col 5: UNIQUE checkbox
-    auto *uqCb = new QCheckBox;
-    auto *uqW = new QWidget;
-    auto *uqL = new QHBoxLayout(uqW);
-    uqL->setContentsMargins(0, 0, 0, 0);
-    uqL->setAlignment(Qt::AlignCenter);
-    uqL->addWidget(uqCb);
-    m_fieldTable->setCellWidget(row, ColUnique, uqW);
+    QCheckBox *uqCb = nullptr;
+    m_fieldTable->setCellWidget(row, ColUnique, makeCheckCell(uqCb));
     connect(uqCb, &QCheckBox::toggled, this, [this, row]() { onCellChanged(row, ColUnique); });
 
     // Col 6: default value
