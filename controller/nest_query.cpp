@@ -935,7 +935,7 @@ int compareCellValues(const QString &left,
     if (left.isEmpty() && right.isEmpty()) return 0;
     if (left.isEmpty()) return -1;
     if (right.isEmpty()) return 1;
-    if (type == tabledef::ColumnType::Int) {
+    if (type == tabledef::ColumnType::Int || type == tabledef::ColumnType::SmallInt) {
         bool leftOk = false;
         bool rightOk = false;
         const qlonglong leftValue = left.toLongLong(&leftOk);
@@ -1000,7 +1000,9 @@ bool aggregateFunctionFromName(const QString &name, AggregateFunction *function)
 
 bool isNumericType(tabledef::ColumnType type)
 {
-    return type == tabledef::ColumnType::Int || type == tabledef::ColumnType::Float;
+    return type == tabledef::ColumnType::Int
+           || type == tabledef::ColumnType::SmallInt
+           || type == tabledef::ColumnType::Float;
 }
 
 QString aggregateFunctionDisplayName(AggregateFunction function)

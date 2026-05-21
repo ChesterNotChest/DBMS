@@ -393,7 +393,7 @@ void ResultPanel::onAddColumn() {
         return;
     }
 
-    AddColumnDialog dlg(m_currentDb, this);
+    AddColumnDialog dlg(m_currentDb, m_currentTable, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -422,7 +422,7 @@ void ResultPanel::onAddColumn() {
         }
 
         QString typeStr = cfg.type;
-        if ((cfg.type == "VARCHAR" || cfg.type == "CHAR") && cfg.length > 0) {
+        if (cfg.type == "VARCHAR" && cfg.length > 0) {
             typeStr = QString("%1(%2)").arg(cfg.type).arg(cfg.length);
         }
 

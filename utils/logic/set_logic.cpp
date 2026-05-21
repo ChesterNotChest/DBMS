@@ -37,8 +37,10 @@ LogicTruthValue compareValues(const LogicCellValue &lhs,
     }
 
     const bool numericCompare = lhs.type == tabledef::ColumnType::Int
+                                || lhs.type == tabledef::ColumnType::SmallInt
                                 || lhs.type == tabledef::ColumnType::Float
                                 || rhs.type == tabledef::ColumnType::Int
+                                || rhs.type == tabledef::ColumnType::SmallInt
                                 || rhs.type == tabledef::ColumnType::Float;
     if (numericCompare) {
         bool leftOk = false;

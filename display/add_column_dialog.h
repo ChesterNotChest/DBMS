@@ -38,6 +38,7 @@ class AddColumnDialog : public QDialog
 
 public:
     explicit AddColumnDialog(const QString &currentDb,
+                             const QString &currentTable,
                              QWidget *parent = nullptr);
 
     QList<ColumnConfig> getAllConfigs() const;
@@ -64,6 +65,7 @@ private:
     QPushButton  *m_okBtn      = nullptr;
 
     QString m_currentDb;
+    QString m_currentTable;
     QString m_generatedSql;
 };
 

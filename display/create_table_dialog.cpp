@@ -29,6 +29,26 @@ static QString defaultDataRootImpl()
 #endif
 }
 
+static QStringList tabCandidates(const QString &dataRoot, const QString &dbName)
+{
+    const QDir rootDir(dataRoot);
+    return {
+        rootDir.absoluteFilePath(dbName + "/" + dbName + ".tab"),
+        rootDir.absoluteFilePath(dbName + ".tab")
+    };
+}
+
+static QStringList metaCandidates(const QString &dataRoot,
+                                 const QString &dbName,
+                                 const QString &tableName)
+{
+    const QDir rootDir(dataRoot);
+    return {
+        rootDir.absoluteFilePath(dbName + "/" + tableName + "/table.meta"),
+        rootDir.absoluteFilePath(dbName + "/" + tableName + ".meta")
+    };
+}
+
 static void applyCommonStyle(QWidget *w)
 {
     w->setStyleSheet(R"(
@@ -298,11 +318,13 @@ void CreateTableDialog::populateRefTables(QComboBox *combo)
     if (m_currentDb.isEmpty()) return;
 
     const QString dataRoot = defaultDataRoot();
-    const QString tabPath = QDir(dataRoot).absoluteFilePath(
-        m_currentDb + "/" + m_currentDb + ".tab");
-
-    QFile f(tabPath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QFile f;
+    for (const QString &tabPath : tabCandidates(dataRoot, m_currentDb)) {
+        f.setFileName(tabPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+            break;
+    }
+    if (!f.isOpen()) {
         QDir dbDir(QDir(dataRoot).absoluteFilePath(m_currentDb));
         if (!dbDir.exists()) return;
         QStringList tables;
@@ -341,11 +363,13 @@ void CreateTableDialog::populateRefColumns(QComboBox *refTableCombo, QComboBox *
     if (tableName.isEmpty() || m_currentDb.isEmpty()) return;
 
     const QString dataRoot = defaultDataRoot();
-    const QString metaPath = QDir(dataRoot).absoluteFilePath(
-        m_currentDb + "/" + tableName + "/table.meta");
-
-    QFile f(metaPath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    QFile f;
+    for (const QString &metaPath : metaCandidates(dataRoot, m_currentDb, tableName)) {
+        f.setFileName(metaPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+            break;
+    }
+    if (!f.isOpen())
         return;
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
     f.close();
@@ -390,9 +414,7 @@ void CreateTableDialog::onAddRow()
 
     // Col 1: type combo
     auto *typeCombo = new QComboBox;
-    typeCombo->addItems({"INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
-                         "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME",
-                         "TIME", "BOOLEAN", "BLOB"});
+    typeCombo->addItems({"INT", "SMALLINT", "FLOAT", "VARCHAR"});
     typeCombo->setCurrentText("VARCHAR");
     m_fieldTable->setCellWidget(row, ColType, typeCombo);
     connect(typeCombo, &QComboBox::currentTextChanged, this, [this, row]() {
@@ -527,7 +549,7 @@ QString CreateTableDialog::buildCreateSql() const
         QString fullType = type;
         auto *lenItem = m_fieldTable->item(row, ColLength);
         const QString len = lenItem ? lenItem->text().trimmed() : QString();
-        if (!len.isEmpty() && (type == "VARCHAR" || type == "CHAR" || type == "DECIMAL"))
+        if (!len.isEmpty() && type == "VARCHAR")
             fullType = QString("%1(%2)").arg(type, len);
 
         // NOT NULL
@@ -597,11 +619,12 @@ QString CreateTableDialog::buildCreateSql() const
         if (isUq && !isPk) colDef += " UNIQUE";
         if (!defaultStr.isEmpty()) colDef += " " + defaultStr;
 
-        // FK reference (inline)
+        // FK reference or trailing CHECK/action text
         if (!refTable.isEmpty() && !refCol.isEmpty()) {
             colDef += QString(" REFERENCES %1(%2)").arg(refTable, refCol);
-            if (!action.isEmpty())
-                colDef += " " + action;
+        }
+        if (!action.isEmpty()) {
+            colDef += " " + action;
         }
 
         colDefs.append(colDef);

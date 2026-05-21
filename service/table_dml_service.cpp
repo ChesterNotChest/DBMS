@@ -935,9 +935,10 @@ bool buildCandidateRow(const tabledef::TableSchema &schema,
 
         if (value.isEmpty()) {
             if (column.autoIncrement) {
-                if (column.type != tabledef::ColumnType::Int) {
+                if (column.type != tabledef::ColumnType::Int
+                    && column.type != tabledef::ColumnType::SmallInt) {
                     if (error != nullptr) {
-                        *error = QStringLiteral("AUTO_INCREMENT column '%1' must use INT type")
+                        *error = QStringLiteral("AUTO_INCREMENT column '%1' must use INT or SMALLINT type")
                                      .arg(column.name);
                     }
                     return false;

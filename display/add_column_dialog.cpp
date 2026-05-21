@@ -2,7 +2,7 @@
 #include <QMessageBox>
 #include <QTimer>
 
-// ── Column indices ──
+// 鈹€鈹€ Column indices 鈹€鈹€
 enum FieldCol {
     ColName     = 0,
     ColType     = 1,
@@ -56,6 +56,26 @@ static QStringList listDbNames()
     return dbs;
 }
 
+static QStringList tabCandidates(const QString &dataRoot, const QString &dbName)
+{
+    const QDir rootDir(dataRoot);
+    return {
+        rootDir.absoluteFilePath(dbName + "/" + dbName + ".tab"),
+        rootDir.absoluteFilePath(dbName + ".tab")
+    };
+}
+
+static QStringList metaCandidates(const QString &dataRoot,
+                                 const QString &dbName,
+                                 const QString &tableName)
+{
+    const QDir rootDir(dataRoot);
+    return {
+        rootDir.absoluteFilePath(dbName + "/" + tableName + "/table.meta"),
+        rootDir.absoluteFilePath(dbName + "/" + tableName + ".meta")
+    };
+}
+
 static QWidget *makeCheckCell(QCheckBox *&cb)
 {
     cb = new QCheckBox;
@@ -68,11 +88,12 @@ static QWidget *makeCheckCell(QCheckBox *&cb)
     return w;
 }
 
-AddColumnDialog::AddColumnDialog(const QString &currentDb, QWidget *parent)
+AddColumnDialog::AddColumnDialog(const QString &currentDb, const QString &currentTable, QWidget *parent)
     : QDialog(parent)
     , m_currentDb(currentDb)
+    , m_currentTable(currentTable)
 {
-    setWindowTitle(QString::fromUtf8("新增列"));
+    setWindowTitle(QString::fromUtf8("Add Column"));
     setWindowFlags(Qt::Dialog | Qt::WindowCloseButtonHint);
     setMinimumSize(960, 640);
     setSizeGripEnabled(true);
@@ -218,24 +239,24 @@ void AddColumnDialog::buildUi()
     root->setSpacing(12);
     root->setContentsMargins(20, 20, 20, 20);
 
-    // ── Title ──
-    auto *title = new QLabel(QString::fromUtf8("新增列"));
+    // 鈹€鈹€ Title 鈹€鈹€
+    auto *title = new QLabel(QString::fromUtf8("Add Column"));
     title->setStyleSheet("font-size: 20px; font-weight: 700; color: #1F2937;");
     root->addWidget(title);
 
-    // ── Field table ──
+    // 鈹€鈹€ Field table 鈹€鈹€
     m_fieldTable = new QTableWidget(0, ColCount);
     m_fieldTable->setHorizontalHeaderLabels({
-        QString::fromUtf8("字段名"),
-        QString::fromUtf8("数据类型"),
-        QString::fromUtf8("长度"),
+        QString::fromUtf8("Field Name"),
+        QString::fromUtf8("Data Type"),
+        QString::fromUtf8("Length"),
         QString::fromUtf8("NOT NULL"),
-        QString::fromUtf8("主键"),
-        QString::fromUtf8("唯一"),
-        QString::fromUtf8("默认值"),
-        QString::fromUtf8("外键表"),
-        QString::fromUtf8("外键字段"),
-        QString::fromUtf8("约束")
+        QString::fromUtf8("PK"),
+        QString::fromUtf8("Unique"),
+        QString::fromUtf8("Default"),
+        QString::fromUtf8("FK Table"),
+        QString::fromUtf8("FK Column"),
+        QString::fromUtf8("Constraint")
     });
     m_fieldTable->setColumnWidth(ColName,     130);
     m_fieldTable->setColumnWidth(ColType,     110);
@@ -258,25 +279,25 @@ void AddColumnDialog::buildUi()
 
     root->addWidget(m_fieldTable, 1);
 
-    // ── Button row ──
+    // 鈹€鈹€ Button row 鈹€鈹€
     auto *btnRow = new QHBoxLayout;
     btnRow->setSpacing(10);
 
-    auto *addBtn = new QPushButton(QString::fromUtf8("＋ 添加行"));
-    addBtn->setToolTip(QString::fromUtf8("添加一个新字段行"));
+    auto *addBtn = new QPushButton(QString::fromUtf8("+ Add Row"));
+    addBtn->setToolTip(QString::fromUtf8("Add a new field row"));
     connect(addBtn, &QPushButton::clicked, this, &AddColumnDialog::onAddRow);
 
-    auto *delBtn = new QPushButton(QString::fromUtf8("－ 删除行"));
-    delBtn->setToolTip(QString::fromUtf8("删除当前选中的行"));
+    auto *delBtn = new QPushButton(QString::fromUtf8("- Delete Row"));
+    delBtn->setToolTip(QString::fromUtf8("Delete the selected row"));
     connect(delBtn, &QPushButton::clicked, this, &AddColumnDialog::onDeleteRow);
 
-    auto *clrBtn = new QPushButton(QString::fromUtf8("清空所有"));
+    auto *clrBtn = new QPushButton(QString::fromUtf8("Clear All"));
     connect(clrBtn, &QPushButton::clicked, this, &AddColumnDialog::onClearAll);
 
-    auto *cancelBtn = new QPushButton(QString::fromUtf8("取消"));
+    auto *cancelBtn = new QPushButton(QString::fromUtf8("Cancel"));
     connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 
-    m_okBtn = new QPushButton(QString::fromUtf8("确定添加"));
+    m_okBtn = new QPushButton(QString::fromUtf8("Confirm Add"));
     m_okBtn->setObjectName("okBtn");
     connect(m_okBtn, &QPushButton::clicked, this, &AddColumnDialog::onAccept);
 
@@ -288,8 +309,8 @@ void AddColumnDialog::buildUi()
     btnRow->addWidget(m_okBtn);
     root->addLayout(btnRow);
 
-    // ── SQL Preview ──
-    auto *sqlLabel = new QLabel(QString::fromUtf8("SQL 预览"));
+    // 鈹€鈹€ SQL Preview 鈹€鈹€
+    auto *sqlLabel = new QLabel(QString::fromUtf8("SQL Preview"));
     sqlLabel->setStyleSheet("font-weight: 600; font-size: 13px; color: #4B5563;");
     root->addWidget(sqlLabel);
 
@@ -297,14 +318,14 @@ void AddColumnDialog::buildUi()
     m_sqlPreview->setReadOnly(true);
     m_sqlPreview->setMinimumHeight(80);
     m_sqlPreview->setMaximumHeight(140);
-    m_sqlPreview->setPlaceholderText(QString::fromUtf8("自动生成的 ALTER TABLE 语句将显示在这里..."));
+    m_sqlPreview->setPlaceholderText(QString::fromUtf8("Generated ALTER TABLE statements will appear here..."));
     root->addWidget(m_sqlPreview);
 
-    // ── Initial rows ──
+    // 鈹€鈹€ Initial rows 鈹€鈹€
     for (int i = 0; i < 2; ++i)
         onAddRow();
 
-    // 延迟刷新外键下拉（确保对话框初始化完成后正确加载）
+    // 寤惰繜鍒锋柊澶栭敭涓嬫媺锛堢‘淇濆璇濇鍒濆鍖栧畬鎴愬悗姝ｇ‘鍔犺浇锟?
     QTimer::singleShot(0, this, [this]() {
         for (int row = 0; row < m_fieldTable->rowCount(); ++row) {
             auto *combo = qobject_cast<QComboBox*>(m_fieldTable->cellWidget(row, ColFkTable));
@@ -315,7 +336,7 @@ void AddColumnDialog::buildUi()
     });
 }
 
-// ── Populate foreign key table dropdown ──
+// 鈹€鈹€ Populate foreign key table dropdown 鈹€鈹€
 void AddColumnDialog::populateRefTables(QComboBox *combo)
 {
     if (!combo) return;
@@ -331,11 +352,13 @@ void AddColumnDialog::populateRefTables(QComboBox *combo)
     if (dbName.isEmpty()) return;
 
     const QString dataRoot = defaultDataRoot();
-    const QString tabPath = QDir(dataRoot).absoluteFilePath(
-        dbName + "/" + dbName + ".tab");
-
-    QFile f(tabPath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QFile f;
+    for (const QString &tabPath : tabCandidates(dataRoot, dbName)) {
+        f.setFileName(tabPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+            break;
+    }
+    if (!f.isOpen()) {
         QDir dbDir(QDir(dataRoot).absoluteFilePath(dbName));
         if (!dbDir.exists()) return;
         QStringList tables;
@@ -365,7 +388,7 @@ void AddColumnDialog::populateRefTables(QComboBox *combo)
     }
 }
 
-// ── Populate foreign key column dropdown ──
+// 鈹€鈹€ Populate foreign key column dropdown 鈹€鈹€
 void AddColumnDialog::populateRefColumns(QComboBox *refTableCombo, QComboBox *refColumnCombo)
 {
     if (!refTableCombo || !refColumnCombo) return;
@@ -382,11 +405,13 @@ void AddColumnDialog::populateRefColumns(QComboBox *refTableCombo, QComboBox *re
     }
 
     const QString dataRoot = defaultDataRoot();
-    const QString metaPath = QDir(dataRoot).absoluteFilePath(
-        dbName + "/" + tableName + "/table.meta");
-
-    QFile f(metaPath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    QFile f;
+    for (const QString &metaPath : metaCandidates(dataRoot, dbName, tableName)) {
+        f.setFileName(metaPath);
+        if (f.open(QIODevice::ReadOnly | QIODevice::Text))
+            break;
+    }
+    if (!f.isOpen()) return;
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
     f.close();
     if (!doc.isObject()) return;
@@ -403,7 +428,7 @@ void AddColumnDialog::populateRefColumns(QComboBox *refTableCombo, QComboBox *re
     }
 }
 
-// ── Add a new row ──
+// 鈹€鈹€ Add a new row 鈹€鈹€
 void AddColumnDialog::onAddRow()
 {
     const int row = m_fieldTable->rowCount();
@@ -418,9 +443,7 @@ void AddColumnDialog::onAddRow()
 
     // Col 1: type combo
     auto *typeCombo = new QComboBox;
-    typeCombo->addItems({"INT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL",
-                         "VARCHAR", "CHAR", "TEXT", "DATE", "DATETIME",
-                         "TIME", "BOOLEAN", "BLOB"});
+    typeCombo->addItems({"INT", "SMALLINT", "FLOAT", "VARCHAR"});
     typeCombo->setCurrentText("VARCHAR");
     m_fieldTable->setCellWidget(row, ColType, typeCombo);
     connect(typeCombo, &QComboBox::currentTextChanged, this, [this, row]() {
@@ -510,7 +533,7 @@ void AddColumnDialog::onClearAll()
 void AddColumnDialog::onAccept()
 {
     if (m_fieldTable->rowCount() == 0) {
-        QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请至少添加一个字段"));
+        QMessageBox::warning(this, QString::fromUtf8("Tip"), QString::fromUtf8("Please add at least one field"));
         return;
     }
     bool hasName = false;
@@ -522,7 +545,7 @@ void AddColumnDialog::onAccept()
         }
     }
     if (!hasName) {
-        QMessageBox::warning(this, QString::fromUtf8("提示"), QString::fromUtf8("请至少填写一个字段名"));
+        QMessageBox::warning(this, QString::fromUtf8("Tip"), QString::fromUtf8("Please fill at least one field name"));
         return;
     }
     m_generatedSql = buildAlterSql();
@@ -544,7 +567,7 @@ void AddColumnDialog::onRefTableChanged(int row)
     updateSqlPreview();
 }
 
-// ── Build ALTER TABLE SQL ──
+// 鈹€鈹€ Build ALTER TABLE SQL 鈹€鈹€
 QString AddColumnDialog::buildAlterSql() const
 {
     QStringList statements;
@@ -562,7 +585,7 @@ QString AddColumnDialog::buildAlterSql() const
         auto *lenItem = m_fieldTable->item(row, ColLength);
         const QString len = lenItem ? lenItem->text().trimmed() : QString();
         QString fullType = type;
-        if (!len.isEmpty() && (type == "VARCHAR" || type == "CHAR" || type == "DECIMAL"))
+        if (!len.isEmpty() && type == "VARCHAR")
             fullType = QString("%1(%2)").arg(type, len);
 
         // Build column definition
@@ -625,7 +648,10 @@ QString AddColumnDialog::buildAlterSql() const
                 colDef += QString(" CHECK (%1)").arg(checkStr);
         }
 
-        statements.append(QString("ALTER TABLE <表名> ADD %1;").arg(colDef));
+        const QString tableName = m_currentTable.trimmed().isEmpty()
+                                      ? QStringLiteral("<琛ㄥ悕>")
+                                      : m_currentTable.trimmed();
+        statements.append(QString("ALTER TABLE %1 ADD %2;").arg(tableName, colDef));
     }
     return statements.join("\n");
 }
@@ -707,3 +733,5 @@ QList<ColumnConfig> AddColumnDialog::getAllConfigs() const
     }
     return configs;
 }
+
+

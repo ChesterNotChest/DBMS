@@ -108,8 +108,10 @@ LogicTruthValue compareCells(const LogicCellValue &lhs,
     bool leftOk = false;
     bool rightOk = false;
     const bool numericCompare = lhs.type == tabledef::ColumnType::Int
+                                || lhs.type == tabledef::ColumnType::SmallInt
                                 || lhs.type == tabledef::ColumnType::Float
                                 || rhs.type == tabledef::ColumnType::Int
+                                || rhs.type == tabledef::ColumnType::SmallInt
                                 || rhs.type == tabledef::ColumnType::Float;
     if (numericCompare) {
         const double leftValue = numericValueFor(lhs, &leftOk);

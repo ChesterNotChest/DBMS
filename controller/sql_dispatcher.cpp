@@ -19,6 +19,9 @@ tabledef::ColumnType columnTypeFromSql(const QString &type)
     if (normalized == QStringLiteral("INT") || normalized == QStringLiteral("INTEGER")) {
         return tabledef::ColumnType::Int;
     }
+    if (normalized == QStringLiteral("SMALLINT")) {
+        return tabledef::ColumnType::SmallInt;
+    }
     if (normalized == QStringLiteral("FLOAT")
         || normalized == QStringLiteral("DOUBLE")
         || normalized == QStringLiteral("REAL")) {

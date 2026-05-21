@@ -1053,6 +1053,40 @@ private slots:
         QVERIFY(result.text.contains(tableName));
     }
 
+    void test_dispatcherSmallIntColumnRoundTrip()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_smallint_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_smallint_table");
+        ensureDatabase(databaseName);
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult createResult = dispatcher.execute(
+            QStringLiteral("CREATE TABLE %1 (id INT PRIMARY KEY, score SMALLINT NOT NULL);").arg(tableName));
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        QString error;
+        const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const tabledef::Column scoreColumn = findColumn(schema, QStringLiteral("score"));
+        QCOMPARE(scoreColumn.name, QStringLiteral("score"));
+        QCOMPARE(scoreColumn.type, tabledef::ColumnType::SmallInt);
+        QCOMPARE(tabledef::columnTypeToString(scoreColumn.type), QStringLiteral("SMALLINT"));
+
+        const SqlExecResult showCreateResult =
+            dispatcher.execute(QStringLiteral("SHOW CREATE TABLE %1").arg(tableName));
+        QVERIFY2(showCreateResult.success, qPrintable(showCreateResult.errorMessage));
+        QVERIFY(showCreateResult.text.contains(QStringLiteral("score SMALLINT NOT NULL")));
+
+        const SqlExecResult insertResult =
+            dispatcher.execute(QStringLiteral("INSERT INTO %1 (id, score) VALUES (1, 12);").arg(tableName));
+        QVERIFY2(insertResult.success, qPrintable(insertResult.errorMessage));
+
+        const SqlExecResult badInsertResult =
+            dispatcher.execute(QStringLiteral("INSERT INTO %1 (id, score) VALUES (2, 'abc');").arg(tableName));
+        QVERIFY(!badInsertResult.success);
+        QVERIFY(badInsertResult.errorMessage.contains(QStringLiteral("SMALLINT")));
+    }
+
     void test_dispatcherAlterSqlPathsCallService()
     {
         const QString databaseName = QStringLiteral("test_parser_dispatcher_alter_db");

@@ -26,7 +26,9 @@ public:
     void addHistory(const QString &sql);
     void clear();
     void setCurrentDb(const QString &db) { m_currentDb = db; }
+    void setCurrentTable(const QString &table) { m_currentTable = table; }
     QString currentDb() const { return m_currentDb; }
+    QString currentTable() const { return m_currentTable; }
     QTableWidget *getTable() { return m_table; }
     QStringList getLastColumns() const { return m_lastColumns; }
     QSet<QString> getDeletedColumnNames() const { return m_deletedColumnNames; }
@@ -121,6 +123,7 @@ private:
     QStringList m_originalColumns;
     // 当前数据库名（用于新增列时加载外键表/字段）
     QString m_currentDb;
+    QString m_currentTable;
 };
 
 #endif // RESULT_PANEL_H

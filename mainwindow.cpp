@@ -436,6 +436,7 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
             updateStatusDbLabel();
             m_structurePanel->selectDatabase(m_currentDatabase);
             m_resultPanel->setCurrentDb(m_currentDatabase);
+            m_resultPanel->setCurrentTable(QString());
         }
     }
 
@@ -460,6 +461,8 @@ void MainWindow::onTableSelected(const QString &dbName, const QString &tableName
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
     m_resultPanel->showLog("选中表: " + tableName);
 
     // 自动执行查询：双击表名 → 显示全部数据
@@ -476,6 +479,8 @@ void MainWindow::onColumnSelected(const QString &dbName,
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
     m_resultPanel->showLog("选中列: " + tableName + "." + columnName);
 
     // 自动执行查询：SELECT <column> FROM <table>
@@ -495,6 +500,8 @@ bool MainWindow::switchGuiDatabase(const QString &dbName)
     m_currentTable.clear();
     updateStatusDbLabel();
     m_structurePanel->selectDatabase(dbName);
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
     return true;
 }
 
@@ -541,10 +548,12 @@ void MainWindow::onNewDatabase()
 
     auto r = executeSqlForGui(QStringLiteral("CREATE DATABASE %1;").arg(name));
     if (r.success) {
-        m_currentDatabase = name;
-        executeSqlForGui(QStringLiteral("USE %1;").arg(name));
-        updateStatusDbLabel();
-        m_structurePanel->refresh();
+    m_currentDatabase = name;
+    executeSqlForGui(QStringLiteral("USE %1;").arg(name));
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
+    m_structurePanel->refresh();
         m_resultPanel->showLog("数据库 '" + name + "' 创建成功");
         m_statusBar->showMessage("数据库 '" + name + "' 创建成功", 5000);
     } else {
@@ -566,6 +575,8 @@ void MainWindow::onOpenDatabase()
     m_currentDatabase = sel;
     executeSqlForGui(QStringLiteral("USE %1;").arg(sel));
     updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
     m_resultPanel->showLog("打开数据库: " + sel);
     m_structurePanel->refresh();
 }
@@ -593,6 +604,8 @@ void MainWindow::onDeleteDatabase()
             m_currentDatabase.clear();
             m_currentTable.clear();
             updateStatusDbLabel();
+            m_resultPanel->setCurrentDb(QString());
+            m_resultPanel->setCurrentTable(QString());
         }
         m_structurePanel->refresh();
     } else {
@@ -632,6 +645,7 @@ void MainWindow::onToolbarDropTable()
         if (m_currentTable == tableName) {
             m_currentTable.clear();
             updateStatusDbLabel();
+            m_resultPanel->setCurrentTable(QString());
         }
         m_structurePanel->refresh();
     } else {

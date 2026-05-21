@@ -18,6 +18,8 @@ QString columnTypeToString(ColumnType type)
     switch (type) {
     case ColumnType::Int:
         return QStringLiteral("INT");
+    case ColumnType::SmallInt:
+        return QStringLiteral("SMALLINT");
     case ColumnType::Varchar:
         return QStringLiteral("VARCHAR");
     case ColumnType::Float:
@@ -33,6 +35,10 @@ bool tryParseColumnType(const QString &value, ColumnType *type)
     }
     if (value == QStringLiteral("INT")) {
         *type = ColumnType::Int;
+        return true;
+    }
+    if (value == QStringLiteral("SMALLINT")) {
+        *type = ColumnType::SmallInt;
         return true;
     }
     if (value == QStringLiteral("VARCHAR")) {
