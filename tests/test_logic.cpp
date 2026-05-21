@@ -427,6 +427,31 @@ private slots:
         QCOMPARE(allFalseResult.truth, logic::LogicTruthValue::False);
     }
 
+    void test_scalarSubqueryComparison()
+    {
+        repo::TableData subqueryTable;
+        subqueryTable.columns = {QStringLiteral("avg_score")};
+        subqueryTable.rows = {{QStringLiteral("12")}};
+
+        FixedSubqueryExecutor executor(subqueryTable, {tabledef::ColumnType::Float});
+        logic::LogicEvalContext evalContext;
+        evalContext.subqueryExecutor = &executor;
+        evalContext.allowSubquery = true;
+
+        const QString expression = QStringLiteral("id < (SELECT AVG(score) FROM scores)");
+        const logic::LogicTokenizeResult tokenized = logic::tokenizeLogicExpression(expression);
+        QVERIFY2(tokenized.success, qPrintable(tokenized.error.message));
+        const logic::LogicParseResult parsed = logic::parseLogicTokens(expression, tokenized.tokens);
+        QVERIFY2(parsed.success, qPrintable(parsed.error.message));
+        QCOMPARE(parsed.root.type, logic::LogicNodeType::ScalarSubquery);
+
+        const logic::LogicEvalResult result = logic::evaluateLogicExpression(parsed.root,
+                                                                            makeOuterRowContext(),
+                                                                            evalContext);
+        QVERIFY2(result.success, qPrintable(result.error.message));
+        QCOMPARE(result.truth, logic::LogicTruthValue::True);
+    }
+
     void test_correlatedQuantifiedComparisonSupportsAnyAndAll()
     {
         BindingAwareSubqueryExecutor executor;

@@ -80,6 +80,7 @@ enum class LogicNodeType {
     InSubquery,
     ExistsSubquery,
     QuantifiedSubquery,
+    ScalarSubquery,
     Between
 };
 

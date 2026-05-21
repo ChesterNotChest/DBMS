@@ -539,6 +539,24 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
             return {true, node, {}};
         }
 
+        if (peekToken(state).type == LogicTokenType::LeftParen && tokenBeginsSubquery(state)) {
+            const QString subquerySql = captureSubquerySqlTextInternal(expressionText, state);
+            if (subquerySql.isEmpty()) {
+                return makeParseError(QStringLiteral("scalar comparison: invalid subquery"), token.position);
+            }
+
+            LogicNode node;
+            node.type = LogicNodeType::ScalarSubquery;
+            node.compareOperator = op;
+            node.children.append(lhs);
+            node.subquerySql = subquerySql;
+            LogicError outerError;
+            if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
+                return makeParseError(outerError.message, outerError.position);
+            }
+            return {true, node, {}};
+        }
+
         LogicNode rhs;
         LogicError parseError;
         if (!parseLiteralOrReference(state, &rhs, &parseError)) {
