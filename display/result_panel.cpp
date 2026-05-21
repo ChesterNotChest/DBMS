@@ -397,105 +397,105 @@ void ResultPanel::onAddColumn() {
     if (dlg.exec() != QDialog::Accepted)
         return;
 
-    ColumnConfig cfg = dlg.getConfig();
-    if (cfg.name.isEmpty()) {
-        QMessageBox::warning(this, "错误", "列名不能为空！");
+    QList<ColumnConfig> configs = dlg.getAllConfigs();
+    if (configs.isEmpty()) {
+        QMessageBox::warning(this, QString::fromUtf8("错误"), QString::fromUtf8("请添加至少一个有效的字段！"));
         return;
     }
 
-    for (int c = 0; c < m_table->columnCount(); ++c) {
-        QTableWidgetItem* headerItem = m_table->horizontalHeaderItem(c);
-        if (headerItem && headerItem->text() == cfg.name) {
-            QMessageBox::warning(this, "错误", "列名已存在！");
-            return;
+    for (const ColumnConfig &cfg : configs) {
+        if (cfg.name.isEmpty())
+            continue;
+
+        bool duplicate = false;
+        for (int c = 0; c < m_table->columnCount(); ++c) {
+            QTableWidgetItem* headerItem = m_table->horizontalHeaderItem(c);
+            if (headerItem && headerItem->text() == cfg.name) {
+                duplicate = true;
+                break;
+            }
         }
-    }
+        if (duplicate) {
+            QMessageBox::warning(this, QString::fromUtf8("错误"),
+                QString::fromUtf8("列名 \"%1\" 已存在，已跳过").arg(cfg.name));
+            continue;
+        }
 
-    QString typeStr = cfg.type;
-    if ((cfg.type == "VARCHAR" || cfg.type == "CHAR") && cfg.length > 0) {
-        typeStr = QString("%1(%2)").arg(cfg.type).arg(cfg.length);
-    }
+        QString typeStr = cfg.type;
+        if ((cfg.type == "VARCHAR" || cfg.type == "CHAR") && cfg.length > 0) {
+            typeStr = QString("%1(%2)").arg(cfg.type).arg(cfg.length);
+        }
 
-    int col = m_table->columnCount();
-    
-    // 先更新数据模型，再操作表格（避免 cellChanged 信号访问未更新的数据）
-    for (auto it = m_currentRows.begin(); it != m_currentRows.end(); ++it) {
-        it.value().append("");
-    }
-    for (auto it = m_originalRows.begin(); it != m_originalRows.end(); ++it) {
-        it.value().append("");
-    }
-    
-    // 临时断开 cellChanged 信号，防止 setItem 触发回调
-    disconnect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
-    
-    m_table->insertColumn(col);
-    m_table->setHorizontalHeaderItem(col, new QTableWidgetItem(cfg.name));
+        int col = m_table->columnCount();
+        
+        // 先更新数据模型，再操作表格
+        for (auto it = m_currentRows.begin(); it != m_currentRows.end(); ++it) {
+            it.value().append("");
+        }
+        for (auto it = m_originalRows.begin(); it != m_originalRows.end(); ++it) {
+            it.value().append("");
+        }
+        
+        disconnect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
+        
+        m_table->insertColumn(col);
+        m_table->setHorizontalHeaderItem(col, new QTableWidgetItem(cfg.name));
 
-    // 为现有行添加新列的单元格
-    for (int r = 0; r < m_table->rowCount(); ++r) {
-        QTableWidgetItem* item = new QTableWidgetItem("");
-        item->setTextAlignment(Qt::AlignCenter);
-        m_table->setItem(r, col, item);
-    }
-    
-    // 重新连接 cellChanged 信号
-    connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
+        for (int r = 0; r < m_table->rowCount(); ++r) {
+            QTableWidgetItem* item = new QTableWidgetItem("");
+            item->setTextAlignment(Qt::AlignCenter);
+            m_table->setItem(r, col, item);
+        }
+        
+        connect(m_table, &QTableWidget::itemChanged, this, &ResultPanel::onCellChanged);
 
-    // 构建完整的列定义字符串，包含外键约束信息
-    QString columnDef = cfg.name + ":" + typeStr;
-    
-    // 添加约束信息
-    QString constraints;
-    
-    // 非空约束
-    if (cfg.notNull) {
-        constraints += "NOT NULL";
+        QString columnDef = cfg.name + ":" + typeStr;
+        
+        QString constraints;
+        
+        if (cfg.notNull) {
+            constraints += "NOT NULL";
+        }
+        
+        if (cfg.primaryKey) {
+            if (!constraints.isEmpty()) constraints += ",";
+            constraints += "PRIMARY KEY";
+        }
+        
+        if (cfg.unique) {
+            if (!constraints.isEmpty()) constraints += ",";
+            constraints += "UNIQUE";
+        }
+        
+        if (!cfg.defaultValue.isEmpty()) {
+            if (!constraints.isEmpty()) constraints += ",";
+            constraints += "DEFAULT " + cfg.defaultValue;
+        }
+        
+        if (!cfg.checkConstraint.isEmpty()) {
+            if (!constraints.isEmpty()) constraints += ",";
+            constraints += "CHECK(" + cfg.checkConstraint + ")";
+        }
+        
+        if (!cfg.referencedTable.isEmpty() && !cfg.referencedColumns.isEmpty()) {
+            if (!constraints.isEmpty()) constraints += ",";
+            constraints += QString("FOREIGN KEY (%1) REFERENCES %2(%3)")
+                            .arg(cfg.name)
+                            .arg(cfg.referencedTable)
+                            .arg(cfg.referencedColumns.join(","));
+        }
+        
+        if (!constraints.isEmpty()) {
+            columnDef += ":" + constraints;
+        }
+        
+        m_addedColumns.append(columnDef);
+        m_lastColumns.append(cfg.name);
     }
-    
-    // 主键约束
-    if (cfg.primaryKey) {
-        if (!constraints.isEmpty()) constraints += ",";
-        constraints += "PRIMARY KEY";
-    }
-    
-    // 唯一约束
-    if (cfg.unique) {
-        if (!constraints.isEmpty()) constraints += ",";
-        constraints += "UNIQUE";
-    }
-    
-    // 默认值
-    if (!cfg.defaultValue.isEmpty()) {
-        if (!constraints.isEmpty()) constraints += ",";
-        constraints += "DEFAULT " + cfg.defaultValue;
-    }
-    
-    // CHECK约束
-    if (!cfg.checkConstraint.isEmpty()) {
-        if (!constraints.isEmpty()) constraints += ",";
-        constraints += "CHECK(" + cfg.checkConstraint + ")";
-    }
-    
-    // 外键约束
-    if (!cfg.referencedTable.isEmpty() && !cfg.referencedColumns.isEmpty()) {
-        if (!constraints.isEmpty()) constraints += ",";
-        constraints += QString("FOREIGN KEY (%1) REFERENCES %2(%3)")
-                        .arg(cfg.name)
-                        .arg(cfg.referencedTable)
-                        .arg(cfg.referencedColumns.join(","));
-    }
-    
-    if (!constraints.isEmpty()) {
-        columnDef += ":" + constraints;
-    }
-    
-    m_addedColumns.append(columnDef);
-    m_lastColumns.append(cfg.name);
 
     if (m_statsLabel) {
         int totalColChanges = m_addedColumns.size() + m_deletedColumnNames.size();
-        m_statsLabel->setText(QString("列已变更（%1 列待保存）").arg(totalColChanges));
+        m_statsLabel->setText(QString(QString::fromUtf8("列已变更（%1 列待保存）")).arg(totalColChanges));
     }
 }
 

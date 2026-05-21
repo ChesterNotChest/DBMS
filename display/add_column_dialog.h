@@ -3,20 +3,21 @@
 
 #include <QDialog>
 #include <QLineEdit>
+#include <QTableWidget>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QPushButton>
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPushButton>
+#include <QHeaderView>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QSet>
-#include "../utils/table_manu/table_manu.h"
 
 struct ColumnConfig {
     QString name;
@@ -39,31 +40,31 @@ public:
     explicit AddColumnDialog(const QString &currentDb,
                              QWidget *parent = nullptr);
 
-    ColumnConfig getConfig() const;
+    QList<ColumnConfig> getAllConfigs() const;
+    QString getGeneratedSql() const;
 
 private slots:
-    void onReferenceTableChanged();
-    void updateSqlPreview();
+    void onAddRow();
+    void onDeleteRow();
+    void onClearAll();
+    void onAccept();
+    void onCellChanged(int row, int column);
+    void onRefTableChanged(int row);
 
 private:
     void buildUi();
+    void updateSqlPreview();
+    QString buildAlterSql() const;
+    void populateRefTables(QComboBox *combo);
+    void populateRefColumns(QComboBox *refTableCombo, QComboBox *refColumnCombo);
     static QString defaultDataRoot();
-    void populateRefTables();
-    void populateRefColumns();
 
-    QLineEdit   *m_nameEdit             = nullptr;
-    QComboBox   *m_typeCombo            = nullptr;
-    QLineEdit   *m_lengthEdit           = nullptr;
-    QCheckBox   *m_notNullCheck         = nullptr;
-    QCheckBox   *m_pkCheck              = nullptr;
-    QCheckBox   *m_uniqueCheck          = nullptr;
-    QLineEdit   *m_defaultEdit          = nullptr;
-    QComboBox   *m_refTableCombo        = nullptr;
-    QComboBox   *m_refColumnCombo       = nullptr;
-    QLineEdit   *m_checkEdit            = nullptr;
-    QTextEdit   *m_sqlPreview           = nullptr;
+    QTableWidget *m_fieldTable = nullptr;
+    QTextEdit    *m_sqlPreview = nullptr;
+    QPushButton  *m_okBtn      = nullptr;
 
     QString m_currentDb;
+    QString m_generatedSql;
 };
 
 #endif
