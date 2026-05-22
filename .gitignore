@@ -94,4 +94,6 @@ CMakeLists.txt.user*
 *.bat
 *.pptx
 *.md
+!README.md
+!README_EN.md
 *.dat   
