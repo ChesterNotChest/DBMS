@@ -844,11 +844,6 @@ void MainWindow::onToolbarSave()
             int fkIndex = basicConstraints.indexOf("FOREIGN KEY", 0, Qt::CaseInsensitive);
             if (fkIndex != -1) {
                 basicConstraints = basicConstraints.left(fkIndex).trimmed();
-                // 移除末尾的逗号
-                if (basicConstraints.endsWith(',')) {
-                    basicConstraints.chop(1);
-                    basicConstraints = basicConstraints.trimmed();
-                }
             }
             
             if (basicConstraints.isEmpty()) {

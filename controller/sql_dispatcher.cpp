@@ -1077,21 +1077,31 @@ SqlExecResult SqlDispatcher::execAlterUser(const sqlparser::ParseResult& p) {
 SqlExecResult SqlDispatcher::execGrantAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName")).toString();
+    const TaskResult result = auth_service::grantDatabaseAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(databaseName, userName), result.affectedRowCount};
+    if (tableName.isEmpty()) {
+        return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(databaseName, userName), result.affectedRowCount};
+    } else {
+        return {true, {}, QStringLiteral("Granted ALL on '%1.%2' to '%3'").arg(databaseName, tableName, userName), result.affectedRowCount};
+    }
 }
 
 SqlExecResult SqlDispatcher::execRevokeAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName")).toString();
+    const TaskResult result = auth_service::revokeDatabaseAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(databaseName, userName), result.affectedRowCount};
+    if (tableName.isEmpty()) {
+        return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(databaseName, userName), result.affectedRowCount};
+    } else {
+        return {true, {}, QStringLiteral("Revoked ALL on '%1.%2' from '%3'").arg(databaseName, tableName, userName), result.affectedRowCount};
+    }
 }
 
 QString SqlDispatcher::formatSelectResult(const SelectRowsResult& r) {

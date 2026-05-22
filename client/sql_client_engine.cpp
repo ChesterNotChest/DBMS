@@ -257,9 +257,11 @@ service::SqlExecResult SqlClientEngine::authorizeStatement(const ClientSession &
                                                            const sqlparser::ParseResult &parsed) const
 {
     const QString targetDatabase = targetDatabaseForStatement(clientSession, parsed);
+    const QString targetTable = targetTableForStatement(clientSession, parsed);
     const service::TaskResult result = service::auth_service::authorize(clientSession.userName,
                                                                         parsed.commandType,
                                                                         targetDatabase,
+                                                                        targetTable,
                                                                         clientSession.dataRoot);
     if (result.success) {
         return {true, {}, {}, result.affectedRowCount, {}, parsed.commandType, parsed.payload};
@@ -274,6 +276,15 @@ QString SqlClientEngine::targetDatabaseForStatement(const ClientSession &clientS
         return parsed.payload.value(QStringLiteral("databaseName")).toString();
     }
     return clientSession.currentDatabase;
+}
+
+QString SqlClientEngine::targetTableForStatement(const ClientSession &clientSession,
+                                                 const sqlparser::ParseResult &parsed) const
+{
+    if (parsed.payload.contains(QStringLiteral("tableName"))) {
+        return parsed.payload.value(QStringLiteral("tableName")).toString();
+    }
+    return QString();
 }
 
 } // namespace client

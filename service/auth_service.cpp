@@ -113,11 +113,22 @@ int findUserRow(const repo::TableData &users, const QString &userName)
 
 int findPrivilegeRow(const repo::TableData &privileges,
                      const QString &userName,
-                     const QString &databaseName)
+                     const QString &databaseName,
+                     const QString &tableName = QString())
 {
     for (int rowIndex = 0; rowIndex < privileges.rows.size(); ++rowIndex) {
         const repo::TableRow &row = privileges.rows.at(rowIndex);
-        if (row.size() >= 2 && row.at(0) == userName && row.at(1) == databaseName) {
+        bool userMatch = !row.isEmpty() && row.at(0) == userName;
+        bool dbMatch = row.size() >= 2 && row.at(1) == databaseName;
+        bool tableMatch = true;
+        if (!tableName.isEmpty()) {
+            if (row.size() >= 3) {
+                tableMatch = row.at(2) == tableName;
+            } else {
+                tableMatch = false;
+            }
+        }
+        if (userMatch && dbMatch && tableMatch) {
             return rowIndex;
         }
     }
@@ -358,6 +369,7 @@ TaskResult alterUserPassword(const QString &requestUser,
 TaskResult grantDatabaseAll(const QString &requestUser,
                             const QString &targetUserName,
                             const QString &databaseName,
+                            const QString &tableName,
                             const QString &dataRoot)
 {
     TaskResult rootResult = requireRoot(requestUser);
@@ -372,6 +384,7 @@ TaskResult grantDatabaseAll(const QString &requestUser,
 
     const QString normalizedUser = targetUserName.trimmed();
     const QString normalizedDatabase = databaseName.trimmed();
+    const QString normalizedTable = tableName.trimmed();
     if (isAuthDatabase(normalizedDatabase)) {
         return taskFailure(QStringLiteral("permission denied: system database '%1' is protected")
                                .arg(normalizedDatabase));
@@ -396,8 +409,12 @@ TaskResult grantDatabaseAll(const QString &requestUser,
     if (!error.isEmpty()) {
         return taskFailure(error);
     }
-    if (findPrivilegeRow(privileges, normalizedUser, normalizedDatabase) < 0) {
-        privileges.rows.append({normalizedUser, normalizedDatabase, QStringLiteral("ALL")});
+    if (findPrivilegeRow(privileges, normalizedUser, normalizedDatabase, normalizedTable) < 0) {
+        if (normalizedTable.isEmpty()) {
+            privileges.rows.append({normalizedUser, normalizedDatabase, QString(), QStringLiteral("ALL")});
+        } else {
+            privileges.rows.append({normalizedUser, normalizedDatabase, normalizedTable, QStringLiteral("ALL")});
+        }
         const repo::RepositoryResult writeResult = store.writeTable(privilegeTablePath(store), privileges);
         if (!writeResult.ok) {
             return taskFailure(writeResult.error);
@@ -410,6 +427,7 @@ TaskResult grantDatabaseAll(const QString &requestUser,
 TaskResult revokeDatabaseAll(const QString &requestUser,
                              const QString &targetUserName,
                              const QString &databaseName,
+                             const QString &tableName,
                              const QString &dataRoot)
 {
     TaskResult rootResult = requireRoot(requestUser);
@@ -424,6 +442,7 @@ TaskResult revokeDatabaseAll(const QString &requestUser,
 
     const QString normalizedUser = targetUserName.trimmed();
     const QString normalizedDatabase = databaseName.trimmed();
+    const QString normalizedTable = tableName.trimmed();
     if (isAuthDatabase(normalizedDatabase)) {
         return taskFailure(QStringLiteral("permission denied: system database '%1' is protected")
                                .arg(normalizedDatabase));
@@ -435,7 +454,7 @@ TaskResult revokeDatabaseAll(const QString &requestUser,
     if (!error.isEmpty()) {
         return taskFailure(error);
     }
-    const int rowIndex = findPrivilegeRow(privileges, normalizedUser, normalizedDatabase);
+    const int rowIndex = findPrivilegeRow(privileges, normalizedUser, normalizedDatabase, normalizedTable);
     if (rowIndex >= 0) {
         privileges.rows.removeAt(rowIndex);
         const repo::RepositoryResult writeResult = store.writeTable(privilegeTablePath(store), privileges);
@@ -479,9 +498,47 @@ bool userHasDatabasePrivilege(const QString &userName,
     return findPrivilegeRow(privileges, userName.trimmed(), databaseName.trimmed()) >= 0;
 }
 
+bool userHasTablePrivilege(const QString &userName,
+                           const QString &databaseName,
+                           const QString &tableName,
+                           const QString &dataRoot,
+                           QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (isRoot(userName)) {
+        return true;
+    }
+    if (tableName.isEmpty()) {
+        return userHasDatabasePrivilege(userName, databaseName, dataRoot, error);
+    }
+
+    TaskResult initResult = initializeAuthStore(dataRoot);
+    if (!initResult.success) {
+        if (error != nullptr) {
+            *error = initResult.errorMessage;
+        }
+        return false;
+    }
+
+    repo::FlatFileTableStore store = storeFor(dataRoot);
+    QString readError;
+    const repo::TableData privileges = readPrivileges(store, &readError);
+    if (!readError.isEmpty()) {
+        if (error != nullptr) {
+            *error = readError;
+        }
+        return false;
+    }
+    return (findPrivilegeRow(privileges, userName.trimmed(), databaseName.trimmed(), tableName.trimmed()) >= 0) ||
+           (findPrivilegeRow(privileges, userName.trimmed(), databaseName.trimmed()) >= 0);
+}
+
 TaskResult authorize(const QString &userName,
                      const QString &commandType,
                      const QString &targetDatabase,
+                     const QString &targetTable,
                      const QString &dataRoot)
 {
     if (isRoot(userName)) {
@@ -502,6 +559,7 @@ TaskResult authorize(const QString &userName,
     }
 
     const QString databaseName = targetDatabase.trimmed();
+    const QString tableName = targetTable.trimmed();
     if (databaseName.isEmpty()) {
         return taskSuccess();
     }
@@ -511,11 +569,18 @@ TaskResult authorize(const QString &userName,
     }
 
     QString error;
-    if (!userHasDatabasePrivilege(userName, databaseName, dataRoot, &error)) {
-        return taskFailure(error.isEmpty()
-                               ? QStringLiteral("permission denied for user '%1' on database '%2'")
-                                     .arg(userName, databaseName)
-                               : error);
+    if (!userHasTablePrivilege(userName, databaseName, tableName, dataRoot, &error)) {
+        if (tableName.isEmpty()) {
+            return taskFailure(error.isEmpty()
+                                   ? QStringLiteral("permission denied for user '%1' on database '%2'")
+                                         .arg(userName, databaseName)
+                                   : error);
+        } else {
+            return taskFailure(error.isEmpty()
+                                   ? QStringLiteral("permission denied for user '%1' on table '%2.%3'")
+                                         .arg(userName, databaseName, tableName)
+                                   : error);
+        }
     }
     return taskSuccess();
 }

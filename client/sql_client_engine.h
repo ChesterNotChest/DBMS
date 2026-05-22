@@ -52,6 +52,8 @@ private:
                                               const sqlparser::ParseResult &parsed) const;
     QString targetDatabaseForStatement(const ClientSession &clientSession,
                                        const sqlparser::ParseResult &parsed) const;
+    QString targetTableForStatement(const ClientSession &clientSession,
+                                    const sqlparser::ParseResult &parsed) const;
 
     ClientSessionPool *m_sessionPool = nullptr;
 };

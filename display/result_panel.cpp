@@ -458,27 +458,37 @@ void ResultPanel::onAddColumn() {
         }
         
         if (cfg.primaryKey) {
-            if (!constraints.isEmpty()) constraints += ",";
+            if (!constraints.isEmpty()) constraints += " ";
             constraints += "PRIMARY KEY";
         }
         
         if (cfg.unique) {
-            if (!constraints.isEmpty()) constraints += ",";
+            if (!constraints.isEmpty()) constraints += " ";
             constraints += "UNIQUE";
         }
         
         if (!cfg.defaultValue.isEmpty()) {
-            if (!constraints.isEmpty()) constraints += ",";
-            constraints += "DEFAULT " + cfg.defaultValue;
+            if (!constraints.isEmpty()) constraints += " ";
+            QString dv = cfg.defaultValue;
+            bool isNum;
+            dv.toDouble(&isNum);
+            if (isNum || dv.compare("NULL", Qt::CaseInsensitive) == 0)
+                constraints += "DEFAULT " + dv;
+            else if (dv.compare("CURRENT_DATE", Qt::CaseInsensitive) == 0 ||
+                     dv.compare("CURRENT_TIME", Qt::CaseInsensitive) == 0 ||
+                     dv.compare("CURRENT_TIMESTAMP", Qt::CaseInsensitive) == 0)
+                constraints += "DEFAULT " + dv.toUpper();
+            else
+                constraints += "DEFAULT '" + QString(dv).replace("'", "''") + "'";
         }
         
         if (!cfg.checkConstraint.isEmpty()) {
-            if (!constraints.isEmpty()) constraints += ",";
+            if (!constraints.isEmpty()) constraints += " ";
             constraints += "CHECK(" + cfg.checkConstraint + ")";
         }
         
         if (!cfg.referencedTable.isEmpty() && !cfg.referencedColumns.isEmpty()) {
-            if (!constraints.isEmpty()) constraints += ",";
+            if (!constraints.isEmpty()) constraints += " ";
             constraints += QString("FOREIGN KEY (%1) REFERENCES %2(%3)")
                             .arg(cfg.name)
                             .arg(cfg.referencedTable)

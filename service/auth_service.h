@@ -37,22 +37,31 @@ TaskResult alterUserPassword(const QString &requestUser,
 TaskResult grantDatabaseAll(const QString &requestUser,
                             const QString &targetUserName,
                             const QString &databaseName,
+                            const QString &tableName,
                             const QString &dataRoot);
 
 TaskResult revokeDatabaseAll(const QString &requestUser,
                              const QString &targetUserName,
                              const QString &databaseName,
+                             const QString &tableName,
                              const QString &dataRoot);
 
 TaskResult authorize(const QString &userName,
                      const QString &commandType,
                      const QString &targetDatabase,
+                     const QString &targetTable,
                      const QString &dataRoot);
 
 bool userHasDatabasePrivilege(const QString &userName,
                               const QString &databaseName,
                               const QString &dataRoot,
                               QString *error = nullptr);
+
+bool userHasTablePrivilege(const QString &userName,
+                           const QString &databaseName,
+                           const QString &tableName,
+                           const QString &dataRoot,
+                           QString *error = nullptr);
 
 } // namespace service::auth_service
 
