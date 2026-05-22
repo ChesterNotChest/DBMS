@@ -7,6 +7,7 @@
 #include "../controller/sql_dispatcher.h"
 
 #include <QString>
+#include <QStringList>
 
 namespace client {
 
@@ -52,8 +53,7 @@ private:
                                               const sqlparser::ParseResult &parsed) const;
     QString targetDatabaseForStatement(const ClientSession &clientSession,
                                        const sqlparser::ParseResult &parsed) const;
-    QString targetTableForStatement(const ClientSession &clientSession,
-                                    const sqlparser::ParseResult &parsed) const;
+    QStringList targetTablesForStatement(const sqlparser::ParseResult &parsed) const;
 
     ClientSessionPool *m_sessionPool = nullptr;
 };
