@@ -96,4 +96,7 @@ CMakeLists.txt.user*
 *.md
 !README.md
 !README_EN.md
+!docs/*.md
+!docs/plans/
+!docs/plans/*.md
 *.dat   

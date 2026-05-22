@@ -1,4 +1,4 @@
-﻿# ALIAS_PATCH_PLAN
+# ALIAS_PATCH_PLAN
 
 目标：在不扩展 SELECT 查询能力边界的前提下，为现有单表 SELECT 能力补齐表别名、限定列名、投影别名和相关子查询外层别名引用。
 
@@ -123,11 +123,11 @@ WHERE EXISTS (
 
 允许修改：
 
-1. [utils/sql_parser/tuple_parser.cpp](utils/sql_parser/tuple_parser.cpp)
-2. [utils/sql_parser/sql_tokenizer.h](utils/sql_parser/sql_tokenizer.h)
-3. [utils/sql_parser/sql_tokenizer.cpp](utils/sql_parser/sql_tokenizer.cpp)
-4. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
-5. [tests/parserNdispatcher_test_plan.md](tests/parserNdispatcher_test_plan.md)
+1. [utils/sql_parser/tuple_parser.cpp](../../utils/sql_parser/tuple_parser.cpp)
+2. [utils/sql_parser/sql_tokenizer.h](../../utils/sql_parser/sql_tokenizer.h)
+3. [utils/sql_parser/sql_tokenizer.cpp](../../utils/sql_parser/sql_tokenizer.cpp)
+4. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
+5. [tests/TEST_PLAN.md](../../tests/TEST_PLAN.md)
 
 首选不修改：
 
@@ -324,13 +324,13 @@ struct SelectNameResolution {
 
 允许修改：
 
-1. [controller/sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
-2. [controller/nest_query.cpp](controller/nest_query.cpp)
-3. [service/table_dml_service.cpp](service/table_dml_service.cpp)
-4. [service/tuple_service.cpp](service/tuple_service.cpp)
-5. [service/service.h](service/service.h)，仅在必须扩展 `OrderByClause` 或 SELECT 输出别名时修改。
-6. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
-7. [tests/test_logic.cpp](tests/test_logic.cpp)
+1. [controller/sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
+2. [controller/nest_query.cpp](../../controller/nest_query.cpp)
+3. [service/table_dml_service.cpp](../../service/table_dml_service.cpp)
+4. [service/tuple_service.cpp](../../service/tuple_service.cpp)
+5. [service/service.h](../../service/service.h)，仅在必须扩展 `OrderByClause` 或 SELECT 输出别名时修改。
+6. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
+7. [tests/test_logic.cpp](../../tests/test_logic.cpp)
 
 首选不修改：
 
@@ -592,11 +592,11 @@ SELECT id AS sid FROM student ORDER BY sid DESC;
 
 允许修改：
 
-1. [utils/logic/logic_parser.cpp](utils/logic/logic_parser.cpp)
-2. [utils/logic/subquery_logic.cpp](utils/logic/subquery_logic.cpp)
-3. [controller/nest_query.cpp](controller/nest_query.cpp)
-4. [tests/test_logic.cpp](tests/test_logic.cpp)
-5. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
+1. [utils/logic/logic_parser.cpp](../../utils/logic/logic_parser.cpp)
+2. [utils/logic/subquery_logic.cpp](../../utils/logic/subquery_logic.cpp)
+3. [controller/nest_query.cpp](../../controller/nest_query.cpp)
+4. [tests/test_logic.cpp](../../tests/test_logic.cpp)
+5. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
 
 首选不修改：
 
@@ -823,9 +823,8 @@ WHERE p.id IN (
 
 允许修改：
 
-1. [tests/parserNdispatcher_test_plan.md](tests/parserNdispatcher_test_plan.md)
-2. [tests/TEST_PLAN.md](tests/TEST_PLAN.md)
-3. [INTEGRATION_AND_STRESS_TEST_PLAN.md](INTEGRATION_AND_STRESS_TEST_PLAN.md)，仅当集成压测文档需要说明相关子查询 alias 时修改。
+1. [tests/TEST_PLAN.md](../../tests/TEST_PLAN.md)
+2. [INTEGRATION_AND_STRESS_TEST_PLAN.md](INTEGRATION_AND_STRESS_TEST_PLAN.md)，仅当集成压测文档需要说明相关子查询 alias 时修改。
 
 不修改：
 

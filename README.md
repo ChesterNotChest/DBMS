@@ -46,6 +46,12 @@ Repository layer
 Local data directory
 ```
 
+![DBMS 系统架构](docs/fig-architecture.svg)
+
+SQL 执行链路从客户端会话进入，经过解析器、分发器和服务层，最终落到本地文件仓储：
+
+![SQL 执行链路](docs/fig-sql-flow.svg)
+
 主要模块职责：
 
 | 目录 | 说明 |
@@ -61,6 +67,14 @@ Local data directory
 | `constants/` | 表定义、客户端默认值和线程性能相关常量。 |
 | `tests/` | Qt Test 测试用例。 |
 | `data/` | 默认本地数据目录。 |
+
+数据文件的组织方式如下：
+
+![数据根目录结构](docs/fig-storage-layout.svg)
+
+GUI 的主要交互区域如下：
+
+![GUI 主界面布局](docs/fig-ui-layout.svg)
 
 ## 构建要求
 
@@ -96,8 +110,6 @@ E:/Qt/Tools/CMake_64/bin/cmake.exe `
   --build E:/Qt-projects/DBMS/build/codex-vs-debug `
   --config Debug
 ```
-
-仓库中也保留了一份更具体的 Windows Debug 构建说明：[BUILD_WINDOWS_QT_MSVC2022_DEBUG.md](BUILD_WINDOWS_QT_MSVC2022_DEBUG.md)。
 
 ## 构建目标
 
@@ -272,11 +284,12 @@ GUI 目标 `DBMS` 内置测试入口：
 
 ## 相关文档
 
-- [Windows Qt MSVC2022 Debug Build Guide](BUILD_WINDOWS_QT_MSVC2022_DEBUG.md)
-- [CLI Client Plan](CLI_CLIENT_PLAN.md)
-- [Thread and Performance Plan](THREAD_AND_PERFORMANCE_PLAN.md)
-- [Integration and Stress Test Plan](INTEGRATION_AND_STRESS_TEST_PLAN.md)
-- [Partial Alter Patch Plan](PARTIAL_ALTER_PATCH_PLAN.md)
+- [Plan Documents](docs/plans/README.md)
+- [Project Document](docs/PROJECT_DOCUMENT.md)
+- [CLI Client Plan](docs/plans/CLI_CLIENT_PLAN.md)
+- [Thread and Performance Plan](docs/plans/THREAD_AND_PERFORMANCE_PLAN.md)
+- [Integration and Stress Test Plan](docs/plans/INTEGRATION_AND_STRESS_TEST_PLAN.md)
+- [Partial Alter Patch Plan](docs/plans/PARTIAL_ALTER_PATCH_PLAN.md)
 - [Test Plan](tests/TEST_PLAN.md)
 
 ## 许可证

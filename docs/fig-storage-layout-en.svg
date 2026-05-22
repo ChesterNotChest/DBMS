@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="700" viewBox="0 0 1300 700" role="img" aria-label="DBMS storage layout">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .node { fill: #ffffff; stroke: #2f3a4a; stroke-width: 2; rx: 12; ry: 12; }
+      .folder { fill: #eef4ff; stroke: #3057a6; stroke-width: 2; rx: 12; ry: 12; }
+      .repo { fill: #f7fbf2; stroke: #547a2e; stroke-width: 2; rx: 12; ry: 12; }
+      .title { font-family: "Segoe UI", Arial, sans-serif; font-size: 21px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Segoe UI", Arial, sans-serif; font-size: 16px; fill: #1f2a37; }
+      .small { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; fill: #4b5563; }
+      .line { stroke: #2f3a4a; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2f3a4a"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1300" height="700"/>
+  <text class="title" x="650" y="42" text-anchor="middle">Layered Local Data Directory</text>
+
+  <rect class="folder" x="80" y="88" width="200" height="90"/>
+  <text class="title" x="180" y="124" text-anchor="middle">data /</text>
+  <text class="small" x="180" y="150" text-anchor="middle">Unified data root</text>
+
+  <rect class="node" x="370" y="88" width="200" height="90"/>
+  <text class="title" x="470" y="124" text-anchor="middle">root.dbf</text>
+  <text class="small" x="470" y="150" text-anchor="middle">Database catalog</text>
+
+  <rect class="folder" x="660" y="88" width="200" height="90"/>
+  <text class="title" x="760" y="124" text-anchor="middle">database /</text>
+  <text class="small" x="760" y="150" text-anchor="middle">User or system database</text>
+
+  <rect class="node" x="950" y="88" width="200" height="90"/>
+  <text class="title" x="1050" y="124" text-anchor="middle">database.tab</text>
+  <text class="small" x="1050" y="150" text-anchor="middle">Table catalog</text>
+
+  <rect class="folder" x="570" y="250" width="240" height="90"/>
+  <text class="title" x="690" y="286" text-anchor="middle">table_name /</text>
+  <text class="small" x="690" y="314" text-anchor="middle">Per-table directory</text>
+
+  <rect class="node" x="285" y="430" width="200" height="90"/>
+  <text class="label" x="385" y="462" text-anchor="middle">table.meta</text>
+  <text class="small" x="385" y="488" text-anchor="middle">Column schema</text>
+
+  <rect class="node" x="500" y="430" width="200" height="90"/>
+  <text class="label" x="600" y="462" text-anchor="middle">table.con</text>
+  <text class="small" x="600" y="488" text-anchor="middle">Constraints</text>
+
+  <rect class="node" x="715" y="430" width="200" height="90"/>
+  <text class="label" x="815" y="462" text-anchor="middle">table.idx</text>
+  <text class="small" x="815" y="488" text-anchor="middle">Index metadata</text>
+
+  <rect class="node" x="930" y="430" width="200" height="90"/>
+  <text class="label" x="1030" y="462" text-anchor="middle">table.dat / rid</text>
+  <text class="small" x="1030" y="488" text-anchor="middle">Rows and row ids</text>
+
+  <rect class="folder" x="860" y="250" width="240" height="90"/>
+  <text class="title" x="980" y="286" text-anchor="middle">indexes /</text>
+  <text class="small" x="980" y="314" text-anchor="middle">Sort indexes and helpers</text>
+
+  <rect class="repo" x="60" y="585" width="210" height="70"/>
+  <text class="label" x="165" y="620" text-anchor="middle">Runtime locks</text>
+  <text class="small" x="165" y="644" text-anchor="middle">Read/write ordering</text>
+
+  <rect class="repo" x="430" y="582" width="540" height="78"/>
+  <text class="title" x="700" y="620" text-anchor="middle">Repository modules</text>
+  <text class="small" x="700" y="646" text-anchor="middle">Unified reads and writes for metadata, constraints, indexes, and rows</text>
+
+  <path class="line" d="M280 133 L370 133"/>
+  <path class="line" d="M570 133 L660 133"/>
+  <path class="line" d="M860 133 L950 133"/>
+  <path class="line" d="M760 178 L705 250"/>
+  <path class="line" d="M760 178 L970 250"/>
+  <path class="line" d="M690 340 L385 430"/>
+  <path class="line" d="M690 340 L600 430"/>
+  <path class="line" d="M690 340 L815 430"/>
+  <path class="line" d="M690 340 L1030 430"/>
+  <path class="line" d="M700 582 L700 520"/>
+</svg>

@@ -46,6 +46,12 @@ Repository layer
 Local data directory
 ```
 
+![DBMS architecture](docs/fig-architecture-en.svg)
+
+SQL execution enters through a client session, then flows through the parser, dispatcher, service layer, and local repository:
+
+![SQL execution flow](docs/fig-sql-flow-en.svg)
+
 Main directories:
 
 | Directory | Purpose |
@@ -61,6 +67,14 @@ Main directories:
 | `constants/` | Table definitions, client defaults, and threading constants. |
 | `tests/` | Qt Test suites. |
 | `data/` | Default local data directory. |
+
+The local data directory is organized as follows:
+
+![Storage layout](docs/fig-storage-layout-en.svg)
+
+The GUI is organized around these main interaction areas:
+
+![GUI layout](docs/fig-ui-layout-en.svg)
 
 ## Requirements
 
@@ -96,8 +110,6 @@ E:/Qt/Tools/CMake_64/bin/cmake.exe `
   --build E:/Qt-projects/DBMS/build/codex-vs-debug `
   --config Debug
 ```
-
-See [BUILD_WINDOWS_QT_MSVC2022_DEBUG.md](BUILD_WINDOWS_QT_MSVC2022_DEBUG.md) for a more specific Windows Debug build guide.
 
 ## Targets
 
@@ -272,11 +284,12 @@ Test coverage includes:
 
 ## Related Documents
 
-- [Windows Qt MSVC2022 Debug Build Guide](BUILD_WINDOWS_QT_MSVC2022_DEBUG.md)
-- [CLI Client Plan](CLI_CLIENT_PLAN.md)
-- [Thread and Performance Plan](THREAD_AND_PERFORMANCE_PLAN.md)
-- [Integration and Stress Test Plan](INTEGRATION_AND_STRESS_TEST_PLAN.md)
-- [Partial Alter Patch Plan](PARTIAL_ALTER_PATCH_PLAN.md)
+- [Plan Documents](docs/plans/README.md)
+- [Project Document](docs/PROJECT_DOCUMENT.md)
+- [CLI Client Plan](docs/plans/CLI_CLIENT_PLAN.md)
+- [Thread and Performance Plan](docs/plans/THREAD_AND_PERFORMANCE_PLAN.md)
+- [Integration and Stress Test Plan](docs/plans/INTEGRATION_AND_STRESS_TEST_PLAN.md)
+- [Partial Alter Patch Plan](docs/plans/PARTIAL_ALTER_PATCH_PLAN.md)
 - [Test Plan](tests/TEST_PLAN.md)
 
 ## License

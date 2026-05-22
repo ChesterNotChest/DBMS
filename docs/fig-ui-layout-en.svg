@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-label="DBMS GUI layout">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .frame { fill: #ffffff; stroke: #2f3a4a; stroke-width: 2.5; rx: 18; ry: 18; }
+      .panel { fill: #f4f7fb; stroke: #627084; stroke-width: 2; rx: 12; ry: 12; }
+      .accent { fill: #eef4ff; stroke: #3057a6; stroke-width: 2; rx: 12; ry: 12; }
+      .title { font-family: "Segoe UI", Arial, sans-serif; font-size: 22px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Segoe UI", Arial, sans-serif; font-size: 18px; fill: #1f2a37; }
+      .small { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; fill: #4b5563; }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1200" height="660"/>
+  <rect class="frame" x="60" y="55" width="1080" height="560"/>
+
+  <rect class="accent" x="90" y="85" width="1020" height="58"/>
+  <text class="title" x="600" y="121" text-anchor="middle">Menu Bar / Toolbar / Status Bar</text>
+
+  <rect class="panel" x="95" y="170" width="230" height="325"/>
+  <text class="title" x="210" y="214" text-anchor="middle">Structure Tree</text>
+  <text class="small" x="210" y="248" text-anchor="middle">Database list</text>
+  <text class="small" x="210" y="274" text-anchor="middle">Tables and columns</text>
+  <text class="small" x="210" y="300" text-anchor="middle">Queried through SQL runtime</text>
+
+  <rect class="panel" x="365" y="170" width="780" height="155"/>
+  <text class="title" x="755" y="214" text-anchor="middle">SQL Editor</text>
+  <text class="small" x="755" y="248" text-anchor="middle">Input, completion, execute, clear, refresh</text>
+  <text class="small" x="755" y="274" text-anchor="middle">Focused workspace, not a decorative hero area</text>
+
+  <rect class="panel" x="365" y="350" width="780" height="150"/>
+  <text class="title" x="755" y="388" text-anchor="middle">Result Table</text>
+  <text class="small" x="755" y="422" text-anchor="middle">Query results first</text>
+  <text class="small" x="755" y="448" text-anchor="middle">Editing, saving, and structured logs</text>
+
+  <rect class="accent" x="95" y="525" width="1050" height="65"/>
+  <text class="title" x="600" y="558" text-anchor="middle">Log and Supporting Area</text>
+  <text class="small" x="600" y="584" text-anchor="middle">CLI-compatible result formatting, GUI operation logs, errors, and status feedback</text>
+</svg>

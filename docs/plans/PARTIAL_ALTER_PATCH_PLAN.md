@@ -10,25 +10,23 @@
 
 允许修改：
 
-1. [utils/sql_parser/sql_tokenizer.h](utils/sql_parser/sql_tokenizer.h)
+1. [utils/sql_parser/sql_tokenizer.h](../../utils/sql_parser/sql_tokenizer.h)
    - 如现有 token 集合缺少 `RENAME / TO / SET`，补充关键字 token；若 parser 只按 lexeme 判断，可不新增。
-2. [utils/sql_parser/sql_tokenizer.cpp](utils/sql_parser/sql_tokenizer.cpp)
+2. [utils/sql_parser/sql_tokenizer.cpp](../../utils/sql_parser/sql_tokenizer.cpp)
    - 补齐新增关键字识别。
-3. [utils/sql_parser/table_parser.cpp](utils/sql_parser/table_parser.cpp)
+3. [utils/sql_parser/table_parser.cpp](../../utils/sql_parser/table_parser.cpp)
    - 在 `ALTER_TABLE` 分支中新增局部 alterAction 解析。
-4. [controller/sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
+4. [controller/sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
    - 新增局部 alterAction 分发。
    - 读取旧 schema，构造完整 `ColumnDefinition` 后调用 service。
-5. [service/service.h](service/service.h)
+5. [service/service.h](../../service/service.h)
    - 首选不修改；若需要暴露 schema 查询辅助函数，再最小补充。
-6. [service/table_service.cpp](service/table_service.cpp)
+6. [service/table_service.cpp](../../service/table_service.cpp)
    - 首选不修改；复用现有 `modifyColumn(tableName, oldColumnName, definition)`。
-7. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
+7. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
    - 覆盖 parser payload 与 dispatcher 落库效果。
-8. [tests/parserNdispatcher_test_plan.md](tests/parserNdispatcher_test_plan.md)
-   - 更新 parser/dispatcher 测试说明。
-9. [tests/service_test_plan.md](tests/service_test_plan.md)
-   - 如新增 service 辅助行为，补充对应说明；若只走 dispatcher，可只补 dispatcher 说明。
+8. [tests/TEST_PLAN.md](../../tests/TEST_PLAN.md)
+   - 如新增 parser/dispatcher 或 service 测试范围，补充统一测试说明。
 
 不修改：
 
@@ -251,7 +249,7 @@ TaskResult {
 
 #### 4.1 parser 测试
 
-新增或扩展 [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)：
+新增或扩展 [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)：
 
 1. `test_parseAlterColumnSetDefault`
    - 输入：`ALTER TABLE student ALTER COLUMN age SET DEFAULT 18`

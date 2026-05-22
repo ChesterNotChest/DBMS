@@ -23,7 +23,7 @@
 
 ### 0. 常量增量
 
-新增文件：[cli_client_def.h](constants/cli_client_def.h)
+新增文件：[cli_client_def.h](../../constants/cli_client_def.h)
 
 新增常量：
 
@@ -47,12 +47,12 @@
 
 本阶段允许修改：
 
-1. [service.h](service/service.h)
-2. [name_normalize.cpp](utils/service_common/name_normalize.cpp)
-3. [sql_dispatcher.h](controller/sql_dispatcher.h)
-4. [sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
-5. [nest_query.h](controller/nest_query.h)
-6. [nest_query.cpp](controller/nest_query.cpp)
+1. [service.h](../../service/service.h)
+2. [name_normalize.cpp](../../utils/service_common/name_normalize.cpp)
+3. [sql_dispatcher.h](../../controller/sql_dispatcher.h)
+4. [sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
+5. [nest_query.h](../../controller/nest_query.h)
+6. [nest_query.cpp](../../controller/nest_query.cpp)
 7. [main.cpp](main.cpp)
 8. [CMakeLists.txt](CMakeLists.txt)
 9. 新增 `client/client_session.h/.cpp`
@@ -392,7 +392,7 @@ struct ClientSession {
 
 ### 0. 常量增量
 
-继续使用 [cli_client_def.h](constants/cli_client_def.h)
+继续使用 [cli_client_def.h](../../constants/cli_client_def.h)
 
 新增常量：
 
@@ -420,16 +420,16 @@ struct ClientSession {
 
 本阶段允许修改：
 
-1. [service.h](service/service.h)
-2. [database_service.cpp](service/database_service.cpp)
-3. [table_service.cpp](service/table_service.cpp)
-4. [tuple_service.cpp](service/tuple_service.cpp)
-5. [sql_parser.h](utils/sql_parser/sql_parser.h)
-6. [database_parser.cpp](utils/sql_parser/database_parser.cpp)
-7. [sql_dispatcher.h](controller/sql_dispatcher.h)
-8. [sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
-9. [client_session.h/.cpp](client/client_session.h)
-10. [sql_client_engine.h/.cpp](client/sql_client_engine.h)
+1. [service.h](../../service/service.h)
+2. [database_service.cpp](../../service/database_service.cpp)
+3. [table_service.cpp](../../service/table_service.cpp)
+4. [tuple_service.cpp](../../service/tuple_service.cpp)
+5. [sql_parser.h](../../utils/sql_parser/sql_parser.h)
+6. [database_parser.cpp](../../utils/sql_parser/database_parser.cpp)
+7. [sql_dispatcher.h](../../controller/sql_dispatcher.h)
+8. [sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
+9. [client_session.h/.cpp](../../client/client_session.h)
+10. [sql_client_engine.h/.cpp](../../client/sql_client_engine.h)
 11. 新增 `service/auth_service.h/.cpp`
 12. 新增 `constants/cli_client_def.h`
 13. 新增测试：
@@ -766,7 +766,7 @@ CREATE/DROP USER/GRANT/REVOKE -> 只允许 root
 
 ### 0. 常量增量
 
-继续使用 [cli_client_def.h](constants/cli_client_def.h)
+继续使用 [cli_client_def.h](../../constants/cli_client_def.h)
 
 新增常量：
 
@@ -784,11 +784,11 @@ CREATE/DROP USER/GRANT/REVOKE -> 只允许 root
 
 1. [mainwindow.h](mainwindow.h)
 2. [mainwindow.cpp](mainwindow.cpp)
-3. [display/editor_panel.h/.cpp](display/editor_panel.h)
-4. [display/result_panel.h/.cpp](display/result_panel.h)
-5. [display/structure_panel.h/.cpp](display/structure_panel.h)
-6. [controller/sql_dispatcher.h/.cpp](controller/sql_dispatcher.h)
-7. [client/sql_client_engine.h/.cpp](client/sql_client_engine.h)
+3. [display/editor_panel.h/.cpp](../../display/editor_panel.h)
+4. [display/result_panel.h/.cpp](../../display/result_panel.h)
+5. [display/structure_panel.h/.cpp](../../display/structure_panel.h)
+6. [controller/sql_dispatcher.h/.cpp](../../controller/sql_dispatcher.h)
+7. [client/sql_client_engine.h/.cpp](../../client/sql_client_engine.h)
 8. [main.cpp](main.cpp)
 9. [CMakeLists.txt](CMakeLists.txt)
 10. 新增测试：

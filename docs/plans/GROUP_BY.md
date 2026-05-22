@@ -149,11 +149,11 @@ FROM / JOIN
 
 允许修改：
 
-1. [utils/sql_parser/sql_tokenizer.h](utils/sql_parser/sql_tokenizer.h)
-2. [utils/sql_parser/sql_tokenizer.cpp](utils/sql_parser/sql_tokenizer.cpp)
-3. [utils/sql_parser/tuple_parser.cpp](utils/sql_parser/tuple_parser.cpp)
-4. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
-5. [tests/parserNdispatcher_test_plan.md](tests/parserNdispatcher_test_plan.md)
+1. [utils/sql_parser/sql_tokenizer.h](../../utils/sql_parser/sql_tokenizer.h)
+2. [utils/sql_parser/sql_tokenizer.cpp](../../utils/sql_parser/sql_tokenizer.cpp)
+3. [utils/sql_parser/tuple_parser.cpp](../../utils/sql_parser/tuple_parser.cpp)
+4. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
+5. [tests/TEST_PLAN.md](../../tests/TEST_PLAN.md)
 
 首选不修改：
 
@@ -427,7 +427,7 @@ Parser 测试：
 
 ### 0. 常量增量
 
-新增局部枚举和结构体，建议位于 [controller/nest_query.cpp](controller/nest_query.cpp) 匿名 namespace：
+新增局部枚举和结构体，建议位于 [controller/nest_query.cpp](../../controller/nest_query.cpp) 匿名 namespace：
 
 ```cpp
 enum class AggregateFunction {
@@ -469,10 +469,10 @@ struct GroupedRows {
 
 允许修改：
 
-1. [controller/nest_query.cpp](controller/nest_query.cpp)
-2. [controller/sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
-3. [tests/test_query_executor.cpp](tests/test_query_executor.cpp)
-4. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
+1. [controller/nest_query.cpp](../../controller/nest_query.cpp)
+2. [controller/sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
+3. [tests/test_query_executor.cpp](../../tests/test_query_executor.cpp)
+4. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
 
 首选不修改：
 
@@ -820,10 +820,10 @@ __agg_1
 
 允许修改：
 
-1. [utils/sql_parser/tuple_parser.cpp](utils/sql_parser/tuple_parser.cpp)
-2. [controller/nest_query.cpp](controller/nest_query.cpp)
-3. [tests/test_logic.cpp](tests/test_logic.cpp)
-4. [tests/test_query_executor.cpp](tests/test_query_executor.cpp)
+1. [utils/sql_parser/tuple_parser.cpp](../../utils/sql_parser/tuple_parser.cpp)
+2. [controller/nest_query.cpp](../../controller/nest_query.cpp)
+3. [tests/test_logic.cpp](../../tests/test_logic.cpp)
+4. [tests/test_query_executor.cpp](../../tests/test_query_executor.cpp)
 
 首选不修改：
 
@@ -937,10 +937,10 @@ SELECT parent_id, COUNT(*) FROM child GROUP BY parent_id HAVING score > 60;
 
 允许修改：
 
-1. [controller/nest_query.cpp](controller/nest_query.cpp)
-2. [controller/sql_dispatcher.cpp](controller/sql_dispatcher.cpp)
-3. [tests/test_query_executor.cpp](tests/test_query_executor.cpp)
-4. [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp)
+1. [controller/nest_query.cpp](../../controller/nest_query.cpp)
+2. [controller/sql_dispatcher.cpp](../../controller/sql_dispatcher.cpp)
+3. [tests/test_query_executor.cpp](../../tests/test_query_executor.cpp)
+4. [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp)
 
 ### 2. 函数级完整数据流
 
@@ -1057,9 +1057,8 @@ ORDER BY COUNT(*) DESC;
 
 允许修改：
 
-1. [tests/TEST_PLAN.md](tests/TEST_PLAN.md)
-2. [tests/parserNdispatcher_test_plan.md](tests/parserNdispatcher_test_plan.md)
-3. [tests/test_content_mapping.md](tests/test_content_mapping.md)
+1. [tests/TEST_PLAN.md](../../tests/TEST_PLAN.md)
+2. [tests/test_content_mapping.md](../../tests/test_content_mapping.md)
 
 不修改：
 
@@ -1135,7 +1134,7 @@ $env:PATH='E:\Qt\6.9.2\msvc2022_64\bin;' + $env:PATH
 
 ## 严格测试先行矩阵
 
-实现前建议先把本节测试写入 [tests/test_parser_dispatcher.cpp](tests/test_parser_dispatcher.cpp) 与 [tests/test_query_executor.cpp](tests/test_query_executor.cpp)，允许红灯，然后按阶段实现到全绿。
+实现前建议先把本节测试写入 [tests/test_parser_dispatcher.cpp](../../tests/test_parser_dispatcher.cpp) 与 [tests/test_query_executor.cpp](../../tests/test_query_executor.cpp)，允许红灯，然后按阶段实现到全绿。
 
 这组用例用于保障第一版就能覆盖：
 
