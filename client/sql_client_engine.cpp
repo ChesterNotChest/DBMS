@@ -3,6 +3,7 @@
 #include "../constants/cli_client_def.h"
 #include "../service/auth_service.h"
 #include "../service/service.h"
+#include "../utils/logic/logic_ast.h"
 
 namespace client {
 
@@ -50,6 +51,63 @@ QString formatSelectText(const service::SelectRowsResult &result)
         output += QStringLiteral("\n");
     }
     return output;
+}
+
+void appendUniqueTableName(QStringList *tables, const QString &tableName)
+{
+    if (tables == nullptr) {
+        return;
+    }
+    const QString normalized = tableName.trimmed();
+    if (!normalized.isEmpty() && !tables->contains(normalized)) {
+        tables->append(normalized);
+    }
+}
+
+void appendParsedStatementTableNames(const sqlparser::ParseResult &parsed, QStringList *tables);
+
+void appendLogicNodeTableNames(const logic::LogicNode &node, QStringList *tables)
+{
+    if (!node.subquerySql.trimmed().isEmpty()) {
+        const sqlparser::ParseResult subquery = sqlparser::parseSql(node.subquerySql);
+        if (subquery.success) {
+            appendParsedStatementTableNames(subquery, tables);
+        }
+    }
+    for (const logic::LogicNode &child : node.children) {
+        appendLogicNodeTableNames(child, tables);
+    }
+}
+
+void appendWhereAstTableNames(const QVariantMap &payload, QStringList *tables)
+{
+    if (!payload.contains(QStringLiteral("whereAst"))) {
+        return;
+    }
+    appendLogicNodeTableNames(payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>(), tables);
+}
+
+void appendParsedStatementTableNames(const sqlparser::ParseResult &parsed, QStringList *tables)
+{
+    const QString commandType = parsed.commandType;
+    if (commandType == QStringLiteral("CREATE_TABLE")
+        || commandType == QStringLiteral("SHOW_TABLES")
+        || commandType == QStringLiteral("USE_DATABASE")
+        || commandType == QStringLiteral("CREATE_DATABASE")
+        || commandType == QStringLiteral("DROP_DATABASE")) {
+        return;
+    }
+
+    if (commandType == QStringLiteral("SELECT")) {
+        const QVariantList sources = parsed.payload.value(QStringLiteral("fromSources")).toList();
+        for (const QVariant &sourceValue : sources) {
+            appendUniqueTableName(tables,
+                                  sourceValue.toMap().value(QStringLiteral("tableName")).toString());
+        }
+    }
+
+    appendUniqueTableName(tables, parsed.payload.value(QStringLiteral("tableName")).toString());
+    appendWhereAstTableNames(parsed.payload, tables);
 }
 
 } // namespace
@@ -257,9 +315,11 @@ service::SqlExecResult SqlClientEngine::authorizeStatement(const ClientSession &
                                                            const sqlparser::ParseResult &parsed) const
 {
     const QString targetDatabase = targetDatabaseForStatement(clientSession, parsed);
+    const QStringList targetTables = targetTablesForStatement(parsed);
     const service::TaskResult result = service::auth_service::authorize(clientSession.userName,
                                                                         parsed.commandType,
                                                                         targetDatabase,
+                                                                        targetTables,
                                                                         clientSession.dataRoot);
     if (result.success) {
         return {true, {}, {}, result.affectedRowCount, {}, parsed.commandType, parsed.payload};
@@ -274,6 +334,13 @@ QString SqlClientEngine::targetDatabaseForStatement(const ClientSession &clientS
         return parsed.payload.value(QStringLiteral("databaseName")).toString();
     }
     return clientSession.currentDatabase;
+}
+
+QStringList SqlClientEngine::targetTablesForStatement(const sqlparser::ParseResult &parsed) const
+{
+    QStringList tables;
+    appendParsedStatementTableNames(parsed, &tables);
+    return tables;
 }
 
 } // namespace client

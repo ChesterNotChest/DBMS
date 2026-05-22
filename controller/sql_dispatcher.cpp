@@ -1077,21 +1077,33 @@ SqlExecResult SqlDispatcher::execAlterUser(const sqlparser::ParseResult& p) {
 SqlExecResult SqlDispatcher::execGrantAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName"), QStringLiteral("*")).toString();
+    const TaskResult result = tableName == QStringLiteral("*")
+                                  ? auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot())
+                                  : auth_service::grantTableAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(databaseName, userName), result.affectedRowCount};
+    const QString scope = tableName == QStringLiteral("*")
+                              ? QStringLiteral("%1.*").arg(databaseName)
+                              : QStringLiteral("%1.%2").arg(databaseName, tableName);
+    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(scope, userName), result.affectedRowCount};
 }
 
 SqlExecResult SqlDispatcher::execRevokeAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName"), QStringLiteral("*")).toString();
+    const TaskResult result = tableName == QStringLiteral("*")
+                                  ? auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot())
+                                  : auth_service::revokeTableAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(databaseName, userName), result.affectedRowCount};
+    const QString scope = tableName == QStringLiteral("*")
+                              ? QStringLiteral("%1.*").arg(databaseName)
+                              : QStringLiteral("%1.%2").arg(databaseName, tableName);
+    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(scope, userName), result.affectedRowCount};
 }
 
 QString SqlDispatcher::formatSelectResult(const SelectRowsResult& r) {

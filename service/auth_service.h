@@ -4,6 +4,7 @@
 #include "service.h"
 
 #include <QString>
+#include <QStringList>
 
 namespace service::auth_service {
 
@@ -39,14 +40,27 @@ TaskResult grantDatabaseAll(const QString &requestUser,
                             const QString &databaseName,
                             const QString &dataRoot);
 
+TaskResult grantTableAll(const QString &requestUser,
+                         const QString &targetUserName,
+                         const QString &databaseName,
+                         const QString &tableName,
+                         const QString &dataRoot);
+
 TaskResult revokeDatabaseAll(const QString &requestUser,
                              const QString &targetUserName,
                              const QString &databaseName,
                              const QString &dataRoot);
 
+TaskResult revokeTableAll(const QString &requestUser,
+                          const QString &targetUserName,
+                          const QString &databaseName,
+                          const QString &tableName,
+                          const QString &dataRoot);
+
 TaskResult authorize(const QString &userName,
                      const QString &commandType,
                      const QString &targetDatabase,
+                     const QStringList &targetTables,
                      const QString &dataRoot);
 
 bool userHasDatabasePrivilege(const QString &userName,
