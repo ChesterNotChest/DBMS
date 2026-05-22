@@ -31,9 +31,7 @@ SqlHighlighter::SqlHighlighter(QTextDocument *parent) : QSyntaxHighlighter(paren
          "TRUNCATE","USE","SHOW","DESCRIBE","DESC","EXPLAIN"},
         "#0000FF", true);
 
-    add({"INT","INTEGER","BIGINT","SMALLINT","TINYINT","FLOAT","DOUBLE","DECIMAL",
-         "NUMERIC","VARCHAR","CHAR","TEXT","DATE","DATETIME","TIME","TIMESTAMP",
-         "BOOL","BOOLEAN","BLOB","BINARY"},
+    add({"INT","SMALLINT","FLOAT","VARCHAR"},
         "#0000FF", true);
 
     add({"COUNT","SUM","AVG","MAX","MIN","ROUND","LENGTH","UPPER","LOWER","TRIM",

@@ -31,7 +31,6 @@ SHOW TABLES;
 
 ## 2. 建表
 
-
 ```sql
 CREATE TABLE parent (
   id INT PRIMARY KEY,
@@ -119,12 +118,12 @@ INSERT INTO child_no_action (id, parent_id, note) VALUES (40, 41, 'no action chi
 
 全表查询：
 
-```sql
+````sql
 SELECT * FROM parent;
 
 ```sql
 SELECT id, name FROM parent;
-```
+````
 
 带 `LIMIT`：
 
@@ -361,3 +360,4 @@ ORDER BY
 GROUP BY
 JOIN
 ```
+

@@ -446,8 +446,63 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
                 ++listState.index;
                 continue;
             }
-            break;
+            // No break here, let loop continue until EndOfInput
+            // to parse all comma-separated values
         }
+        return {true, node, {}};
+    }
+
+    if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Not
+        && state.index + 1 < state.tokens.size()
+        && state.tokens.at(state.index + 1).type == LogicTokenType::Keyword
+        && state.tokens.at(state.index + 1).keywordType == LogicKeywordType::Between) {
+        state.index += 2;
+        LogicNode lower;
+        LogicError error;
+        if (!parseLiteralOrReference(state, &lower, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        if (isAtEnd(state) || peekToken(state).type != LogicTokenType::Keyword
+            || peekToken(state).keywordType != LogicKeywordType::And) {
+            return makeParseError(QStringLiteral("BETWEEN requires AND"), token.position);
+        }
+        ++state.index;
+        LogicNode upper;
+        if (!parseLiteralOrReference(state, &upper, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        LogicNode node;
+        node.type = LogicNodeType::Between;
+        node.negated = true;
+        node.children.append(lhs);
+        node.children.append(lower);
+        node.children.append(upper);
+        node.rawText = token.rawText;
+        return {true, node, {}};
+    }
+
+    if (token.type == LogicTokenType::Keyword && token.keywordType == LogicKeywordType::Between) {
+        ++state.index;
+        LogicNode lower;
+        LogicError error;
+        if (!parseLiteralOrReference(state, &lower, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        if (isAtEnd(state) || peekToken(state).type != LogicTokenType::Keyword
+            || peekToken(state).keywordType != LogicKeywordType::And) {
+            return makeParseError(QStringLiteral("BETWEEN requires AND"), token.position);
+        }
+        ++state.index;
+        LogicNode upper;
+        if (!parseLiteralOrReference(state, &upper, &error)) {
+            return makeParseError(error.message, error.position);
+        }
+        LogicNode node;
+        node.type = LogicNodeType::Between;
+        node.children.append(lhs);
+        node.children.append(lower);
+        node.children.append(upper);
+        node.rawText = token.rawText;
         return {true, node, {}};
     }
 
@@ -475,6 +530,24 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
             node.type = LogicNodeType::QuantifiedSubquery;
             node.compareOperator = op;
             node.quantifier = quantifierToken == LogicKeywordType::Any ? LogicQuantifier::Any : LogicQuantifier::All;
+            node.children.append(lhs);
+            node.subquerySql = subquerySql;
+            LogicError outerError;
+            if (!collectOuterNamesFromText(node.subquerySql, &node.referencedOuterNames, &outerError)) {
+                return makeParseError(outerError.message, outerError.position);
+            }
+            return {true, node, {}};
+        }
+
+        if (peekToken(state).type == LogicTokenType::LeftParen && tokenBeginsSubquery(state)) {
+            const QString subquerySql = captureSubquerySqlTextInternal(expressionText, state);
+            if (subquerySql.isEmpty()) {
+                return makeParseError(QStringLiteral("scalar comparison: invalid subquery"), token.position);
+            }
+
+            LogicNode node;
+            node.type = LogicNodeType::ScalarSubquery;
+            node.compareOperator = op;
             node.children.append(lhs);
             node.subquerySql = subquerySql;
             LogicError outerError;
@@ -545,7 +618,8 @@ LogicParseResult parsePredicateExpression(LogicParserState &state, const QString
                 ++listState.index;
                 continue;
             }
-            break;
+            // No break here, let loop continue until EndOfInput
+            // to parse all comma-separated values
         }
         return {true, node, {}};
     }

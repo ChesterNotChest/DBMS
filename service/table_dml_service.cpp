@@ -2,6 +2,7 @@
 #include "../utils/logic/logic.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -92,6 +93,270 @@ QStringList assignmentColumnNames(const QMap<QString, QString> &assignmentMap)
         columns.append(it.key());
     }
     return columns;
+}
+
+QStringList assignmentColumnNames(const QMap<QString, QString> &assignmentMap,
+                                  const QMap<QString, QString> &assignmentExpressionMap)
+{
+    QStringList columns = assignmentColumnNames(assignmentMap);
+    for (auto it = assignmentExpressionMap.constBegin(); it != assignmentExpressionMap.constEnd(); ++it) {
+        if (!columns.contains(it.key())) {
+            columns.append(it.key());
+        }
+    }
+    return columns;
+}
+
+struct ArithmeticEvalResult
+{
+    bool success = false;
+    bool isNull = false;
+    double value = 0.0;
+    QString error;
+};
+
+class ArithmeticExpressionParser
+{
+public:
+    ArithmeticExpressionParser(const QString &expression,
+                               const tabledef::TableSchema &schema,
+                               const repo::TableData &table,
+                               const repo::TableRow &row)
+        : m_expression(expression)
+        , m_schema(schema)
+        , m_table(table)
+        , m_row(row)
+    {
+    }
+
+    ArithmeticEvalResult evaluate()
+    {
+        ArithmeticEvalResult result = parseExpression();
+        if (!result.success) {
+            return result;
+        }
+        skipSpaces();
+        if (m_index != m_expression.size()) {
+            return failure(QStringLiteral("unsupported assignment expression near '%1'")
+                               .arg(m_expression.mid(m_index)));
+        }
+        return result;
+    }
+
+private:
+    ArithmeticEvalResult parseExpression()
+    {
+        ArithmeticEvalResult lhs = parseTerm();
+        if (!lhs.success) {
+            return lhs;
+        }
+
+        while (true) {
+            skipSpaces();
+            if (!match(QLatin1Char('+')) && !match(QLatin1Char('-'))) {
+                return lhs;
+            }
+            const QChar op = m_expression.at(m_index - 1);
+            ArithmeticEvalResult rhs = parseTerm();
+            if (!rhs.success) {
+                return rhs;
+            }
+            if (lhs.isNull || rhs.isNull) {
+                lhs.isNull = true;
+                lhs.value = 0.0;
+            } else if (op == QLatin1Char('+')) {
+                lhs.value += rhs.value;
+            } else {
+                lhs.value -= rhs.value;
+            }
+        }
+    }
+
+    ArithmeticEvalResult parseTerm()
+    {
+        ArithmeticEvalResult lhs = parseFactor();
+        if (!lhs.success) {
+            return lhs;
+        }
+
+        while (true) {
+            skipSpaces();
+            if (!match(QLatin1Char('*')) && !match(QLatin1Char('/'))) {
+                return lhs;
+            }
+            const QChar op = m_expression.at(m_index - 1);
+            ArithmeticEvalResult rhs = parseFactor();
+            if (!rhs.success) {
+                return rhs;
+            }
+            if (lhs.isNull || rhs.isNull) {
+                lhs.isNull = true;
+                lhs.value = 0.0;
+            } else if (op == QLatin1Char('*')) {
+                lhs.value *= rhs.value;
+            } else {
+                if (rhs.value == 0.0) {
+                    return failure(QStringLiteral("division by zero in assignment expression"));
+                }
+                lhs.value /= rhs.value;
+            }
+        }
+    }
+
+    ArithmeticEvalResult parseFactor()
+    {
+        skipSpaces();
+        if (m_index >= m_expression.size()) {
+            return failure(QStringLiteral("expected value in assignment expression"));
+        }
+
+        if (match(QLatin1Char('+'))) {
+            return parseFactor();
+        }
+        if (match(QLatin1Char('-'))) {
+            ArithmeticEvalResult value = parseFactor();
+            if (!value.success || value.isNull) {
+                return value;
+            }
+            value.value = -value.value;
+            return value;
+        }
+
+        if (match(QLatin1Char('('))) {
+            ArithmeticEvalResult nested = parseExpression();
+            if (!nested.success) {
+                return nested;
+            }
+            skipSpaces();
+            if (!match(QLatin1Char(')'))) {
+                return failure(QStringLiteral("expected ')' in assignment expression"));
+            }
+            return nested;
+        }
+
+        if (m_expression.at(m_index).isDigit() || m_expression.at(m_index) == QLatin1Char('.')) {
+            return parseNumber();
+        }
+
+        if (m_expression.at(m_index).isLetter() || m_expression.at(m_index) == QLatin1Char('_')) {
+            return parseColumnReference();
+        }
+
+        return failure(QStringLiteral("unexpected token '%1' in assignment expression")
+                           .arg(m_expression.at(m_index)));
+    }
+
+    ArithmeticEvalResult parseNumber()
+    {
+        const int start = m_index;
+        bool seenDot = false;
+        while (m_index < m_expression.size()) {
+            const QChar ch = m_expression.at(m_index);
+            if (ch.isDigit()) {
+                ++m_index;
+                continue;
+            }
+            if (ch == QLatin1Char('.') && !seenDot) {
+                seenDot = true;
+                ++m_index;
+                continue;
+            }
+            break;
+        }
+
+        bool ok = false;
+        const QString text = m_expression.mid(start, m_index - start);
+        const double value = text.toDouble(&ok);
+        if (!ok) {
+            return failure(QStringLiteral("invalid number '%1' in assignment expression").arg(text));
+        }
+        return {true, false, value, {}};
+    }
+
+    ArithmeticEvalResult parseColumnReference()
+    {
+        const int start = m_index;
+        while (m_index < m_expression.size()) {
+            const QChar ch = m_expression.at(m_index);
+            if (ch.isLetterOrNumber() || ch == QLatin1Char('_') || ch == QLatin1Char('.')) {
+                ++m_index;
+                continue;
+            }
+            break;
+        }
+
+        QString columnName = m_expression.mid(start, m_index - start);
+        if (columnName.contains(QLatin1Char('.'))) {
+            columnName = columnName.mid(columnName.lastIndexOf(QLatin1Char('.')) + 1);
+        }
+
+        const int columnIndex = m_table.columns.indexOf(columnName);
+        if (columnIndex < 0 || columnIndex >= m_schema.columns.size()) {
+            return failure(QStringLiteral("column '%1' does not exist in assignment expression").arg(columnName));
+        }
+
+        const QString value = columnIndex < m_row.size() ? m_row.at(columnIndex) : QString();
+        if (value.isEmpty()) {
+            return {true, true, 0.0, {}};
+        }
+
+        bool ok = false;
+        const double number = value.toDouble(&ok);
+        if (!ok) {
+            return failure(QStringLiteral("column '%1' value '%2' is not numeric")
+                               .arg(columnName, value));
+        }
+        return {true, false, number, {}};
+    }
+
+    void skipSpaces()
+    {
+        while (m_index < m_expression.size() && m_expression.at(m_index).isSpace()) {
+            ++m_index;
+        }
+    }
+
+    bool match(QChar ch)
+    {
+        skipSpaces();
+        if (m_index < m_expression.size() && m_expression.at(m_index) == ch) {
+            ++m_index;
+            return true;
+        }
+        return false;
+    }
+
+    ArithmeticEvalResult failure(const QString &message) const
+    {
+        return {false, false, 0.0, message};
+    }
+
+    QString m_expression;
+    const tabledef::TableSchema &m_schema;
+    const repo::TableData &m_table;
+    const repo::TableRow &m_row;
+    int m_index = 0;
+};
+
+QString formatArithmeticValueForColumn(double value,
+                                       const tabledef::Column &column,
+                                       QString *error)
+{
+    if (error != nullptr) {
+        error->clear();
+    }
+    if (!std::isfinite(value)) {
+        if (error != nullptr) {
+            *error = QStringLiteral("assignment expression result is not finite");
+        }
+        return {};
+    }
+
+    if (column.type == tabledef::ColumnType::Int
+        || column.type == tabledef::ColumnType::SmallInt) {
+        return QString::number(static_cast<qlonglong>(value));
+    }
+    return QString::number(value, 'g', 15);
 }
 
 bool updateCanUseLocalFastPath(const QString &databaseName,
@@ -935,9 +1200,10 @@ bool buildCandidateRow(const tabledef::TableSchema &schema,
 
         if (value.isEmpty()) {
             if (column.autoIncrement) {
-                if (column.type != tabledef::ColumnType::Int) {
+                if (column.type != tabledef::ColumnType::Int
+                    && column.type != tabledef::ColumnType::SmallInt) {
                     if (error != nullptr) {
-                        *error = QStringLiteral("AUTO_INCREMENT column '%1' must use INT type")
+                        *error = QStringLiteral("AUTO_INCREMENT column '%1' must use INT or SMALLINT type")
                                      .arg(column.name);
                     }
                     return false;
@@ -3140,7 +3406,8 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
                                            const QList<SimpleCondition> &simpleConditions,
                                            ValidationMode validationMode,
                                            const logic::LogicNode *complexWhereAst,
-                                           const logic::LogicEvalContext *evalContext) const
+                                           const logic::LogicEvalContext *evalContext,
+                                           const QMap<QString, QString> &assignmentExpressionMap) const
 {
     TableDmlResult result;
 
@@ -3196,6 +3463,16 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
     for (auto it = assignmentMap.constBegin(); it != assignmentMap.constEnd(); ++it) {
         if (!tabledef::hasColumn(targetSchema, it.key())) {
             result.errorMessage = QStringLiteral("column '%1' does not exist in schema").arg(it.key());
+            return result;
+        }
+    }
+    for (auto it = assignmentExpressionMap.constBegin(); it != assignmentExpressionMap.constEnd(); ++it) {
+        if (!tabledef::hasColumn(targetSchema, it.key())) {
+            result.errorMessage = QStringLiteral("column '%1' does not exist in schema").arg(it.key());
+            return result;
+        }
+        if (assignmentMap.contains(it.key())) {
+            result.errorMessage = QStringLiteral("column '%1' is assigned more than once").arg(it.key());
             return result;
         }
     }
@@ -3278,6 +3555,40 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
 
             updatedRow[columnIndex] = newValue;
         }
+        for (auto it = assignmentExpressionMap.constBegin(); it != assignmentExpressionMap.constEnd(); ++it) {
+            const int columnIndex = candidateTable.columns.indexOf(it.key());
+            if (columnIndex < 0) {
+                result.errorMessage = QStringLiteral("column '%1' does not exist").arg(it.key());
+                return result;
+            }
+
+            const tabledef::Column &column = targetSchema.columns.at(columnIndex);
+            const ArithmeticEvalResult evalResult =
+                ArithmeticExpressionParser(it.value(), targetSchema, candidateTable, updatedRow).evaluate();
+            if (!evalResult.success) {
+                result.errorMessage = evalResult.error;
+                return result;
+            }
+
+            QString newValue;
+            if (!evalResult.isNull) {
+                newValue = formatArithmeticValueForColumn(evalResult.value, column, &error);
+                if (!error.isEmpty()) {
+                    result.errorMessage = error;
+                    return result;
+                }
+            }
+            if (column.notNull && newValue.isEmpty()) {
+                result.errorMessage = QStringLiteral("column '%1' cannot be null").arg(column.name);
+                return result;
+            }
+            if (!validateScalarValue(column, newValue, &error)) {
+                result.errorMessage = error;
+                return result;
+            }
+
+            updatedRow[columnIndex] = newValue;
+        }
         candidateTable.rows[rowIndex] = updatedRow;
     }
 
@@ -3294,7 +3605,7 @@ TableDmlResult TableDmlService::updateRows(const QString &targetDatabaseName,
         rootState->candidateTable = candidateTable;
         rootState->candidateRowIds = candidateRowIds;
         rootState->dirty = true;
-        const QStringList assignedColumns = assignmentColumnNames(assignmentMap);
+        const QStringList assignedColumns = assignmentColumnNames(assignmentMap, assignmentExpressionMap);
 
         if (!validateMutationStateLocally(*rootState,
                                           matchedRowIndexes,

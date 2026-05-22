@@ -359,6 +359,29 @@ private slots:
         QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("10"));
     }
 
+    void test_executeSelectSqlAppliesBetweenWhere()
+    {
+        const QString databaseName = QStringLiteral("test_query_executor_between_db");
+        const QString tableName = QStringLiteral("student");
+        ensureDatabase(databaseName);
+        ensureTable(tableName, aggregateStudentSchema(tableName));
+        seedRow(databaseName, tableName, {QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("F"), QStringLiteral("90"), QStringLiteral("alice")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("2"), QStringLiteral("1"), QStringLiteral("M"), QStringLiteral("70"), QStringLiteral("bob")}, m_dataRoot);
+        seedRow(databaseName, tableName, {QStringLiteral("3"), QStringLiteral("2"), QStringLiteral("F"), QStringLiteral("50"), QStringLiteral("cathy")}, m_dataRoot);
+
+        QueryExecutor executor;
+        const service::QueryExecuteContext context{databaseName, m_dataRoot};
+        const QueryExecuteResult result = executor.executeSelectSql(
+            QStringLiteral("SELECT id FROM student WHERE score BETWEEN 60 AND 90 ORDER BY id ASC"),
+            context);
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.selectResult.resultTable.columns, QStringList({QStringLiteral("id")}));
+        QCOMPARE(result.selectResult.resultTable.rows.size(), 2);
+        QCOMPARE(result.selectResult.resultTable.rows.at(0).value(0), QStringLiteral("1"));
+        QCOMPARE(result.selectResult.resultTable.rows.at(1).value(0), QStringLiteral("2"));
+    }
+
     void test_executeAggregateSelectSupportsGroupHavingAndOrderAlias()
     {
         const QString databaseName = QStringLiteral("test_query_executor_aggregate_db");

@@ -351,6 +351,12 @@ private slots:
                  QStringLiteral("alice"));
         QCOMPARE(updated.payload.value(QStringLiteral("conditions")).toList().size(), 2);
 
+        const sqlparser::ParseResult nullUpdate = sqlparser::parseSql(
+            QStringLiteral("UPDATE student SET age = NULL WHERE id = 1"));
+        QVERIFY2(nullUpdate.success, qPrintable(nullUpdate.errorMessage));
+        QCOMPARE(nullUpdate.payload.value(QStringLiteral("assignments")).toMap().value(QStringLiteral("age")).toString(),
+                 QString());
+
         const sqlparser::ParseResult deleted = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE id = 1"));
         QVERIFY2(deleted.success, qPrintable(deleted.errorMessage));
@@ -369,6 +375,15 @@ private slots:
         QVERIFY2(qualifiedUpdate.success, qPrintable(qualifiedUpdate.errorMessage));
         QCOMPARE(qualifiedUpdate.payload.value(QStringLiteral("hasComplexWhere")).toBool(), true);
         QVERIFY(!qualifiedUpdate.payload.contains(QStringLiteral("conditions")));
+
+        const sqlparser::ParseResult expressionUpdate = sqlparser::parseSql(
+            QStringLiteral("UPDATE student SET age = age * 1.04 WHERE id = 1"));
+        QVERIFY2(expressionUpdate.success, qPrintable(expressionUpdate.errorMessage));
+        QCOMPARE(expressionUpdate.payload.value(QStringLiteral("assignmentExpressions"))
+                     .toMap()
+                     .value(QStringLiteral("age"))
+                     .toString(),
+                 QStringLiteral("age * 1.04"));
 
         const sqlparser::ParseResult qualifiedDelete = sqlparser::parseSql(
             QStringLiteral("DELETE FROM student WHERE student.id = 1"));
@@ -428,6 +443,227 @@ private slots:
         QVERIFY2(remainingRows.success, qPrintable(remainingRows.errorMessage));
         QCOMPARE(remainingRows.resultTable.rows.size(), 1);
         QCOMPARE(remainingRows.resultTable.rows.first(), QStringList({QStringLiteral("3"), QStringLiteral("carol")}));
+    }
+
+    void test_dispatcherUpdateEvaluatesArithmeticAssignment()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_expr_db");
+        const QString tableName = QStringLiteral("sc_update_expr");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("sno"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("cno"), tabledef::ColumnType::Varchar, 16),
+            makeColumn(QStringLiteral("grade"), tabledef::ColumnType::Int),
+        };
+        ensureTable(tableName, schema);
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("1")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QStringLiteral("100")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("2")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QStringLiteral("75")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("3")},
+                              {QStringLiteral("cno"), QStringLiteral("800003")},
+                              {QStringLiteral("grade"), QString()}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        QVERIFY2(dispatcher.execute(QStringLiteral("USE %1").arg(databaseName)).success,
+                 "use database failed");
+
+        const SqlExecResult updateResult = dispatcher.execute(QStringLiteral(
+            "UPDATE %1 SET grade = grade * 1.04 "
+            "WHERE cno = '800003' AND grade > 75 AND grade IS NOT NULL").arg(tableName));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult rows = selectAllRows(tableName);
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("800003"), QStringLiteral("104")}));
+        QCOMPARE(rows.resultTable.rows.at(1),
+                 QStringList({QStringLiteral("2"), QStringLiteral("800003"), QStringLiteral("75")}));
+        QCOMPARE(rows.resultTable.rows.at(2),
+                 QStringList({QStringLiteral("3"), QStringLiteral("800003"), QString()}));
+    }
+
+    void test_dispatcherUpdateSupportsNestedScalarSubqueryPredicate()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_scalar_subquery_db");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema studentSchema;
+        studentSchema.tableName = QStringLiteral("student");
+        studentSchema.columns = {
+            makeColumn(QStringLiteral("sno"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("ssex"), tabledef::ColumnType::Varchar, 8),
+        };
+        ensureTable(QStringLiteral("student"), studentSchema);
+
+        tabledef::TableSchema scSchema;
+        scSchema.tableName = QStringLiteral("sc");
+        scSchema.columns = {
+            makeColumn(QStringLiteral("sno"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("grade"), tabledef::ColumnType::Int),
+        };
+        ensureTable(QStringLiteral("sc"), scSchema);
+
+        seedRows(QStringLiteral("student"),
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("1")},
+                              {QStringLiteral("ssex"), QStringLiteral("女")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("2")},
+                              {QStringLiteral("ssex"), QStringLiteral("女")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("3")},
+                              {QStringLiteral("ssex"), QStringLiteral("男")}}),
+                 });
+        seedRows(QStringLiteral("sc"),
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("1")},
+                              {QStringLiteral("grade"), QStringLiteral("70")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("2")},
+                              {QStringLiteral("grade"), QStringLiteral("90")}}),
+                     makeRow({{QStringLiteral("sno"), QStringLiteral("3")},
+                              {QStringLiteral("grade"), QStringLiteral("60")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        QVERIFY2(dispatcher.execute(QStringLiteral("USE %1").arg(databaseName)).success,
+                 "use database failed");
+
+        const SqlExecResult updateResult = dispatcher.execute(QStringLiteral(
+            "UPDATE sc "
+            "SET grade = grade * 1.05 "
+            "WHERE sno IN ("
+            "    SELECT s.sno "
+            "    FROM student s "
+            "    WHERE s.ssex = '女' "
+            "    AND s.sno IN ("
+            "        SELECT sc2.sno "
+            "        FROM sc sc2 "
+            "        WHERE sc2.grade < ("
+            "            SELECT AVG(grade) "
+            "            FROM sc sc3 "
+            "            WHERE sc3.grade IS NOT NULL"
+            "        )"
+            "    )"
+            ") AND grade IS NOT NULL"));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult rows = selectAllRows(QStringLiteral("sc"));
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.at(0),
+                 QStringList({QStringLiteral("1"), QStringLiteral("73")}));
+        QCOMPARE(rows.resultTable.rows.at(1),
+                 QStringList({QStringLiteral("2"), QStringLiteral("90")}));
+        QCOMPARE(rows.resultTable.rows.at(2),
+                 QStringList({QStringLiteral("3"), QStringLiteral("60")}));
+    }
+
+    void test_dispatcherUpdateAppliesFullWherePredicates()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_full_where_db");
+        const QString tableName = QStringLiteral("student_update_full_where");
+        ensureDatabase(databaseName);
+
+        tabledef::TableSchema schema;
+        schema.tableName = tableName;
+        schema.columns = {
+            makeColumn(QStringLiteral("id"), tabledef::ColumnType::Int, 0, true),
+            makeColumn(QStringLiteral("name"), tabledef::ColumnType::Varchar, 64, true),
+            makeColumn(QStringLiteral("score"), tabledef::ColumnType::Int),
+            makeColumn(QStringLiteral("note"), tabledef::ColumnType::Varchar, 64),
+        };
+        schema.constraints = {
+            makePrimaryKey(QStringLiteral("pk_%1_id").arg(tableName), {QStringLiteral("id")}),
+        };
+
+        ensureTable(tableName, schema);
+        seedRows(tableName,
+                 QList<QMap<QString, QString>>{
+                     makeRow({{QStringLiteral("id"), QStringLiteral("1")},
+                              {QStringLiteral("name"), QStringLiteral("alice")},
+                              {QStringLiteral("score"), QStringLiteral("55")},
+                              {QStringLiteral("note"), QStringLiteral("")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("2")},
+                              {QStringLiteral("name"), QStringLiteral("bob")},
+                              {QStringLiteral("score"), QStringLiteral("70")},
+                              {QStringLiteral("note"), QStringLiteral("ready")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("3")},
+                              {QStringLiteral("name"), QStringLiteral("carol")},
+                              {QStringLiteral("score"), QStringLiteral("88")},
+                              {QStringLiteral("note"), QStringLiteral("")}}),
+                     makeRow({{QStringLiteral("id"), QStringLiteral("4")},
+                              {QStringLiteral("name"), QStringLiteral("dave")},
+                              {QStringLiteral("score"), QStringLiteral("95")},
+                              {QStringLiteral("note"), QStringLiteral("ready")}}),
+                 });
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult result = dispatcher.execute(
+            QStringLiteral("UPDATE %1 SET note = 'matched' "
+                           "WHERE (score BETWEEN 60 AND 90 AND name LIKE 'b%') "
+                           "OR id IN (1, 3) "
+                           "OR note IS NULL "
+                           "OR id IN (SELECT id FROM %1 WHERE name = 'dave')")
+                .arg(tableName));
+
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 4);
+
+        const SelectRowsResult updatedRows = selectAllRows(tableName);
+        QVERIFY2(updatedRows.success, qPrintable(updatedRows.errorMessage));
+        QCOMPARE(updatedRows.resultTable.rows.size(), 4);
+        for (const repo::TableRow &row : updatedRows.resultTable.rows) {
+            QCOMPARE(row.value(3), QStringLiteral("matched"));
+        }
+    }
+
+    void test_dispatcherUpdateSubqueryReadsRelatedLockedTable()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_update_subquery_reentrant_db");
+        ensureDatabase(databaseName);
+
+        SqlDispatcher dispatcher;
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "CREATE TABLE course ("
+                     "cno INT PRIMARY KEY, "
+                     "cname VARCHAR(64) NOT NULL"
+                     ");")).success,
+                 "create course failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "CREATE TABLE sc ("
+                     "sno INT, "
+                     "cno INT, "
+                     "grade INT, "
+                     "CONSTRAINT fk_sc_course FOREIGN KEY (cno) "
+                     "REFERENCES course(cno) ON DELETE NO ACTION ON UPDATE CASCADE"
+                     ");")).success,
+                 "create sc failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "INSERT INTO course (cno, cname) VALUES (1, '数据结构'), (2, '数据库');")).success,
+                 "insert course failed");
+        QVERIFY2(dispatcher.execute(QStringLiteral(
+                     "INSERT INTO sc (sno, cno, grade) VALUES (10, 1, 90), (11, 2, 80);")).success,
+                 "insert sc failed");
+
+        const SqlExecResult updateResult = dispatcher.execute(QStringLiteral(
+            "UPDATE sc SET grade = NULL "
+            "WHERE cno IN (SELECT cno FROM course WHERE cname = '数据结构');"));
+        QVERIFY2(updateResult.success, qPrintable(updateResult.errorMessage));
+        QCOMPARE(updateResult.affectedRows, 1);
+
+        const SelectRowsResult rows = selectAllRows(QStringLiteral("sc"));
+        QVERIFY2(rows.success, qPrintable(rows.errorMessage));
+        QCOMPARE(rows.resultTable.rows.size(), 2);
+        QCOMPARE(rows.resultTable.rows.at(0), QStringList({QStringLiteral("10"), QStringLiteral("1"), QString()}));
+        QCOMPARE(rows.resultTable.rows.at(1), QStringList({QStringLiteral("11"), QStringLiteral("2"), QStringLiteral("80")}));
     }
 
     void test_dispatchSelectKeepsQualifiedWhereOnAstPath()
@@ -945,6 +1181,40 @@ private slots:
         QCOMPARE(result.commandType, QStringLiteral("SHOW_CREATE_TABLE"));
         QVERIFY(result.text.startsWith(QStringLiteral("CREATE TABLE")));
         QVERIFY(result.text.contains(tableName));
+    }
+
+    void test_dispatcherSmallIntColumnRoundTrip()
+    {
+        const QString databaseName = QStringLiteral("test_parser_dispatcher_smallint_db");
+        const QString tableName = QStringLiteral("test_parser_dispatcher_smallint_table");
+        ensureDatabase(databaseName);
+
+        SqlDispatcher dispatcher;
+        const SqlExecResult createResult = dispatcher.execute(
+            QStringLiteral("CREATE TABLE %1 (id INT PRIMARY KEY, score SMALLINT NOT NULL);").arg(tableName));
+        QVERIFY2(createResult.success, qPrintable(createResult.errorMessage));
+
+        QString error;
+        const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const tabledef::Column scoreColumn = findColumn(schema, QStringLiteral("score"));
+        QCOMPARE(scoreColumn.name, QStringLiteral("score"));
+        QCOMPARE(scoreColumn.type, tabledef::ColumnType::SmallInt);
+        QCOMPARE(tabledef::columnTypeToString(scoreColumn.type), QStringLiteral("SMALLINT"));
+
+        const SqlExecResult showCreateResult =
+            dispatcher.execute(QStringLiteral("SHOW CREATE TABLE %1").arg(tableName));
+        QVERIFY2(showCreateResult.success, qPrintable(showCreateResult.errorMessage));
+        QVERIFY(showCreateResult.text.contains(QStringLiteral("score SMALLINT NOT NULL")));
+
+        const SqlExecResult insertResult =
+            dispatcher.execute(QStringLiteral("INSERT INTO %1 (id, score) VALUES (1, 12);").arg(tableName));
+        QVERIFY2(insertResult.success, qPrintable(insertResult.errorMessage));
+
+        const SqlExecResult badInsertResult =
+            dispatcher.execute(QStringLiteral("INSERT INTO %1 (id, score) VALUES (2, 'abc');").arg(tableName));
+        QVERIFY(!badInsertResult.success);
+        QVERIFY(badInsertResult.errorMessage.contains(QStringLiteral("SMALLINT")));
     }
 
     void test_dispatcherAlterSqlPathsCallService()

@@ -9,8 +9,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Core)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Core Test)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Core Network)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Core Network Test)
 
 set(DBMS_CORE_SOURCES
         constants/table_def.h
@@ -25,6 +25,8 @@ set(DBMS_CORE_SOURCES
         utils/thread_runtime/lock_manager.cpp
         utils/thread_runtime/catalog_cache.h
         utils/thread_runtime/catalog_cache.cpp
+        utils/console_encoding.h
+        utils/console_encoding.cpp
         utils/service_common/name_normalize.cpp
         utils/service_common/constraint_worker.cpp
         utils/service_common/sql_stringifier.cpp
@@ -73,8 +75,13 @@ set(DBMS_CORE_SOURCES
         client/client_session.h
         client/client_session_pool.h
         client/client_session_pool.cpp
+        client/sql_result_formatter.h
+        client/sql_result_formatter.cpp
+        client/sql_client_runtime.h
         client/sql_client_engine.h
         client/sql_client_engine.cpp
+        client/sql_rpc_protocol.h
+        client/sql_rpc_protocol.cpp
 )
 
 set(DBMS_GUI_SOURCES
@@ -88,10 +95,23 @@ set(DBMS_GUI_SOURCES
         display/result_panel.cpp
         display/structure_panel.h
         display/structure_panel.cpp
+        display/create_table_dialog.h
+        display/create_table_dialog.cpp
+        display/add_column_dialog.h
+        display/add_column_dialog.cpp
+        display/constraint_dialog.h
+        display/constraint_dialog.cpp
+        display/column_property_dialog.h
+        display/column_property_dialog.cpp
+        resources/resources.qrc
 )
 
 set(DBMS_TEST_SOURCES
         tests/test_entry.h
+        client/remote_sql_client.h
+        client/remote_sql_client.cpp
+        server/sql_server.h
+        server/sql_server.cpp
         cli/cli_app.h
         cli/cli_app.cpp
         tests/test_parser_dispatcher.cpp
@@ -117,6 +137,14 @@ set(DBMS_CLI_SOURCES
         cli/main_cli.cpp
         cli/cli_app.h
         cli/cli_app.cpp
+        client/remote_sql_client.h
+        client/remote_sql_client.cpp
+)
+
+set(DBMS_SERVER_SOURCES
+        server/main_server.cpp
+        server/sql_server.h
+        server/sql_server.cpp
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -130,6 +158,11 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         MANUAL_FINALIZATION
         ${DBMS_CORE_SOURCES}
         ${DBMS_CLI_SOURCES}
+    )
+    qt_add_executable(DBMS_SERVER
+        MANUAL_FINALIZATION
+        ${DBMS_CORE_SOURCES}
+        ${DBMS_SERVER_SOURCES}
     )
 else()
     if(ANDROID)
@@ -148,6 +181,10 @@ else()
             ${DBMS_CORE_SOURCES}
             ${DBMS_CLI_SOURCES}
         )
+        add_executable(DBMS_SERVER
+            ${DBMS_CORE_SOURCES}
+            ${DBMS_SERVER_SOURCES}
+        )
     endif()
 endif()
 
@@ -164,10 +201,33 @@ target_include_directories(DBMS_CLI PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
 )
 
-target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Test)
-target_link_libraries(DBMS_CLI PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+target_include_directories(DBMS_SERVER PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/sql_parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils/logic
+)
+
+target_link_libraries(DBMS PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Test)
+target_link_libraries(DBMS_CLI PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network)
+target_link_libraries(DBMS_SERVER PRIVATE Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network)
+
+target_compile_definitions(DBMS PRIVATE
+    DBMS_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(DBMS_CLI PRIVATE
+    DBMS_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+target_compile_definitions(DBMS_SERVER PRIVATE
+    DBMS_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+)
 
 set_target_properties(DBMS_CLI PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"
+)
+
+set_target_properties(DBMS_SERVER PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin"
 )
 
@@ -184,6 +244,14 @@ if(WIN32 AND QT_VERSION_MAJOR EQUAL 6)
                     "$<TARGET_FILE:DBMS_CLI>"
             COMMENT "Deploying Qt runtime dependencies for DBMS_CLI"
         )
+        add_custom_command(TARGET DBMS_SERVER POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    --no-opengl-sw
+                    "$<TARGET_FILE:DBMS_SERVER>"
+            COMMENT "Deploying Qt runtime dependencies for DBMS_SERVER"
+        )
     endif()
 endif()
 
@@ -198,7 +266,7 @@ set_target_properties(DBMS PROPERTIES
 )
 
 include(GNUInstallDirs)
-install(TARGETS DBMS DBMS_CLI
+install(TARGETS DBMS DBMS_CLI DBMS_SERVER
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -207,4 +275,5 @@ install(TARGETS DBMS DBMS_CLI
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(DBMS)
     qt_finalize_executable(DBMS_CLI)
+    qt_finalize_executable(DBMS_SERVER)
 endif()

@@ -9,7 +9,8 @@ inline bool isSubqueryNodeType(LogicNodeType type)
 {
     return type == LogicNodeType::InSubquery
            || type == LogicNodeType::ExistsSubquery
-           || type == LogicNodeType::QuantifiedSubquery;
+           || type == LogicNodeType::QuantifiedSubquery
+           || type == LogicNodeType::ScalarSubquery;
 }
 
 inline bool isLiteralNode(const LogicNode &node)

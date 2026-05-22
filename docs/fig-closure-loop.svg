@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 26px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1f2937; }
+      .sub { font: 400 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #5b6778; }
+      .node { stroke: #263445; stroke-width: 1.6; rx: 12; }
+      .n1 { fill: #eaf2ff; }
+      .n2 { fill: #ecfdf3; }
+      .n3 { fill: #fff7ed; }
+      .n4 { fill: #f3edff; }
+      .n5 { fill: #fff1f2; }
+      .h { font: 700 18px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1f2937; }
+      .t { font: 400 13px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #475569; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .thin { stroke: #64748b; stroke-width: 1.4; fill: none; marker-end: url(#arrow2); }
+      .line { stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1280" height="560"/>
+  <text class="title" x="640" y="46" text-anchor="middle">需求到关闭的闭环路径</text>
+  <text class="sub" x="640" y="72" text-anchor="middle">关闭报告关注闭环是否成立，不替代测试报告展开具体测试数据</text>
+
+  <rect class="node n1" x="70" y="176" width="190" height="106"/>
+  <text class="h" x="165" y="214" text-anchor="middle">需求确认</text>
+  <text class="t" x="165" y="244" text-anchor="middle">功能需求</text>
+  <text class="t" x="165" y="266" text-anchor="middle">非功能需求</text>
+
+  <rect class="node n2" x="310" y="176" width="190" height="106"/>
+  <text class="h" x="405" y="214" text-anchor="middle">设计落实</text>
+  <text class="t" x="405" y="244" text-anchor="middle">架构与模块</text>
+  <text class="t" x="405" y="266" text-anchor="middle">数据组织方案</text>
+
+  <rect class="node n3" x="550" y="176" width="190" height="106"/>
+  <text class="h" x="645" y="214" text-anchor="middle">实现交付</text>
+  <text class="t" x="645" y="244" text-anchor="middle">GUI / CLI</text>
+  <text class="t" x="645" y="266" text-anchor="middle">服务与持久化</text>
+
+  <rect class="node n4" x="790" y="176" width="190" height="106"/>
+  <text class="h" x="885" y="214" text-anchor="middle">验证支撑</text>
+  <text class="t" x="885" y="244" text-anchor="middle">回归测试</text>
+  <text class="t" x="885" y="266" text-anchor="middle">压测与一致性</text>
+
+  <rect class="node n5" x="1030" y="176" width="190" height="106"/>
+  <text class="h" x="1125" y="214" text-anchor="middle">关闭判定</text>
+  <text class="t" x="1125" y="244" text-anchor="middle">完成 / 遗留</text>
+  <text class="t" x="1125" y="266" text-anchor="middle">后续展望</text>
+
+  <path class="arrow" d="M 260 229 L 310 229"/>
+  <path class="arrow" d="M 500 229 L 550 229"/>
+  <path class="arrow" d="M 740 229 L 790 229"/>
+  <path class="arrow" d="M 980 229 L 1030 229"/>
+
+  <rect class="node n1" x="166" y="382" width="205" height="76"/>
+  <text class="h" x="268" y="413" text-anchor="middle">追踪矩阵</text>
+  <text class="t" x="268" y="440" text-anchor="middle">需求项与用例映射</text>
+
+  <rect class="node n4" x="535" y="382" width="205" height="76"/>
+  <text class="h" x="638" y="413" text-anchor="middle">测试报告</text>
+  <text class="t" x="638" y="440" text-anchor="middle">验证细节单独承接</text>
+
+  <rect class="node n5" x="904" y="382" width="205" height="76"/>
+  <text class="h" x="1006" y="413" text-anchor="middle">关闭报告</text>
+  <text class="t" x="1006" y="440" text-anchor="middle">只引用结论和边界</text>
+
+  <path class="thin" d="M 165 282 C 165 340 220 352 268 382"/>
+  <path class="thin" d="M 405 282 C 430 340 535 342 638 382"/>
+  <path class="thin" d="M 885 282 C 835 344 738 350 638 382"/>
+  <path class="thin" d="M 1125 282 C 1110 340 1060 352 1006 382"/>
+  <path class="thin" d="M 638 458 C 705 496 930 496 1006 458"/>
+
+  <line class="line" x1="160" y1="334" x2="1120" y2="334"/>
+  <text class="sub" x="640" y="532" text-anchor="middle">闭环标准：需求有设计承接，设计有实现落点，实现有验证依据，遗留问题有明确边界</text>
+</svg>

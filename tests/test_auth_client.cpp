@@ -62,6 +62,21 @@ private slots:
         QVERIFY2(result.success, qPrintable(result.errorMessage));
         QCOMPARE(result.commandType, QStringLiteral("GRANT_ALL"));
         QCOMPARE(result.payload.value(QStringLiteral("databaseName")).toString(), QStringLiteral("app_db"));
+        QCOMPARE(result.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("*"));
+        QCOMPARE(result.payload.value(QStringLiteral("userName")).toString(), QStringLiteral("alice"));
+
+        result = sqlparser::parseSql(QStringLiteral("GRANT ALL ON app_db.student TO alice"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.commandType, QStringLiteral("GRANT_ALL"));
+        QCOMPARE(result.payload.value(QStringLiteral("databaseName")).toString(), QStringLiteral("app_db"));
+        QCOMPARE(result.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("student"));
+        QCOMPARE(result.payload.value(QStringLiteral("userName")).toString(), QStringLiteral("alice"));
+
+        result = sqlparser::parseSql(QStringLiteral("REVOKE ALL ON app_db.student FROM alice"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.commandType, QStringLiteral("REVOKE_ALL"));
+        QCOMPARE(result.payload.value(QStringLiteral("databaseName")).toString(), QStringLiteral("app_db"));
+        QCOMPARE(result.payload.value(QStringLiteral("tableName")).toString(), QStringLiteral("student"));
         QCOMPARE(result.payload.value(QStringLiteral("userName")).toString(), QStringLiteral("alice"));
     }
 
@@ -124,6 +139,48 @@ private slots:
         result = engine.executeSql(aliceClient, QStringLiteral("USE revoked_db;"));
         QVERIFY(!result.success);
         QVERIFY(result.errorMessage.contains(QStringLiteral("permission denied")));
+    }
+
+    void test_tablePrivilegeAllowsOnlyGrantedTable()
+    {
+        client::ClientSessionPool pool;
+        client::SqlClientEngine engine(&pool);
+        const QString rootClient = pool.createSession(m_dataRoot);
+        const QString aliceClient = pool.createSession(m_dataRoot);
+
+        service::SqlExecResult result = engine.login(rootClient, QStringLiteral("root"), QString());
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(rootClient,
+                                   QStringLiteral("CREATE DATABASE app_db;"
+                                                  "USE app_db;"
+                                                  "CREATE TABLE allowed_table (id INT PRIMARY KEY, name VARCHAR(20));"
+                                                  "CREATE TABLE blocked_table (id INT PRIMARY KEY, name VARCHAR(20));"
+                                                  "CREATE USER alice IDENTIFIED BY secret;"
+                                                  "GRANT ALL ON app_db.allowed_table TO alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 1);
+
+        result = engine.login(aliceClient, QStringLiteral("alice"), QStringLiteral("secret"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        result = engine.executeSql(aliceClient, QStringLiteral("USE app_db;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.executeSql(aliceClient, QStringLiteral("SELECT * FROM allowed_table;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+
+        result = engine.executeSql(aliceClient, QStringLiteral("SELECT * FROM blocked_table;"));
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("app_db.blocked_table")),
+                 qPrintable(result.errorMessage));
+
+        result = engine.executeSql(rootClient, QStringLiteral("REVOKE ALL ON app_db.allowed_table FROM alice;"));
+        QVERIFY2(result.success, qPrintable(result.errorMessage));
+        QCOMPARE(result.affectedRows, 1);
+
+        result = engine.executeSql(aliceClient, QStringLiteral("SELECT * FROM allowed_table;"));
+        QVERIFY(!result.success);
+        QVERIFY2(result.errorMessage.contains(QStringLiteral("app_db.allowed_table")),
+                 qPrintable(result.errorMessage));
     }
 
     void test_authDatabaseIsProtectedFromNonRootAccess()

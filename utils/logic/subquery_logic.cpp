@@ -77,7 +77,8 @@ static QueryExecuteResult executeSubquery(const LogicNode &node,
         return result;
     }
 
-    const QueryExecuteContext queryContext{evalContext.currentDatabase, evalContext.dataRoot};
+    const QueryExecuteContext queryContext{evalContext.currentDatabase,
+                                           evalContext.dataRoot};
     if (correlated) {
         const CorrelationBindings bindings = buildCorrelationBindings(rowContext, node.referencedOuterNames);
         for (const QString &referencedName : node.referencedOuterNames) {
@@ -135,6 +136,31 @@ LogicEvalResult evaluateQuantifiedSubqueryNode(const LogicNode &node,
 
     const QList<setdef::SetValue> values = normalizeSelectResultToSet(subqueryResult.selectResult);
     return evaluateQuantifiedSetComparison(node, values, rowContext);
+}
+
+LogicEvalResult evaluateScalarSubqueryNode(const LogicNode &node,
+                                           const LogicRowContext &rowContext,
+                                           const LogicEvalContext &evalContext)
+{
+    const QueryExecuteResult subqueryResult = executeSubquery(node, rowContext, evalContext, !node.referencedOuterNames.isEmpty());
+    if (!subqueryResult.success) {
+        return {false, LogicTruthValue::Unknown, {subqueryResult.errorMessage, -1}};
+    }
+    if (subqueryResult.selectResult.resultTable.columns.size() > 1) {
+        return {false, LogicTruthValue::Unknown, {QStringLiteral("scalar subquery must return a single column"), -1}};
+    }
+    if (subqueryResult.selectResult.resultTable.rows.size() > 1) {
+        return {false, LogicTruthValue::Unknown, {QStringLiteral("scalar subquery must return a single row"), -1}};
+    }
+    if (subqueryResult.selectResult.resultTable.rows.isEmpty()) {
+        return {true, LogicTruthValue::Unknown, {}};
+    }
+
+    LogicNode quantifiedNode = node;
+    quantifiedNode.type = LogicNodeType::QuantifiedSubquery;
+    quantifiedNode.quantifier = LogicQuantifier::Any;
+    const QList<setdef::SetValue> values = normalizeSelectResultToSet(subqueryResult.selectResult);
+    return evaluateQuantifiedSetComparison(quantifiedNode, values, rowContext);
 }
 
 } // namespace logic

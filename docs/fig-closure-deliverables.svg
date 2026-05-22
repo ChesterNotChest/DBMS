@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="680" viewBox="0 0 1280 680">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 26px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1f2937; }
+      .sub { font: 400 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #5b6778; }
+      .box { fill: #f8fbff; stroke: #263445; stroke-width: 1.6; rx: 12; }
+      .box-blue { fill: #eaf2ff; stroke: #2563eb; stroke-width: 1.8; rx: 12; }
+      .box-green { fill: #ecfdf3; stroke: #16803c; stroke-width: 1.8; rx: 12; }
+      .box-amber { fill: #fff7ed; stroke: #c66a13; stroke-width: 1.8; rx: 12; }
+      .box-purple { fill: #f3edff; stroke: #7c3aed; stroke-width: 1.8; rx: 12; }
+      .box-rose { fill: #fff1f2; stroke: #be123c; stroke-width: 1.8; rx: 12; }
+      .h { font: 700 19px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1f2937; }
+      .t { font: 400 14px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #425066; }
+      .small { font: 400 12px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #667085; }
+      .arrow { stroke: #334155; stroke-width: 1.8; fill: none; marker-end: url(#arrow); }
+      .dash { stroke: #64748b; stroke-width: 1.4; stroke-dasharray: 6 6; fill: none; marker-end: url(#arrow2); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1280" height="680"/>
+  <text class="title" x="640" y="44" text-anchor="middle">项目关闭交付关系图</text>
+  <text class="sub" x="640" y="70" text-anchor="middle">关闭报告只汇总结论，设计报告和测试报告分别承接设计细节与验证细节</text>
+
+  <rect class="box-blue" x="450" y="112" width="380" height="112"/>
+  <text class="h" x="640" y="150" text-anchor="middle">DBMS 项目最终交付</text>
+  <text class="t" x="640" y="180" text-anchor="middle">程序、文档、图示、测试依据</text>
+  <text class="small" x="640" y="203" text-anchor="middle">统一执行链路 + 文件式持久化 + GUI / CLI 双入口</text>
+
+  <rect class="box-green" x="70" y="294" width="210" height="126"/>
+  <text class="h" x="175" y="330" text-anchor="middle">程序交付</text>
+  <text class="t" x="175" y="360" text-anchor="middle">GUI 客户端</text>
+  <text class="t" x="175" y="384" text-anchor="middle">CLI 客户端</text>
+  <text class="t" x="175" y="408" text-anchor="middle">共享业务链路</text>
+
+  <rect class="box-amber" x="315" y="294" width="210" height="126"/>
+  <text class="h" x="420" y="330" text-anchor="middle">需求交付</text>
+  <text class="t" x="420" y="360" text-anchor="middle">用例规约</text>
+  <text class="t" x="420" y="384" text-anchor="middle">非功能需求</text>
+  <text class="t" x="420" y="408" text-anchor="middle">追踪矩阵</text>
+
+  <rect class="box-purple" x="560" y="294" width="210" height="126"/>
+  <text class="h" x="665" y="330" text-anchor="middle">设计交付</text>
+  <text class="t" x="665" y="360" text-anchor="middle">技术方案</text>
+  <text class="t" x="665" y="384" text-anchor="middle">系统架构</text>
+  <text class="t" x="665" y="408" text-anchor="middle">模块流程</text>
+
+  <rect class="box-rose" x="805" y="294" width="210" height="126"/>
+  <text class="h" x="910" y="330" text-anchor="middle">验证交付</text>
+  <text class="t" x="910" y="360" text-anchor="middle">功能测试</text>
+  <text class="t" x="910" y="384" text-anchor="middle">集成测试</text>
+  <text class="t" x="910" y="408" text-anchor="middle">压测依据</text>
+
+  <rect class="box" x="1050" y="294" width="160" height="126"/>
+  <text class="h" x="1130" y="330" text-anchor="middle">关闭结论</text>
+  <text class="t" x="1130" y="360" text-anchor="middle">完成情况</text>
+  <text class="t" x="1130" y="384" text-anchor="middle">遗留边界</text>
+  <text class="t" x="1130" y="408" text-anchor="middle">后续方向</text>
+
+  <path class="arrow" d="M 520 224 L 175 294"/>
+  <path class="arrow" d="M 585 224 L 420 294"/>
+  <path class="arrow" d="M 665 224 L 665 294"/>
+  <path class="arrow" d="M 745 224 L 910 294"/>
+  <path class="arrow" d="M 820 224 L 1130 294"/>
+
+  <rect class="box-blue" x="240" y="510" width="800" height="76"/>
+  <text class="h" x="640" y="542" text-anchor="middle">关闭报告定位</text>
+  <text class="t" x="640" y="570" text-anchor="middle">汇总项目是否完成、交付物是否齐备、需求是否满足、风险是否收口</text>
+
+  <path class="dash" d="M 175 420 L 440 510"/>
+  <path class="dash" d="M 420 420 L 555 510"/>
+  <path class="dash" d="M 665 420 L 665 510"/>
+  <path class="dash" d="M 910 420 L 780 510"/>
+  <path class="dash" d="M 1130 420 L 840 510"/>
+</svg>

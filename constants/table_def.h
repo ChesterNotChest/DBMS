@@ -11,6 +11,7 @@ namespace tabledef {
 // 这里描述的是“表字段的类型”，不是 C++ 变量本身的类型。
 enum class ColumnType {
     Int,
+    SmallInt,
     Varchar,
     Float
 };

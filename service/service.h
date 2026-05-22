@@ -142,7 +142,8 @@ public:
                               const QList<SimpleCondition> &simpleConditions,
                               ValidationMode validationMode,
                               const logic::LogicNode *complexWhereAst = nullptr,
-                              const logic::LogicEvalContext *evalContext = nullptr) const;
+                              const logic::LogicEvalContext *evalContext = nullptr,
+                              const QMap<QString, QString> &assignmentExpressionMap = {}) const;
 
     TableDmlResult deleteRows(const QString &targetDatabaseName,
                               const QString &targetTableName,
@@ -233,6 +234,19 @@ TaskResult deleteRows(const QString &tableName,
 TaskResult updateRows(const QString &tableName,
                       const QMap<QString, QString> &assignmentMap,
                       const QList<SimpleCondition> &conditions);
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext);
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QMap<QString, QString> &assignmentExpressionMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst = nullptr,
+                      const logic::LogicEvalContext *evalContext = nullptr);
 
 } // namespace tuple_service
 

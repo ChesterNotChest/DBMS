@@ -5,19 +5,14 @@
 #include <QDebug>
 #include <QTextStream>
 
-int main(int argc, char *argv[])
+namespace {
+
+int runServiceTests(bool printStdoutSummary)
 {
-    QApplication a(argc, argv);
-    const QStringList arguments = a.arguments();
-    const bool runTestsOnly = arguments.contains(QStringLiteral("--run-tests"));
-    if (arguments.contains(QStringLiteral("--skip-stress-tests"))
-        || arguments.contains(QStringLiteral("--no-stress-tests"))) {
-        qputenv("DBMS_SKIP_STRESS_TESTS", "1");
-    }
     QTextStream testOutput(stdout);
 
     auto reportTestGroup = [&](const QString &name, int result) {
-        if (runTestsOnly) {
+        if (printStdoutSummary) {
             testOutput << name << ": " << (result == 0 ? "PASS" : "FAIL")
                        << " (code=" << result << ")" << Qt::endl;
         }
@@ -84,6 +79,7 @@ int main(int argc, char *argv[])
     reportTestGroup(QStringLiteral("Index runtime repair tests"), indexRuntimeRepairTestResult);
     qDebug() << "Index runtime repair tests:" << (indexRuntimeRepairTestResult == 0 ? "PASS" : "FAIL")
              << "(code=" << indexRuntimeRepairTestResult << ")";
+
     const int clientSessionTestResult = service_tests::runClientSessionTests();
     reportTestGroup(QStringLiteral("Client session tests"), clientSessionTestResult);
     qDebug() << "Client session tests:" << (clientSessionTestResult == 0 ? "PASS" : "FAIL")
@@ -136,11 +132,40 @@ int main(int argc, char *argv[])
     qDebug() << "Service test summary:" << (totalFailureCount == 0 ? "ALL PASS" : "SOME FAIL")
              << "(" << totalFailureCount << "failed groups)";
 
-    if (runTestsOnly) {
-        return totalFailureCount == 0 ? 0 : 1;
+    return totalFailureCount;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    QApplication app(argc, argv);
+    const QStringList arguments = app.arguments();
+    const bool runTestsOnly = arguments.contains(QStringLiteral("--run-tests"));
+    const bool skipTests = arguments.contains(QStringLiteral("--skip-tests"))
+                           || arguments.contains(QStringLiteral("--no-tests"));
+
+    if (arguments.contains(QStringLiteral("--skip-stress-tests"))
+        || arguments.contains(QStringLiteral("--no-stress-tests"))) {
+        qputenv("DBMS_SKIP_STRESS_TESTS", "1");
     }
 
-    MainWindow w;
-    w.show();
-    return a.exec();
+#ifdef QT_NO_DEBUG
+    const bool debugBuild = false;
+#else
+    const bool debugBuild = true;
+#endif
+
+    if (runTestsOnly || (debugBuild && !skipTests)) {
+        const int totalFailureCount = runServiceTests(runTestsOnly);
+        if (runTestsOnly) {
+            return totalFailureCount == 0 ? 0 : 1;
+        }
+    } else if (skipTests) {
+        qDebug() << "Skipping service tests due to --skip-tests/--no-tests.";
+    }
+
+    MainWindow window;
+    window.show();
+    return app.exec();
 }

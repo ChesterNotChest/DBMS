@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .entity { fill: #ffffff; stroke: #2f3a4a; stroke-width: 2; rx: 10; ry: 10; }
+      .process { fill: #eef4ff; stroke: #3057a6; stroke-width: 2.4; rx: 26; ry: 26; }
+      .store { fill: #f5faf7; stroke: #2f7a45; stroke-width: 2.2; }
+      .title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 22px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 16px; fill: #1f2a37; }
+      .small { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 13px; fill: #4b5563; }
+      .flow { stroke: #2f3a4a; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .soft { stroke: #6b7280; stroke-width: 2; fill: none; marker-end: url(#arrowSoft); }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2f3a4a"/>
+    </marker>
+    <marker id="arrowSoft" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1400" height="560"/>
+  <text class="title" x="700" y="38" text-anchor="middle">DFD 第零层</text>
+
+  <rect class="entity" x="40" y="120" width="170" height="80"/>
+  <text class="label" x="125" y="155" text-anchor="middle">GUI 用户</text>
+  <text class="small" x="125" y="178" text-anchor="middle">图形化操作</text>
+
+  <rect class="entity" x="40" y="300" width="170" height="80"/>
+  <text class="label" x="125" y="335" text-anchor="middle">CLI 用户</text>
+  <text class="small" x="125" y="358" text-anchor="middle">命令行操作</text>
+
+  <rect class="process" x="270" y="120" width="210" height="100"/>
+  <text class="label" x="375" y="154" text-anchor="middle">1.0 会话与认证</text>
+  <text class="small" x="375" y="180" text-anchor="middle">登录 / 用户状态 / 数据根目录</text>
+
+  <rect class="process" x="530" y="120" width="210" height="100"/>
+  <text class="label" x="635" y="154" text-anchor="middle">2.0 SQL 解析与分发</text>
+  <text class="small" x="635" y="180" text-anchor="middle">Tokenizer / Parser / Dispatcher</text>
+
+  <rect class="process" x="790" y="120" width="210" height="100"/>
+  <text class="label" x="895" y="154" text-anchor="middle">3.0 服务执行</text>
+  <text class="small" x="895" y="180" text-anchor="middle">数据库 / 表 / 元组 / 查询</text>
+
+  <rect class="process" x="1050" y="120" width="250" height="100"/>
+  <text class="label" x="1175" y="154" text-anchor="middle">4.0 持久化与结果返回</text>
+  <text class="small" x="1175" y="180" text-anchor="middle">repo 读写 / 格式化 / 输出</text>
+
+  <rect class="store" x="220" y="360" width="250" height="80"/>
+  <line x1="240" y1="360" x2="240" y2="440" stroke="#2f7a45" stroke-width="2"/>
+  <line x1="450" y1="360" x2="450" y2="440" stroke="#2f7a45" stroke-width="2"/>
+  <text class="label" x="345" y="394" text-anchor="middle">D1 统一数据目录</text>
+  <text class="small" x="345" y="418" text-anchor="middle">root.dbf / database / table files</text>
+
+  <rect class="store" x="600" y="360" width="210" height="80"/>
+  <line x1="620" y1="360" x2="620" y2="440" stroke="#2f7a45" stroke-width="2"/>
+  <line x1="790" y1="360" x2="790" y2="440" stroke="#2f7a45" stroke-width="2"/>
+  <text class="label" x="705" y="394" text-anchor="middle">D2 认证信息库</text>
+  <text class="small" x="705" y="418" text-anchor="middle">__dbms_auth</text>
+
+  <path class="flow" d="M210 160 L270 160"/>
+  <path class="flow" d="M210 340 L245 340 L245 170 L270 170"/>
+
+  <path class="flow" d="M480 160 L530 160"/>
+  <path class="flow" d="M740 160 L790 160"/>
+  <path class="flow" d="M1000 160 L1050 160"/>
+
+  <path class="flow" d="M385 220 L385 360"/>
+  <path class="flow" d="M385 440 L385 470 L1175 470 L1175 220"/>
+  <text class="small" x="790" y="462" text-anchor="middle">查询结果 / 错误信息 / 操作回执</text>
+
+  <path class="soft" d="M450 220 L450 330 L705 330 L705 360"/>
+  <text class="small" x="565" y="324" text-anchor="middle">认证信息读取</text>
+</svg>

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <defs>
+    <style>
+      .bg { fill: #fbfcfe; }
+      .frame { fill: #ffffff; stroke: #283347; stroke-width: 2; rx: 18; ry: 18; }
+      .panel { fill: #f4f7fb; stroke: #607086; stroke-width: 2; rx: 14; ry: 14; }
+      .editor { fill: #fff8ef; stroke: #c87c2a; stroke-width: 2; rx: 14; ry: 14; }
+      .result { fill: #eff7f0; stroke: #2f7a45; stroke-width: 2; rx: 14; ry: 14; }
+      .title { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 22px; font-weight: 700; fill: #1f2a37; }
+      .label { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 18px; fill: #1f2a37; }
+      .small { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 15px; fill: #4b5563; }
+      .arrow { stroke: #2f3a4a; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2f3a4a"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1200" height="700"/>
+  <rect class="frame" x="40" y="40" width="1120" height="620"/>
+
+  <rect class="panel" x="70" y="70" width="1060" height="70"/>
+  <text class="title" x="600" y="114" text-anchor="middle">菜单栏 / 工具栏 / 状态栏</text>
+
+  <rect class="panel" x="70" y="170" width="280" height="320"/>
+  <text class="title" x="210" y="214" text-anchor="middle">结构树</text>
+  <text class="small" x="210" y="248" text-anchor="middle">数据库列表</text>
+  <text class="small" x="210" y="274" text-anchor="middle">表与列展开</text>
+  <text class="small" x="210" y="300" text-anchor="middle">通过 SQL runtime 查询</text>
+
+  <rect class="editor" x="380" y="170" width="750" height="150"/>
+  <text class="title" x="755" y="214" text-anchor="middle">SQL 编辑区</text>
+  <text class="small" x="755" y="248" text-anchor="middle">输入、补全、执行、清空、刷新</text>
+  <text class="small" x="755" y="274" text-anchor="middle">保留必要空间，但不作为主视觉中心</text>
+
+  <rect class="result" x="380" y="345" width="750" height="145"/>
+  <text class="title" x="755" y="388" text-anchor="middle">结果表格区</text>
+  <text class="small" x="755" y="422" text-anchor="middle">查询结果优先展示</text>
+  <text class="small" x="755" y="448" text-anchor="middle">支持编辑、保存、结构化日志</text>
+
+  <rect class="panel" x="70" y="515" width="1060" height="90"/>
+  <text class="title" x="600" y="555" text-anchor="middle">日志与辅助区域</text>
+  <text class="small" x="600" y="582" text-anchor="middle">CLI 同源格式化输出、GUI 操作日志、错误提示与状态反馈</text>
+
+  <path class="arrow" d="M350 250 L380 250"/>
+  <path class="arrow" d="M755 320 L755 345"/>
+  <path class="arrow" d="M210 490 L210 515"/>
+</svg>

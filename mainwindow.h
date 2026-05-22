@@ -15,10 +15,15 @@
 #include <QApplication>
 #include <QTime>
 #include <QKeyEvent>
+#include <QStringList>
+#include <QTableWidget>
 
 #include "display/structure_panel.h"
 #include "display/editor_panel.h"
 #include "display/result_panel.h"
+#include "display/create_table_dialog.h"
+#include "display/constraint_dialog.h"
+#include "display/column_property_dialog.h"
 #include "client/client_session_pool.h"
 #include "client/sql_client_engine.h"
 #include "controller/sql_dispatcher.h"
@@ -32,6 +37,7 @@ public:
     ~MainWindow();
 
     QString guiClientId() const;
+    const client::ClientSession *guiClientSession();
     const client::ClientSession *guiClientSession() const;
     service::SqlExecResult executeSqlForGui(const QString &sql);
 
@@ -47,18 +53,28 @@ private slots:
 
     void onToggleLeftPanel();
     void onToggleBottomPanel();
+    void onRefreshData();
 
     void onDatabaseSelected(const QString &dbName);
     void onTableSelected(const QString &dbName, const QString &tableName);
     void onColumnSelected(const QString &dbName, const QString &tableName, const QString &columnName);
+    void onEditConstraintsRequested(const QString &dbName, const QString &tableName);
+    void onEditColumnRequested(const QString &dbName, const QString &tableName, const QString &columnName);
 
     void onExecuteRequested(const QString &sql);
 
     void onToolbarExecute();
     void onToolbarNewQuery();
+    void onToolbarSelectTable();
 
     void onAbout();
     void onRefreshStructure();
+
+    // ResultPanel save
+    void onSaveRequested(const QString &tableName, const QList<QStringList> &rows);
+    void onToolbarSave();
+    void onToolbarNewTable();
+    void onToolbarDropTable();
 
 private:
     void setupMenuBar();
@@ -75,7 +91,7 @@ protected:
     void keyPressEvent(QKeyEvent *e) override;
 
     QSplitter *m_mainSplitter = nullptr;
-    QWidget *m_leftPanel = nullptr;
+    QSplitter *m_rightSplitter = nullptr;
     QWidget *m_rightPanel = nullptr;
 
     StructurePanel *m_structurePanel = nullptr;
@@ -86,6 +102,11 @@ protected:
     QStatusBar *m_statusBar = nullptr;
     QLabel *m_statusDbLabel = nullptr;
     QLabel *m_statusRowsLabel = nullptr;
+
+    QPushButton *m_saveBtn = nullptr;
+    QPushButton *m_selectTableBtn = nullptr;
+    QPushButton *m_newTableBtn = nullptr;
+    QPushButton *m_dropTableBtn = nullptr;
 
     QString m_currentDatabase;
     QString m_currentTable;

@@ -37,8 +37,10 @@ LogicTruthValue compareValues(const LogicCellValue &lhs,
     }
 
     const bool numericCompare = lhs.type == tabledef::ColumnType::Int
+                                || lhs.type == tabledef::ColumnType::SmallInt
                                 || lhs.type == tabledef::ColumnType::Float
                                 || rhs.type == tabledef::ColumnType::Int
+                                || rhs.type == tabledef::ColumnType::SmallInt
                                 || rhs.type == tabledef::ColumnType::Float;
     if (numericCompare) {
         bool leftOk = false;
@@ -120,6 +122,51 @@ LogicEvalResult evaluateInListNode(const LogicNode &node,
     }
 
     const LogicTruthValue truth = sawNull ? LogicTruthValue::Unknown : LogicTruthValue::False;
+    return {true, node.negated ? negateTruth(truth) : truth, {}};
+}
+
+LogicEvalResult evaluateBetweenNode(const LogicNode &node,
+                                    const LogicRowContext &rowContext)
+{
+    if (node.children.size() != 3) {
+        return {false, LogicTruthValue::Unknown, {QStringLiteral("BETWEEN node expects 3 children"), -1}};
+    }
+
+    const LogicNode &lhsNode = node.children.at(0);
+    const LogicNode &lowerNode = node.children.at(1);
+    const LogicNode &upperNode = node.children.at(2);
+
+    LogicCellValue lhsValue;
+    if (lhsNode.type == LogicNodeType::ColumnRef) {
+        bool found = false;
+        lhsValue = rowContext.cellsByName.value(lhsNode.reference.name);
+        found = rowContext.cellsByName.contains(lhsNode.reference.name);
+        if (!found && lhsNode.reference.name.contains(QLatin1Char('.'))) {
+            const QString localName = lhsNode.reference.name.mid(lhsNode.reference.name.lastIndexOf(QLatin1Char('.')) + 1);
+            lhsValue = rowContext.cellsByName.value(localName);
+            found = rowContext.cellsByName.contains(localName);
+        }
+        if (!found) {
+            return {false, LogicTruthValue::Unknown, {QStringLiteral("missing column '%1'").arg(lhsNode.reference.name), -1}};
+        }
+    } else if (lhsNode.type == LogicNodeType::Literal) {
+        lhsValue = cellValueFromNode(lhsNode);
+    } else {
+        return {false, LogicTruthValue::Unknown, {QStringLiteral("BETWEEN requires a column or literal on the left side"), -1}};
+    }
+
+    if (lowerNode.type != LogicNodeType::Literal || upperNode.type != LogicNodeType::Literal) {
+        return {false, LogicTruthValue::Unknown, {QStringLiteral("BETWEEN bounds must be literals"), -1}};
+    }
+
+    const LogicTruthValue lowerTruth = compareValues(lhsValue, cellValueFromNode(lowerNode), LogicCompareOperator::Gte);
+    const LogicTruthValue upperTruth = compareValues(lhsValue, cellValueFromNode(upperNode), LogicCompareOperator::Lte);
+    LogicTruthValue truth = LogicTruthValue::Unknown;
+    if (lowerTruth == LogicTruthValue::False || upperTruth == LogicTruthValue::False) {
+        truth = LogicTruthValue::False;
+    } else if (lowerTruth == LogicTruthValue::True && upperTruth == LogicTruthValue::True) {
+        truth = LogicTruthValue::True;
+    }
     return {true, node.negated ? negateTruth(truth) : truth, {}};
 }
 

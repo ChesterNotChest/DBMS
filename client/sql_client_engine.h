@@ -1,11 +1,13 @@
 #ifndef CLIENT_SQL_CLIENT_ENGINE_H
 #define CLIENT_SQL_CLIENT_ENGINE_H
 
+#include "sql_client_runtime.h"
 #include "client_session.h"
 #include "client_session_pool.h"
 #include "../controller/sql_dispatcher.h"
 
 #include <QString>
+#include <QStringList>
 
 namespace client {
 
@@ -25,16 +27,21 @@ private:
     QString m_previousUser;
 };
 
-class SqlClientEngine
+class SqlClientEngine : public SqlClientRuntime
 {
 public:
     explicit SqlClientEngine(ClientSessionPool *sessionPool);
 
+    QString createSession(const QString &dataRoot = QString(),
+                          const QString &userName = QString()) override;
+    bool closeSession(const QString &clientId) override;
+    int sessionCount() const override;
+
     service::SqlExecResult login(const QString &clientId,
                                  const QString &userName,
-                                 const QString &password);
-    service::SqlExecResult executeSql(const QString &clientId, const QString &sql);
-    service::SqlExecResult executeSqlPreservingDatabase(const QString &clientId, const QString &sql);
+                                 const QString &password) override;
+    service::SqlExecResult executeSql(const QString &clientId, const QString &sql) override;
+    service::SqlExecResult executeSqlPreservingDatabase(const QString &clientId, const QString &sql) override;
 
 private:
     service::SqlExecResult executeParsedStatement(ClientSession *clientSession,
@@ -46,6 +53,7 @@ private:
                                               const sqlparser::ParseResult &parsed) const;
     QString targetDatabaseForStatement(const ClientSession &clientSession,
                                        const sqlparser::ParseResult &parsed) const;
+    QStringList targetTablesForStatement(const sqlparser::ParseResult &parsed) const;
 
     ClientSessionPool *m_sessionPool = nullptr;
 };

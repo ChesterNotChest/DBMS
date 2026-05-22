@@ -3,6 +3,7 @@
 #include "../utils/thread_runtime/lock_manager.h"
 
 #include <QDir>
+#include <future>
 #include <QtTest>
 
 #include "test_entry.h"
@@ -154,13 +155,23 @@ private slots:
         const QString childTableName = QStringLiteral("pipeline_lock_order_child");
         prepareCascadeTables(databaseName, parentTableName, childTableName);
 
-        QString error;
-        thread_runtime::ScopedRuntimeLock childLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
-            thread_runtime::tableLockKey(currentDataRoot, databaseName, childTableName),
-            thread_runtime::RuntimeLockMode::Exclusive,
-            1,
-            &error);
-        QVERIFY2(childLock.isValid(), qPrintable(error));
+        std::promise<QString> lockAcquired;
+        std::promise<void> releaseSignal;
+        std::shared_future<void> releaseLock = releaseSignal.get_future().share();
+        std::future<void> blockerFuture = std::async(std::launch::async, [&]() {
+            QString lockError;
+            thread_runtime::ScopedRuntimeLock childLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
+                thread_runtime::tableLockKey(currentDataRoot, databaseName, childTableName),
+                thread_runtime::RuntimeLockMode::Exclusive,
+                threadperf::kTableLockAcquireTimeoutMs,
+                &lockError);
+            lockAcquired.set_value(childLock.isValid() ? QString() : lockError);
+            if (childLock.isValid()) {
+                releaseLock.wait();
+            }
+        });
+        const QString lockError = lockAcquired.get_future().get();
+        QVERIFY2(lockError.isEmpty(), qPrintable(lockError));
 
         TaskResult updated = tuple_service::updateRows(parentTableName,
                                                        {{QStringLiteral("id"), QStringLiteral("2")}},
@@ -168,7 +179,9 @@ private slots:
         QVERIFY(!updated.success);
         QVERIFY(updated.errorMessage.contains(QStringLiteral("runtime lock")));
 
-        childLock.unlock();
+        releaseSignal.set_value();
+        blockerFuture.wait();
+        QString error;
         thread_runtime::ScopedRuntimeLock parentLock = thread_runtime::RuntimeLockManager::instance().acquireLock(
             thread_runtime::tableLockKey(currentDataRoot, databaseName, parentTableName),
             thread_runtime::RuntimeLockMode::Exclusive,

@@ -886,6 +886,49 @@ static bool parseSimpleConditions(const QVector<SqlToken> &tokens,
     return true;
 }
 
+static bool isAssignmentTerminator(TokenType type)
+{
+    return type == TokenType::COMMA
+           || type == TokenType::WHERE
+           || type == TokenType::END_OF_INPUT
+           || type == TokenType::SEMICOLON;
+}
+
+static bool isArithmeticAssignmentExpression(const QVector<SqlToken> &tokens, int from, int to)
+{
+    for (int i = from; i <= to; ++i) {
+        switch (tokens[i].type) {
+        case TokenType::PLUS:
+        case TokenType::MINUS:
+        case TokenType::STAR:
+        case TokenType::SLASH:
+        case TokenType::LPAREN:
+        case TokenType::RPAREN:
+            return true;
+        default:
+            break;
+        }
+    }
+    return false;
+}
+
+static QString sliceSqlByTokenRange(const QString &sql,
+                                    const QVector<SqlToken> &tokens,
+                                    int from,
+                                    int to)
+{
+    if (from > to || from < 0 || to >= tokens.size()) {
+        return {};
+    }
+
+    const int start = tokens[from].position;
+    const int end = tokens[to].position + tokens[to].length;
+    if (start < 0 || end < start || end > sql.size()) {
+        return {};
+    }
+    return sql.mid(start, end - start).trimmed();
+}
+
 static bool parseSelectLimit(const QVector<SqlToken>& tokens,
                              int from,
                              int *limit,
@@ -1417,6 +1460,7 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
     if (cmdType == "UPDATE") {
         QString table;
         QVariantMap assignments;
+        QVariantMap assignmentExpressions;
 
         int setIdx = -1;
         for (int i = 0; i < tokens.size(); ++i) {
@@ -1439,22 +1483,72 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
             }
         }
 
-        for (int i = setIdx + 1; i < tokens.size(); ++i) {
-            if (tokens[i].type == TokenType::WHERE) break;
-            if (tokens[i].type == TokenType::END_OF_INPUT) break;
-
-            if (tokens[i].type == TokenType::IDENTIFIER) {
-                QString col = tokens[i].lexeme;
-                if (i + 1 < tokens.size() && tokens[i + 1].type == TokenType::EQ && i + 2 < tokens.size()) {
-                    QString val = tokens[i + 2].lexeme;
-                    bool isInt; int intVal = val.toInt(&isInt);
-                    if (isInt) assignments.insert(col, intVal);
-                    else { bool isFloat; double fv = val.toDouble(&isFloat);
-                           if (isFloat) assignments.insert(col, fv);
-                           else assignments.insert(col, val); }
-                    i += 2;
-                }
+        int i = setIdx + 1;
+        while (i < tokens.size()
+               && tokens[i].type != TokenType::WHERE
+               && tokens[i].type != TokenType::END_OF_INPUT
+               && tokens[i].type != TokenType::SEMICOLON) {
+            if (tokens[i].type == TokenType::COMMA) {
+                ++i;
+                continue;
             }
+            if (tokens[i].type != TokenType::IDENTIFIER) {
+                return {false, "UPDATE: expected assignment column", cmdType, {}};
+            }
+
+            const QString col = tokens[i].lexeme;
+            if (i + 1 >= tokens.size() || tokens[i + 1].type != TokenType::EQ) {
+                return {false, "UPDATE: expected '=' in assignment", cmdType, {}};
+            }
+
+            const int valueStart = i + 2;
+            if (valueStart >= tokens.size() || isAssignmentTerminator(tokens[valueStart].type)) {
+                return {false, "UPDATE: expected assignment value", cmdType, {}};
+            }
+
+            int valueEnd = valueStart;
+            int parenDepth = 0;
+            while (valueEnd < tokens.size()) {
+                const TokenType type = tokens[valueEnd].type;
+                if (type == TokenType::LPAREN) {
+                    ++parenDepth;
+                } else if (type == TokenType::RPAREN) {
+                    if (parenDepth > 0) {
+                        --parenDepth;
+                    }
+                } else if (parenDepth == 0 && isAssignmentTerminator(type)) {
+                    break;
+                }
+                ++valueEnd;
+            }
+            const int valueLast = valueEnd - 1;
+            if (valueLast < valueStart) {
+                return {false, "UPDATE: expected assignment value", cmdType, {}};
+            }
+
+            if (isArithmeticAssignmentExpression(tokens, valueStart, valueLast)) {
+                assignmentExpressions.insert(col, sliceSqlByTokenRange(sql, tokens, valueStart, valueLast));
+            } else if (valueStart == valueLast) {
+                QString val = tokens[valueStart].lexeme;
+                if (tokens[valueStart].type == TokenType::NULL_VAL) {
+                    assignments.insert(col, QString());
+                } else {
+                    bool isInt = false;
+                    int intVal = val.toInt(&isInt);
+                    if (isInt) {
+                        assignments.insert(col, intVal);
+                    } else {
+                        bool isFloat = false;
+                        double fv = val.toDouble(&isFloat);
+                        if (isFloat) assignments.insert(col, fv);
+                        else assignments.insert(col, val);
+                    }
+                }
+            } else {
+                return {false, "UPDATE: unsupported assignment expression", cmdType, {}};
+            }
+
+            i = valueEnd;
         }
 
         if (whereIdx >= 0) {
@@ -1466,6 +1560,9 @@ ParseResult parseTupleSql(const QString& sql, const QVector<SqlToken>& tokens) {
 
         payload["tableName"] = table;
         payload["assignments"] = assignments;
+        if (!assignmentExpressions.isEmpty()) {
+            payload["assignmentExpressions"] = assignmentExpressions;
+        }
 
         return {true, "", cmdType, payload};
     }

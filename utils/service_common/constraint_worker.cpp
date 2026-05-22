@@ -200,12 +200,14 @@ bool validateScalarValue(const tabledef::Column &column, const QString &value, Q
     }
 
     switch (column.type) {
-    case tabledef::ColumnType::Int: {
+    case tabledef::ColumnType::Int:
+    case tabledef::ColumnType::SmallInt: {
         bool ok = false;
         value.toLongLong(&ok);
         if (!ok) {
             if (error != nullptr) {
-                *error = QStringLiteral("value '%1' cannot be converted to INT").arg(value);
+                *error = QStringLiteral("value '%1' cannot be converted to %2")
+                             .arg(value, tabledef::columnTypeToString(column.type));
             }
             return false;
         }
@@ -1170,3 +1172,4 @@ QStringList collectMutationRelatedTables(const QString &databaseName,
     return tables;
 }
 } // namespace service
+

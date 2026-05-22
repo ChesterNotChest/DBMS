@@ -30,6 +30,33 @@ std::vector<thread_runtime::ScopedRuntimeLock> acquireMutationLocks(const QStrin
         error);
 }
 
+service::SelectRowsResult selectRowsAfterRuntimeLock(const QString &tableName,
+                                                     const QStringList &projectionColumns,
+                                                     const QList<service::SimpleCondition> &conditions,
+                                                     int limit,
+                                                     const service::OrderByClause &orderBy)
+{
+    service::SelectRowsResult result;
+    const QString databaseName = service::normalizeDatabaseName(QString());
+    QString error;
+
+    const tabledef::TableSchema schema = service::loadUserTableSchema(tableName, &error);
+    if (!error.isEmpty()) {
+        result.errorMessage = error;
+        return result;
+    }
+
+    service::TableDmlService dmlService;
+    return dmlService.selectRows(databaseName,
+                                 tableName,
+                                 service::TargetTableKind::TableDat,
+                                 schema,
+                                 projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
+                                 conditions,
+                                 limit,
+                                 orderBy);
+}
+
 } // namespace
 
 namespace service::tuple_service {
@@ -64,21 +91,7 @@ SelectRowsResult selectRows(const QString &tableName,
         }
     }
 
-    const tabledef::TableSchema schema = loadUserTableSchema(tableName, &error);
-    if (!error.isEmpty()) {
-        result.errorMessage = error;
-        return result;
-    }
-
-    TableDmlService dmlService;
-    return dmlService.selectRows(databaseName,
-                                 tableName,
-                                 TargetTableKind::TableDat,
-                                 schema,
-                                 projectionColumns.isEmpty() ? QStringList{QStringLiteral("*")} : projectionColumns,
-                                 conditions,
-                                 limit,
-                                 orderBy);
+    return selectRowsAfterRuntimeLock(tableName, projectionColumns, conditions, limit, orderBy);
 }
 
 TaskResult insertRows(const QString &tableName,
@@ -147,6 +160,25 @@ TaskResult updateRows(const QString &tableName,
                       const QMap<QString, QString> &assignmentMap,
                       const QList<SimpleCondition> &conditions)
 {
+    return updateRows(tableName, assignmentMap, conditions, nullptr, nullptr);
+}
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext)
+{
+    return updateRows(tableName, assignmentMap, {}, conditions, complexWhereAst, evalContext);
+}
+
+TaskResult updateRows(const QString &tableName,
+                      const QMap<QString, QString> &assignmentMap,
+                      const QMap<QString, QString> &assignmentExpressionMap,
+                      const QList<SimpleCondition> &conditions,
+                      const logic::LogicNode *complexWhereAst,
+                      const logic::LogicEvalContext *evalContext)
+{
     TaskResult result;
     const QString databaseName = normalizeDatabaseName(QString());
     QString error;
@@ -169,7 +201,10 @@ TaskResult updateRows(const QString &tableName,
                                                           schema,
                                                           assignmentMap,
                                                           conditions,
-                                                          ValidationMode::UserData);
+                                                          ValidationMode::UserData,
+                                                          complexWhereAst,
+                                                          evalContext,
+                                                          assignmentExpressionMap);
     result.success = dmlResult.success;
     result.errorMessage = dmlResult.errorMessage;
     result.affectedRowCount = dmlResult.affectedRowCount;

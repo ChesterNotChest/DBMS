@@ -15,6 +15,8 @@
 #include "mainwindow.h"
 #include "constants/cli_client_def.h"
 #include "controller/sql_dispatcher.h"
+#include "client/sql_result_formatter.h"
+#include "repo/repo.h"
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QHeaderView>
@@ -43,7 +45,7 @@ QString MainWindow::dataRoot() const
     if (!configuredRoot.trimmed().isEmpty()) {
         return configuredRoot;
     }
-    return QApplication::applicationDirPath() + "/data";
+    return repo::FlatFileTableStore::defaultDataRoot();
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -78,6 +80,19 @@ QString MainWindow::guiClientId() const
 const client::ClientSession *MainWindow::guiClientSession() const
 {
     return m_clientSessionPool.session(m_guiClientId);
+}
+
+const client::ClientSession *MainWindow::guiClientSession()
+{
+    const client::ClientSession *session = m_clientSessionPool.session(m_guiClientId);
+    if (session != nullptr) {
+        return session;
+    }
+
+    if (initializeClientSession()) {
+        return m_clientSessionPool.session(m_guiClientId);
+    }
+    return nullptr;
 }
 
 bool MainWindow::initializeClientSession()
@@ -177,6 +192,63 @@ void MainWindow::setupToolBar()
     connect(btnExecute, &QPushButton::clicked, this, &MainWindow::onToolbarExecute);
     m_toolbar->addWidget(btnExecute);
 
+    // 新增：保存按钮
+    m_saveBtn = new QPushButton(u8"\U0001F4BE");
+    m_saveBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_saveBtn->setCursor(Qt::PointingHandCursor);
+    m_saveBtn->setFocusPolicy(Qt::NoFocus);
+    m_saveBtn->setStyleSheet(
+        "QPushButton { background:#E3F2FD; color:#1565C0; border:1px solid #BBDEFB; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#BBDEFB; border-color:#64B5F6; }"
+        "QPushButton:pressed { background:#90CAF9; }");
+    m_saveBtn->setToolTip("保存当前表格数据到数据库");
+    connect(m_saveBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSave);
+    m_toolbar->addWidget(m_saveBtn);
+
+    // 新增：选择表按钮
+    m_selectTableBtn = new QPushButton(u8"📑", this);
+    m_selectTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_selectTableBtn->setCursor(Qt::PointingHandCursor);
+    m_selectTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_selectTableBtn->setStyleSheet(
+        "QPushButton { background:#E8F0FE; color:#1565C0; border:1px solid #BBDEFB; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#D7E9FC; border-color:#90CAF9; }"
+        "QPushButton:pressed { background:#B3D4F6; }"
+    );
+    m_selectTableBtn->setToolTip("选择要编辑或删除的表");
+    connect(m_selectTableBtn, &QPushButton::clicked, this, &MainWindow::onToolbarSelectTable);
+    m_toolbar->addWidget(m_selectTableBtn);
+
+    // 新增：可视化建表按钮
+    m_newTableBtn = new QPushButton(u8"\U0001F4C4", this);
+    m_newTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_newTableBtn->setCursor(Qt::PointingHandCursor);
+    m_newTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_newTableBtn->setStyleSheet(
+        "QPushButton { background:#E8F5E9; color:#2E7D32; border:1px solid #C8E6C9; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#C8E6C9; }"
+        "QPushButton:pressed { background:#A5D6A7; }");
+    m_newTableBtn->setToolTip("可视化建表 / 编辑当前表");
+    connect(m_newTableBtn, SIGNAL(clicked()), this, SLOT(onToolbarNewTable()));
+    m_toolbar->addWidget(m_newTableBtn);
+
+    // 新增：删除表按钮
+    m_dropTableBtn = new QPushButton(u8"\U0001F5D1", this);
+    m_dropTableBtn->setFont(QFont("Segoe UI Emoji", 12));
+    m_dropTableBtn->setCursor(Qt::PointingHandCursor);
+    m_dropTableBtn->setFocusPolicy(Qt::NoFocus);
+    m_dropTableBtn->setStyleSheet(
+        "QPushButton { background:#FFEBEE; color:#C62828; border:1px solid #FFCDD2; "
+        "border-radius:4px; padding:4px 12px; font-size:12px; }"
+        "QPushButton:hover { background:#FFCDD2; }"
+        "QPushButton:pressed { background:#EF9A9A; }");
+    m_dropTableBtn->setToolTip("删除当前选中表");
+    connect(m_dropTableBtn, &QPushButton::clicked, this, &MainWindow::onToolbarDropTable);
+    m_toolbar->addWidget(m_dropTableBtn);
+
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_toolbar->addWidget(spacer);
@@ -197,31 +269,37 @@ void MainWindow::setupLayout()
         "QSplitter::handle:hover { background:#CCCCCC; }");
     rootLayout->addWidget(m_mainSplitter);
 
-    m_leftPanel = new QWidget(this);
-    m_leftPanel->setMinimumWidth(220);
-    m_leftPanel->setMaximumWidth(320);
-    QVBoxLayout *leftLayout = new QVBoxLayout(m_leftPanel);
+    QWidget *leftContainer = new QWidget(this);
+    leftContainer->setMinimumWidth(220);
+    leftContainer->setMaximumWidth(320);
+    QVBoxLayout *leftLayout = new QVBoxLayout(leftContainer);
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(0);
 
     m_structurePanel = new StructurePanel(this);
     leftLayout->addWidget(m_structurePanel);
-    m_mainSplitter->addWidget(m_leftPanel);
+    m_mainSplitter->addWidget(leftContainer);
 
-    m_rightPanel = new QWidget(this);
-    m_rightPanel->setStyleSheet("QWidget { background:#FFFFFF; }");
-    QVBoxLayout *rightLayout = new QVBoxLayout(m_rightPanel);
-    rightLayout->setContentsMargins(4, 4, 4, 4);
-    rightLayout->setSpacing(4);
+    m_rightSplitter = new QSplitter(Qt::Vertical, this);
+    m_rightSplitter->setHandleWidth(2);
+    m_rightSplitter->setStyleSheet(
+        "QSplitter::handle { background:#E0E0E0; height:2px; }"
+        "QSplitter::handle:hover { background:#CCCCCC; }");
 
     m_editorPanel = new EditorPanel(this);
-    rightLayout->addWidget(m_editorPanel, 1);
+    m_editorPanel->setMinimumHeight(150);
+    m_rightSplitter->addWidget(m_editorPanel);
 
     m_resultPanel = new ResultPanel(this);
-    m_resultPanel->setMaximumHeight(360);
-    rightLayout->addWidget(m_resultPanel);
+    m_resultPanel->setMinimumHeight(200);
+    m_resultPanel->setMaximumHeight(500);
+    m_rightSplitter->addWidget(m_resultPanel);
 
-    m_mainSplitter->addWidget(m_rightPanel);
+    // Set initial sizes: editor takes 35%, result panel takes 65%
+    m_rightSplitter->setStretchFactor(0, 1);
+    m_rightSplitter->setStretchFactor(1, 2);
+
+    m_mainSplitter->addWidget(m_rightSplitter);
     m_mainSplitter->setStretchFactor(0, 0);
     m_mainSplitter->setStretchFactor(1, 1);
     m_mainSplitter->setSizes({220, 1180});
@@ -249,6 +327,10 @@ void MainWindow::setupLayout()
             this, &MainWindow::onTableSelected);
     connect(m_structurePanel, &StructurePanel::columnSelected,
             this, &MainWindow::onColumnSelected);
+    connect(m_structurePanel, &StructurePanel::editConstraintsRequested,
+            this, &MainWindow::onEditConstraintsRequested);
+    connect(m_structurePanel, &StructurePanel::editColumnRequested,
+            this, &MainWindow::onEditColumnRequested);
     connect(m_structurePanel, &StructurePanel::newDatabaseRequested,
             this, &MainWindow::onNewDatabase);
     connect(m_structurePanel, &StructurePanel::openDatabaseRequested,
@@ -259,6 +341,11 @@ void MainWindow::setupLayout()
     // editor 执行请求 -> 主窗口统一执行
     connect(m_editorPanel, &EditorPanel::executeRequested,
             this, &MainWindow::onExecuteRequested);
+
+    // result panel refresh request
+    connect(m_resultPanel, &ResultPanel::refreshRequested,
+            this, &MainWindow::onRefreshData);
+
 }
 
 
@@ -312,10 +399,7 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
         return false;
     }
 
-    if (!r.text.isEmpty())
-        m_resultPanel->showLog(r.text);
-    else
-        m_resultPanel->showLog("执行成功");
+    m_resultPanel->showLog(client::formatSqlExecResultForText(r));
 
     if (r.commandType == "SHOW_CREATE_TABLE" && !r.text.isEmpty()) {
         const QString tableName = r.payload["tableName"].toString();
@@ -355,6 +439,8 @@ bool MainWindow::applySqlResult(const service::SqlExecResult &r)
             m_currentTable.clear();
             updateStatusDbLabel();
             m_structurePanel->selectDatabase(m_currentDatabase);
+            m_resultPanel->setCurrentDb(m_currentDatabase);
+            m_resultPanel->setCurrentTable(QString());
         }
     }
 
@@ -370,7 +456,6 @@ void MainWindow::onDatabaseSelected(const QString &dbName)
         return;
     }
     m_resultPanel->showLog("切换数据库: " + dbName);
-    m_editorPanel->insertSql("\nUSE " + dbName + ";\n");
 }
 
 void MainWindow::onTableSelected(const QString &dbName, const QString &tableName)
@@ -380,20 +465,100 @@ void MainWindow::onTableSelected(const QString &dbName, const QString &tableName
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
     m_resultPanel->showLog("选中表: " + tableName);
-    m_editorPanel->insertSql("\nSELECT * FROM " + tableName + " LIMIT 100;\n");
+
+    // 自动执行查询：双击表名 → 显示全部数据
+    QString sql = QString("SELECT * FROM %1;").arg(tableName);
+    onExecuteRequested(sql);
 }
 
 void MainWindow::onColumnSelected(const QString &dbName,
                                    const QString &tableName,
-                                   const QString &columnName)
+    const QString &columnName)
 {
     if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
         return;
     }
     m_currentTable = tableName;
     updateStatusDbLabel();
-    m_editorPanel->insertSql("\nSELECT " + columnName + " FROM " + tableName + ";\n");
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
+    m_resultPanel->showLog("选中列: " + tableName + "." + columnName);
+
+    // 自动执行查询：SELECT <column> FROM <table>
+    QString sql = QString("SELECT %1 FROM %2;").arg(columnName).arg(tableName);
+    onExecuteRequested(sql);
+}
+
+void MainWindow::onEditConstraintsRequested(const QString &dbName,
+                                            const QString &tableName)
+{
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
+    }
+
+    m_currentTable = tableName;
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
+
+    const service::SqlExecResult showCreate =
+        executeSqlForGui(QStringLiteral("SHOW CREATE TABLE %1;").arg(tableName));
+    if (!showCreate.success) {
+        m_resultPanel->showError(QStringLiteral("读取约束失败: ") + showCreate.errorMessage);
+        return;
+    }
+
+    ConstraintDialog dialog(tableName, showCreate.text, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString sql = dialog.generatedSql().trimmed();
+    if (sql.isEmpty()) {
+        m_resultPanel->showLog(QStringLiteral("约束未变更，无需保存"));
+        return;
+    }
+
+    onExecuteRequested(sql);
+    m_structurePanel->refresh();
+}
+
+void MainWindow::onEditColumnRequested(const QString &dbName,
+                                       const QString &tableName,
+                                       const QString &columnName)
+{
+    if (m_currentDatabase != dbName && !switchGuiDatabase(dbName)) {
+        return;
+    }
+
+    m_currentTable = tableName;
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(m_currentTable);
+
+    const service::SqlExecResult showCreate =
+        executeSqlForGui(QStringLiteral("SHOW CREATE TABLE %1;").arg(tableName));
+    if (!showCreate.success) {
+        m_resultPanel->showError(QStringLiteral("读取列属性失败: ") + showCreate.errorMessage);
+        return;
+    }
+
+    ColumnPropertyDialog dialog(tableName, columnName, showCreate.text, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const QString sql = dialog.generatedSql().trimmed();
+    if (sql.isEmpty()) {
+        m_resultPanel->showLog(QStringLiteral("列属性未变更，无需保存"));
+        return;
+    }
+
+    onExecuteRequested(sql);
+    m_structurePanel->refresh();
 }
 
 bool MainWindow::switchGuiDatabase(const QString &dbName)
@@ -408,6 +573,8 @@ bool MainWindow::switchGuiDatabase(const QString &dbName)
     m_currentTable.clear();
     updateStatusDbLabel();
     m_structurePanel->selectDatabase(dbName);
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
     return true;
 }
 
@@ -423,6 +590,24 @@ void MainWindow::updateStatusDbLabel()
 
 void MainWindow::onToolbarExecute()   { m_editorPanel->execute(); }
 void MainWindow::onToolbarNewQuery()   { m_editorPanel->newQuery(); }
+void MainWindow::onToolbarSelectTable() { 
+    if (m_currentDatabase.isEmpty()) {
+        m_resultPanel->showError("请先选择或打开一个数据库");
+        return;
+    }
+    const service::SqlExecResult result = executeSqlForGui(QStringLiteral("SHOW TABLES;"));
+    QStringList tables = firstColumnValues(result);
+    if (tables.isEmpty()) {
+        m_resultPanel->showError("当前数据库暂无可选表");
+        return;
+    }
+    bool ok;
+    QString sel = QInputDialog::getItem(this, "选择表", "表名：", tables, 0, false, &ok);
+    if (!ok || sel.isEmpty()) return;
+    m_currentTable = sel;
+    updateStatusDbLabel();
+    m_resultPanel->showLog("选中表: " + sel);
+}
 void MainWindow::onExecuteSql()        { m_editorPanel->execute(); }
 void MainWindow::onNewQueryTab()       { m_editorPanel->newQuery(); }
 void MainWindow::onCloseCurrentTab()   { m_editorPanel->closeCurrentTab(); }
@@ -436,10 +621,12 @@ void MainWindow::onNewDatabase()
 
     auto r = executeSqlForGui(QStringLiteral("CREATE DATABASE %1;").arg(name));
     if (r.success) {
-        m_currentDatabase = name;
-        executeSqlForGui(QStringLiteral("USE %1;").arg(name));
-        updateStatusDbLabel();
-        m_structurePanel->refresh();
+    m_currentDatabase = name;
+    executeSqlForGui(QStringLiteral("USE %1;").arg(name));
+    updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
+    m_structurePanel->refresh();
         m_resultPanel->showLog("数据库 '" + name + "' 创建成功");
         m_statusBar->showMessage("数据库 '" + name + "' 创建成功", 5000);
     } else {
@@ -461,6 +648,8 @@ void MainWindow::onOpenDatabase()
     m_currentDatabase = sel;
     executeSqlForGui(QStringLiteral("USE %1;").arg(sel));
     updateStatusDbLabel();
+    m_resultPanel->setCurrentDb(m_currentDatabase);
+    m_resultPanel->setCurrentTable(QString());
     m_resultPanel->showLog("打开数据库: " + sel);
     m_structurePanel->refresh();
 }
@@ -488,6 +677,48 @@ void MainWindow::onDeleteDatabase()
             m_currentDatabase.clear();
             m_currentTable.clear();
             updateStatusDbLabel();
+            m_resultPanel->setCurrentDb(QString());
+            m_resultPanel->setCurrentTable(QString());
+        }
+        m_structurePanel->refresh();
+    } else {
+        m_resultPanel->showError("删除失败: " + r.errorMessage);
+    }
+}
+
+void MainWindow::onToolbarDropTable()
+{
+    if (m_currentDatabase.isEmpty()) {
+        m_resultPanel->showError("请先选择或打开一个数据库");
+        return;
+    }
+
+    QString tableName = m_currentTable;
+    if (tableName.isEmpty()) {
+        const service::SqlExecResult result = executeSqlForGui(QStringLiteral("SHOW TABLES;"));
+        QStringList tables = firstColumnValues(result);
+        if (tables.isEmpty()) {
+            m_resultPanel->showError("当前数据库暂无可删除表");
+            return;
+        }
+        bool ok;
+        tableName = QInputDialog::getItem(this, "删除表", "选择要删除的表：", tables, 0, false, &ok);
+        if (!ok || tableName.isEmpty()) return;
+    }
+
+    int ret = QMessageBox::warning(this, "确认删除",
+        QString("确定要删除表 '%1' 吗？\n此操作不可恢复！").arg(tableName),
+        QMessageBox::Yes | QMessageBox::Cancel);
+    if (ret != QMessageBox::Yes) return;
+
+    const QString sql = QStringLiteral("DROP TABLE %1;").arg(tableName);
+    auto r = executeSqlForGui(sql);
+    if (r.success) {
+        m_resultPanel->showLog("删除表: " + tableName);
+        if (m_currentTable == tableName) {
+            m_currentTable.clear();
+            updateStatusDbLabel();
+            m_resultPanel->setCurrentTable(QString());
         }
         m_structurePanel->refresh();
     } else {
@@ -501,9 +732,21 @@ void MainWindow::onRefreshStructure()
     m_resultPanel->showLog("结构已刷新 " + QTime::currentTime().toString("hh:mm:ss"));
 }
 
+void MainWindow::onRefreshData()
+{
+    if (!m_currentDatabase.isEmpty() && !m_currentTable.isEmpty()) {
+        QString sql = QString("SELECT * FROM %1").arg(m_currentTable);
+        executeSqlForGui(sql);
+        m_resultPanel->showLog("数据已刷新 " + QTime::currentTime().toString("hh:mm:ss"));
+    } else {
+        m_resultPanel->showLog("请先选择一个表");
+    }
+}
+
 void MainWindow::onToggleLeftPanel()
 {
-    m_leftPanel->setVisible(!m_leftPanel->isVisible());
+    QWidget *leftContainer = m_structurePanel->parentWidget();
+    if (leftContainer) leftContainer->setVisible(!leftContainer->isVisible());
 }
 
 void MainWindow::onToggleBottomPanel()
@@ -537,4 +780,264 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
     } else {
         QMainWindow::keyPressEvent(e);
     }
+}
+
+// 处理 ResultPanel 信号（兼容）
+void MainWindow::onSaveRequested(const QString &tableName, const QList<QStringList> &rows)
+{
+    Q_UNUSED(tableName);
+    // 直接用当前已选表和表格数据保存
+    onToolbarSave();
+}
+
+// 工具栏保存按钮：精准生成 UPDATE/INSERT/DELETE SQL 并执行
+void MainWindow::onToolbarSave()
+{
+    if (m_currentTable.isEmpty()) {
+        m_resultPanel->showError("请先在左侧选择一张表，再点击保存");
+        return;
+    }
+
+    if (!m_resultPanel->hasUnsavedChanges()) {
+        m_resultPanel->showLog("数据未变更，无需保存");
+        return;
+    }
+
+    QStringList columns = m_resultPanel->getLastColumns();
+    if (columns.isEmpty()) {
+        m_resultPanel->showError("无法确定列名，请先 SELECT * FROM 该表");
+        return;
+    }
+
+    ResultPanel::ChangeInfo info = m_resultPanel->diffWithOriginal();
+    // ── 首先统计所有变更类型 ──
+    int addCols = info.addedColumns.size();
+    int dropCols = info.deletedColumns.size();
+    int upd = info.updatedCells.size();
+    int ins = info.newRowIds.size();
+    int del = info.deletedRows.size();
+    bool hasColChanges = (addCols > 0 || dropCols > 0);
+    bool hasRowChanges = (upd > 0 || ins > 0 || del > 0);
+
+    // ── ALTER TABLE：处理新增列 ──
+    for (auto cit = info.addedColumns.constBegin(); cit != info.addedColumns.constEnd(); ++cit) {
+        int colIdx = cit.key();
+        QString colDef = cit.value();
+        
+        // 解析列定义：格式为 "列名:类型:约束:外键约束"
+        QStringList parts = colDef.split(':');
+        QString colName = parts.value(0);
+        QString colType = parts.value(1, "VARCHAR(255)");
+        QString colConstraints = parts.value(2);
+        QString fkConstraint = parts.value(3);
+        
+        // 第一步：添加列（只包含基本约束：NOT NULL、PRIMARY KEY、UNIQUE、DEFAULT、CHECK）
+        QString sql;
+        if (colConstraints.isEmpty()) {
+            sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3;")
+                    .arg(m_currentTable)
+                    .arg(colName)
+                    .arg(colType);
+        } else {
+            // 从约束中移除 FOREIGN KEY 部分，因为外键需要单独添加
+            QString basicConstraints = colConstraints;
+            int fkIndex = basicConstraints.indexOf("FOREIGN KEY", 0, Qt::CaseInsensitive);
+            if (fkIndex != -1) {
+                basicConstraints = basicConstraints.left(fkIndex).trimmed();
+            }
+            
+            if (basicConstraints.isEmpty()) {
+                sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3;")
+                        .arg(m_currentTable)
+                        .arg(colName)
+                        .arg(colType);
+            } else {
+                sql = QString("ALTER TABLE %1 ADD COLUMN %2 %3 %4;")
+                        .arg(m_currentTable)
+                        .arg(colName)
+                        .arg(colType)
+                        .arg(basicConstraints);
+            }
+        }
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString("❌ ADD COLUMN 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        
+        // 第二步：如果有外键约束，单独添加
+        int fkStart = colConstraints.indexOf("FOREIGN KEY", 0, Qt::CaseInsensitive);
+        if (fkStart != -1) {
+            QString fkSql = QString("ALTER TABLE %1 ADD CONSTRAINT fk_%2_%3 %4;")
+                            .arg(m_currentTable)
+                            .arg(m_currentTable)
+                            .arg(colName)
+                            .arg(colConstraints.mid(fkStart));
+            m_resultPanel->showLog(fkSql);
+            auto fkResult = executeSqlForGui(fkSql);
+            if (!fkResult.success) {
+                m_resultPanel->showError(QString("❌ ADD FOREIGN KEY 失败: %1\n%2").arg(fkResult.errorMessage).arg(fkSql));
+                return;
+            }
+        }
+    }
+
+    // ── ALTER TABLE：处理删除列 ──
+    for (auto it = info.deletedColumns.constBegin(); it != info.deletedColumns.constEnd(); ++it) {
+        QString colName = it.value();
+        QString sql = QString("ALTER TABLE %1 DROP COLUMN %2;")
+                        .arg(m_currentTable)
+                        .arg(colName);
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString("❌ DROP COLUMN 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+    }
+
+    int affectedTotal = 0;
+
+    // ── 如果只有列变更，直接标记完成并刷新 ──
+    if (hasColChanges && !hasRowChanges) {
+        m_resultPanel->markAllCommitted();
+        QString colMsg = (addCols > 0 ? QString("➕ ADD COLUMN %1 列").arg(addCols) : "") +
+                        ((addCols > 0 && dropCols > 0) ? " " : "") +
+                        (dropCols > 0 ? QString("➖ DROP COLUMN %1 列").arg(dropCols) : "");
+        m_resultPanel->showLog(QString("✅ 保存成功！%1").arg(colMsg));
+
+        // 重新查询刷新表
+        QString sql = QString("SELECT * FROM %1;").arg(m_currentTable);
+        onExecuteRequested(sql);
+        return;
+    }
+
+    // ── 只有行变更，显示确认对话框 ──
+    // 确认对话框
+    int ret = QMessageBox::question(this, u8"确认保存",
+        QString(u8"即将对表 '%1' 执行以下变更：\n\n"
+                u8"✏️ UPDATE %2 行\n"
+                u8"➕ INSERT %3 行\n"
+                u8"➖ DELETE %4 行\n\n"
+                u8"是否继续？").arg(m_currentTable).arg(upd).arg(ins).arg(del),
+        QMessageBox::Yes | QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+
+    m_resultPanel->showLog(u8"=== 开始保存 ===");
+
+    // ── 辅助：格式化字段值 ──
+    auto fmtVal = [](const QString &raw) -> QString {
+        if (raw.isEmpty()) return "''";
+        bool isNum;
+        raw.toDouble(&isNum);
+        if (isNum) return raw;
+        if (raw.compare("NULL", Qt::CaseInsensitive) == 0) return "NULL";
+        QString escaped = raw;
+        escaped.replace("'", "''");
+        return "'" + escaped + "'";
+    };
+
+    // ── UPDATE：只更新脏单元格 ──
+    for (auto cit = info.updatedCells.constBegin(); cit != info.updatedCells.constEnd(); ++cit) {
+        int rowIdx = cit.key();
+        const QMap<int, QString> &cells = cit.value();
+        if (cells.isEmpty()) continue;
+
+        // WHERE 用原始 PK 值（第0列）
+        QString pkOrig = info.originalRows[rowIdx].value(0, "");
+        if (pkOrig.isEmpty()) {
+            m_resultPanel->showLog(QString(u8"⚠️ 第 %1 行无法 UPDATE：PK 值为空").arg(rowIdx + 1));
+            continue;
+        }
+
+        QString pkColName = columns.value(0, "");
+        QString setClause, whereClause;
+        QList<QPair<QString, QString>> setPairs;
+        for (auto mit = cells.constBegin(); mit != cells.constEnd(); ++mit) {
+            int ci = mit.key();
+            QString colName = columns.value(ci, QString("col%1").arg(ci + 1));
+            setPairs.append(qMakePair(colName, fmtVal(mit.value())));
+        }
+        for (int i = 0; i < setPairs.size(); ++i) {
+            setClause += setPairs[i].first + "=" + setPairs[i].second;
+            if (i < setPairs.size() - 1) setClause += ", ";
+        }
+        whereClause = pkColName + "=" + fmtVal(pkOrig);
+
+        QString sql = QString("UPDATE %1 SET %2 WHERE %3;")
+                        .arg(m_currentTable).arg(setClause).arg(whereClause);
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ UPDATE 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // ── INSERT：处理新行 ──
+    for (int rowIdx : info.newRowIds) {
+        QStringList currVals = info.currentRows.value(rowIdx, QStringList());
+        if (currVals.isEmpty()) {
+            // 从表格重新取数（防止空数据）
+            QTableWidget *tbl = m_resultPanel->getTable();
+            currVals.clear();
+            for (int ci = 0; ci < tbl->columnCount(); ++ci) {
+                QTableWidgetItem *it = tbl->item(rowIdx, ci);
+                currVals.append(it ? it->text() : "");
+            }
+        }
+
+        QStringList vals;
+        for (int ci = 0; ci < qMin(currVals.size(), columns.size()); ++ci)
+            vals.append(fmtVal(currVals[ci]));
+
+        QString sql = QString("INSERT INTO %1 (%2) VALUES (%3);")
+                        .arg(m_currentTable)
+                        .arg(columns.join(", "))
+                        .arg(vals.join(", "));
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ INSERT 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // ── DELETE：恢复已删除行 ──
+    for (auto dit = info.deletedRows.constBegin(); dit != info.deletedRows.constEnd(); ++dit) {
+        QString pkVal = dit.key();
+        QString pkColName = columns.value(0, "");
+        QString sql = QString("DELETE FROM %1 WHERE %2=%3;")
+                        .arg(m_currentTable)
+                        .arg(pkColName)
+                        .arg(fmtVal(pkVal));
+        m_resultPanel->showLog(sql);
+        auto r = executeSqlForGui(sql);
+        if (!r.success) {
+            m_resultPanel->showError(QString(u8"❌ DELETE 失败: %1\n%2").arg(r.errorMessage).arg(sql));
+            return;
+        }
+        affectedTotal += qMax(0, r.affectedRows);
+    }
+
+    // 全部成功：标记已提交，重新刷新数据
+    m_resultPanel->markAllCommitted();
+    m_resultPanel->showLog(QString(u8"✅ 保存成功！受影响 %1 行").arg(affectedTotal));
+
+    // Re-select to refresh
+    QString sql = QString("SELECT * FROM %1;").arg(m_currentTable);
+    onExecuteRequested(sql);
+}
+
+// Visual table creation
+void MainWindow::onToolbarNewTable()
+{
+    CreateTableDialog dlg(this, m_currentDatabase);
+    if (dlg.exec() != QDialog::Accepted) return;
+    QString sql = dlg.getGeneratedSql();
+    if (sql.isEmpty()) return;
+    onExecuteRequested(sql);
 }

@@ -19,6 +19,9 @@ tabledef::ColumnType columnTypeFromSql(const QString &type)
     if (normalized == QStringLiteral("INT") || normalized == QStringLiteral("INTEGER")) {
         return tabledef::ColumnType::Int;
     }
+    if (normalized == QStringLiteral("SMALLINT")) {
+        return tabledef::ColumnType::SmallInt;
+    }
     if (normalized == QStringLiteral("FLOAT")
         || normalized == QStringLiteral("DOUBLE")
         || normalized == QStringLiteral("REAL")) {
@@ -937,6 +940,8 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
 
     QString table = p.payload["tableName"].toString();
     const QVariantMap assignments = p.payload.value(QStringLiteral("assignments")).toMap();
+    const QVariantMap assignmentExpressions =
+        p.payload.value(QStringLiteral("assignmentExpressions")).toMap();
     QList<SimpleCondition> conditions;
     QString conditionError;
     const bool hasComplexWhere = p.payload.value(QStringLiteral("hasComplexWhere")).toBool();
@@ -949,14 +954,11 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
     QMap<QString, QString> assignMap;
     for (auto it = assignments.begin(); it != assignments.end(); ++it)
         assignMap[it.key()] = it.value().toString();
+    QMap<QString, QString> assignExpressionMap;
+    for (auto it = assignmentExpressions.begin(); it != assignmentExpressions.end(); ++it)
+        assignExpressionMap[it.key()] = it.value().toString();
 
-    TableDmlService dmlService;
     if (hasComplexWhere) {
-        const tabledef::TableSchema schema = loadUserTableSchema(table, &conditionError);
-        if (!conditionError.isEmpty()) {
-            return {false, conditionError};
-        }
-
         QueryExecutor executor;
         logic::LogicEvalContext evalContext;
         evalContext.subqueryExecutor = &executor;
@@ -965,22 +967,14 @@ SqlExecResult SqlDispatcher::execUpdate(const sqlparser::ParseResult& p) {
         evalContext.allowSubquery = true;
 
         const logic::LogicNode whereAst = p.payload.value(QStringLiteral("whereAst")).value<logic::LogicNode>();
-        const TableDmlResult r = dmlService.updateRows(currentDatabase,
-                                                       table,
-                                                       TargetTableKind::TableDat,
-                                                       schema,
-                                                       assignMap,
-                                                       conditions,
-                                                       ValidationMode::UserData,
-                                                       &whereAst,
-                                                       &evalContext);
+        auto r = tuple_service::updateRows(table, assignMap, assignExpressionMap, conditions, &whereAst, &evalContext);
         if (r.success)
             return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
                     r.affectedRowCount};
         return {false, r.errorMessage};
     }
 
-    auto r = tuple_service::updateRows(table, assignMap, conditions);
+    auto r = tuple_service::updateRows(table, assignMap, assignExpressionMap, conditions);
     if (r.success)
         return {true, {}, QString("%1 row(s) updated in '%2'").arg(r.affectedRowCount).arg(table),
                 r.affectedRowCount};
@@ -1083,21 +1077,33 @@ SqlExecResult SqlDispatcher::execAlterUser(const sqlparser::ParseResult& p) {
 SqlExecResult SqlDispatcher::execGrantAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName"), QStringLiteral("*")).toString();
+    const TaskResult result = tableName == QStringLiteral("*")
+                                  ? auth_service::grantDatabaseAll(currentUser, userName, databaseName, getDataRoot())
+                                  : auth_service::grantTableAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(databaseName, userName), result.affectedRowCount};
+    const QString scope = tableName == QStringLiteral("*")
+                              ? QStringLiteral("%1.*").arg(databaseName)
+                              : QStringLiteral("%1.%2").arg(databaseName, tableName);
+    return {true, {}, QStringLiteral("Granted ALL on '%1' to '%2'").arg(scope, userName), result.affectedRowCount};
 }
 
 SqlExecResult SqlDispatcher::execRevokeAll(const sqlparser::ParseResult& p) {
     const QString userName = p.payload.value(QStringLiteral("userName")).toString();
     const QString databaseName = p.payload.value(QStringLiteral("databaseName")).toString();
-    const TaskResult result = auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot());
+    const QString tableName = p.payload.value(QStringLiteral("tableName"), QStringLiteral("*")).toString();
+    const TaskResult result = tableName == QStringLiteral("*")
+                                  ? auth_service::revokeDatabaseAll(currentUser, userName, databaseName, getDataRoot())
+                                  : auth_service::revokeTableAll(currentUser, userName, databaseName, tableName, getDataRoot());
     if (!result.success) {
         return {false, result.errorMessage};
     }
-    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(databaseName, userName), result.affectedRowCount};
+    const QString scope = tableName == QStringLiteral("*")
+                              ? QStringLiteral("%1.*").arg(databaseName)
+                              : QStringLiteral("%1.%2").arg(databaseName, tableName);
+    return {true, {}, QStringLiteral("Revoked ALL on '%1' from '%2'").arg(scope, userName), result.affectedRowCount};
 }
 
 QString SqlDispatcher::formatSelectResult(const SelectRowsResult& r) {

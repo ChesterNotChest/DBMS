@@ -8,6 +8,9 @@ namespace logic {
 LogicEvalResult evaluateInListNode(const LogicNode &node,
                                    const LogicRowContext &rowContext);
 
+LogicEvalResult evaluateBetweenNode(const LogicNode &node,
+                                   const LogicRowContext &rowContext);
+
 LogicEvalResult evaluateQuantifiedSetComparison(const LogicNode &node,
                                                 const QList<setdef::SetValue> &values,
                                                 const LogicRowContext &rowContext);

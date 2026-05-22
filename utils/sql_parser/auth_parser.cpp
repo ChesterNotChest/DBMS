@@ -22,6 +22,28 @@ bool tokenIs(const QVector<SqlToken> &tokens, int index, TokenType type)
     return index >= 0 && index < tokens.size() && tokens.at(index).type == type;
 }
 
+bool parseScope(const QVector<SqlToken> &tokens,
+                int databaseIndex,
+                QString *databaseName,
+                QString *tableName)
+{
+    if (!isValueToken(tokens.value(databaseIndex).type)
+        || !tokenIs(tokens, databaseIndex + 1, TokenType::DOT)
+        || !(isValueToken(tokens.value(databaseIndex + 2).type)
+             || tokenIs(tokens, databaseIndex + 2, TokenType::STAR))) {
+        return false;
+    }
+    if (databaseName != nullptr) {
+        *databaseName = tokenValue(tokens, databaseIndex);
+    }
+    if (tableName != nullptr) {
+        *tableName = tokenIs(tokens, databaseIndex + 2, TokenType::STAR)
+                         ? QStringLiteral("*")
+                         : tokenValue(tokens, databaseIndex + 2);
+    }
+    return true;
+}
+
 ParseResult parseUserPasswordCommand(const QString &commandType,
                                      const QVector<SqlToken> &tokens,
                                      int userIndex,
@@ -71,14 +93,17 @@ ParseResult parseAuthSql(const QString &sql, const QVector<SqlToken> &tokens)
     if (cmdType == QStringLiteral("GRANT_ALL")) {
         if (!tokenIs(tokens, 1, TokenType::ALL)
             || !tokenIs(tokens, 2, TokenType::ON)
-            || !isValueToken(tokens.value(3).type)
-            || !tokenIs(tokens, 4, TokenType::DOT)
-            || !tokenIs(tokens, 5, TokenType::STAR)
             || !tokenIs(tokens, 6, TokenType::TO)
             || !isValueToken(tokens.value(7).type)) {
-            return {false, QStringLiteral("GRANT_ALL: expected GRANT ALL ON database.* TO user"), cmdType, {}};
+            return {false, QStringLiteral("GRANT_ALL: expected GRANT ALL ON database.* TO user or GRANT ALL ON database.table TO user"), cmdType, {}};
         }
-        payload.insert(QStringLiteral("databaseName"), tokenValue(tokens, 3));
+        QString databaseName;
+        QString tableName;
+        if (!parseScope(tokens, 3, &databaseName, &tableName)) {
+            return {false, QStringLiteral("GRANT_ALL: expected GRANT ALL ON database.* TO user or GRANT ALL ON database.table TO user"), cmdType, {}};
+        }
+        payload.insert(QStringLiteral("databaseName"), databaseName);
+        payload.insert(QStringLiteral("tableName"), tableName);
         payload.insert(QStringLiteral("userName"), tokenValue(tokens, 7));
         return {true, {}, cmdType, payload};
     }
@@ -86,14 +111,17 @@ ParseResult parseAuthSql(const QString &sql, const QVector<SqlToken> &tokens)
     if (cmdType == QStringLiteral("REVOKE_ALL")) {
         if (!tokenIs(tokens, 1, TokenType::ALL)
             || !tokenIs(tokens, 2, TokenType::ON)
-            || !isValueToken(tokens.value(3).type)
-            || !tokenIs(tokens, 4, TokenType::DOT)
-            || !tokenIs(tokens, 5, TokenType::STAR)
             || !tokenIs(tokens, 6, TokenType::FROM)
             || !isValueToken(tokens.value(7).type)) {
-            return {false, QStringLiteral("REVOKE_ALL: expected REVOKE ALL ON database.* FROM user"), cmdType, {}};
+            return {false, QStringLiteral("REVOKE_ALL: expected REVOKE ALL ON database.* FROM user or REVOKE ALL ON database.table FROM user"), cmdType, {}};
         }
-        payload.insert(QStringLiteral("databaseName"), tokenValue(tokens, 3));
+        QString databaseName;
+        QString tableName;
+        if (!parseScope(tokens, 3, &databaseName, &tableName)) {
+            return {false, QStringLiteral("REVOKE_ALL: expected REVOKE ALL ON database.* FROM user or REVOKE ALL ON database.table FROM user"), cmdType, {}};
+        }
+        payload.insert(QStringLiteral("databaseName"), databaseName);
+        payload.insert(QStringLiteral("tableName"), tableName);
         payload.insert(QStringLiteral("userName"), tokenValue(tokens, 7));
         return {true, {}, cmdType, payload};
     }

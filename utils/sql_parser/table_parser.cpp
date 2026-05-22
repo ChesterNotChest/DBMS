@@ -177,6 +177,7 @@ QVariantMap makeConstraintMap(const QString &name,
 bool parseColumnSegment(const QVector<SqlToken> &tokens,
                         int start,
                         int end,
+                        const QString &sql,
                         QVariantMap *column,
                         QString *error)
 {
@@ -242,7 +243,11 @@ bool parseColumnSegment(const QVector<SqlToken> &tokens,
                 if (error != nullptr) *error = QStringLiteral("CREATE TABLE: unmatched CHECK parenthesis");
                 return false;
             }
-            result.insert(QStringLiteral("checkClause"), joinedLexemes(tokens, i + 2, right - 1));
+            const int leftTokenIndex = i + 1;
+            const int startPos = tokens[leftTokenIndex].position + tokens[leftTokenIndex].length;
+            const int endPos = tokens[right].position;
+            const QString exprText = sql.mid(startPos, endPos - startPos);
+            result.insert(QStringLiteral("checkClause"), exprText);
             i = right + 1;
         } else if (lexemeIs(tokens, i, QStringLiteral("REFERENCES")) && i + 1 <= end) {
             result.insert(QStringLiteral("referencesTable"), tokens[i + 1].lexeme);
@@ -275,6 +280,7 @@ bool parseColumnSegment(const QVector<SqlToken> &tokens,
 bool parseTableConstraintSegment(const QVector<SqlToken> &tokens,
                                  int start,
                                  int end,
+                                 const QString &sql,
                                  QVariantMap *constraint,
                                  QString *error)
 {
@@ -321,10 +327,13 @@ bool parseTableConstraintSegment(const QVector<SqlToken> &tokens,
             if (error != nullptr) *error = QStringLiteral("CREATE TABLE: invalid CHECK constraint");
             return false;
         }
+        const int startPos = tokens[left].position + tokens[left].length;
+        const int endPos = tokens[right].position;
+        const QString exprText = sql.mid(startPos, endPos - startPos);
         *constraint = makeConstraintMap(constraintName,
                                         QStringLiteral("CHECK"),
                                         {},
-                                        joinedLexemes(tokens, left + 1, right - 1));
+                                        exprText);
         return true;
     }
 
@@ -416,13 +425,13 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
             QString error;
             if (startsTableConstraint(tokens, segment.first)) {
                 QVariantMap constraint;
-                if (!parseTableConstraintSegment(tokens, segment.first, segment.second, &constraint, &error)) {
+                if (!parseTableConstraintSegment(tokens, segment.first, segment.second, sql, &constraint, &error)) {
                     return {false, error, cmdType, {}};
                 }
                 constraints.append(constraint);
             } else {
                 QVariantMap column;
-                if (!parseColumnSegment(tokens, segment.first, segment.second, &column, &error)) {
+                if (!parseColumnSegment(tokens, segment.first, segment.second, sql, &column, &error)) {
                     return {false, error, cmdType, {}};
                 }
                 columns.append(column);
@@ -482,7 +491,7 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
                                             : actionIndex + 1;
                 QVariantMap column;
                 QString error;
-                if (!parseColumnSegment(tokens, columnStart, end, &column, &error)) {
+                if (!parseColumnSegment(tokens, columnStart, end, sql, &column, &error)) {
                     return {false, error, cmdType, {}};
                 }
                 payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_COLUMN"));
@@ -492,7 +501,7 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
 
             QVariantMap constraint;
             QString error;
-            if (!parseTableConstraintSegment(tokens, actionIndex + 1, end, &constraint, &error)) {
+            if (!parseTableConstraintSegment(tokens, actionIndex + 1, end, sql, &constraint, &error)) {
                 return {false, error, cmdType, {}};
             }
             payload.insert(QStringLiteral("alterAction"), QStringLiteral("ADD_CONSTRAINT"));
@@ -604,7 +613,7 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
                                             : actionIndex + 1;
                 QVariantMap column;
                 QString error;
-                if (!parseColumnSegment(tokens, columnStart, end, &column, &error)) {
+                if (!parseColumnSegment(tokens, columnStart, end, sql, &column, &error)) {
                     return {false, error, cmdType, {}};
                 }
                 payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_COLUMN"));
@@ -621,7 +630,7 @@ ParseResult parseTableSql(const QString& sql, const QVector<SqlToken>& tokens)
             const QString constraintName = tokens[actionIndex + 2].lexeme;
             QVariantMap constraint;
             QString error;
-            if (!parseTableConstraintSegment(tokens, actionIndex + 3, end, &constraint, &error)) {
+            if (!parseTableConstraintSegment(tokens, actionIndex + 3, end, sql, &constraint, &error)) {
                 return {false, error, cmdType, {}};
             }
             payload.insert(QStringLiteral("alterAction"), QStringLiteral("MODIFY_CONSTRAINT"));

@@ -65,6 +65,10 @@ LogicEvalResult evaluateQuantifiedSubqueryNode(const LogicNode &node,
                                                const LogicRowContext &rowContext,
                                                const LogicEvalContext &evalContext);
 
+LogicEvalResult evaluateScalarSubqueryNode(const LogicNode &node,
+                                           const LogicRowContext &rowContext,
+                                           const LogicEvalContext &evalContext);
+
 QList<setdef::SetValue> normalizeSelectResultToSet(const service::SelectRowsResult &result);
 
 } // namespace logic

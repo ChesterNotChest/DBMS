@@ -1354,12 +1354,78 @@ TextResult describeTable(const QString &tableName)
         return result;
     }
 
-    QStringList lines;
-    for (const tabledef::Column &column : schema.columns) {
-        lines.append(formatColumnDefinition(column));
-    }
+    QSet<QString> primaryKeyColumns;
+    QSet<QString> uniqueColumns;
+    QMap<QString, QString> foreignKeyMap;
+    QMap<QString, QString> foreignKeyRefTableMap;
+
     for (const tabledef::Constraint &constraint : schema.constraints) {
-        lines.append(formatConstraintDefinition(constraint));
+        if (constraint.type == tabledef::ConstraintType::PrimaryKey) {
+            for (const QString &col : constraint.columns) {
+                primaryKeyColumns.insert(col);
+            }
+        } else if (constraint.type == tabledef::ConstraintType::Unique) {
+            for (const QString &col : constraint.columns) {
+                uniqueColumns.insert(col);
+            }
+        } else if (constraint.type == tabledef::ConstraintType::ForeignKey) {
+            for (int i = 0; i < constraint.columns.size() && i < constraint.referencedColumns.size(); ++i) {
+                foreignKeyMap[constraint.columns[i]] = constraint.referencedColumns[i];
+                foreignKeyRefTableMap[constraint.columns[i]] = constraint.referencedTable;
+            }
+        }
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("+----------+--------------+----------+------+------+-------------+---------------------------+"));
+    lines.append(QStringLiteral("| 字段名   | 类型         | NOT NULL | 主键 | 唯一 | 默认值      | 外键引用                  |"));
+    lines.append(QStringLiteral("+----------+--------------+----------+------+------+-------------+---------------------------+"));
+
+    for (const tabledef::Column &column : schema.columns) {
+        QString typeStr;
+        if (column.type == tabledef::ColumnType::Varchar && column.length > 0) {
+            typeStr = QStringLiteral("VARCHAR(%1)").arg(column.length);
+        } else {
+            typeStr = tabledef::columnTypeToString(column.type);
+        }
+
+        QString pkMark = primaryKeyColumns.contains(column.name) ? "✓" : "";
+        QString uqMark = uniqueColumns.contains(column.name) ? "✓" : "";
+        QString fkInfo;
+        if (foreignKeyMap.contains(column.name)) {
+            fkInfo = QString("%1.%2").arg(foreignKeyRefTableMap[column.name], foreignKeyMap[column.name]);
+        }
+
+        QString notNullStr = column.notNull ? QString("YES") : QString("NO");
+        const QString defaultStr = column.defaultValue.isEmpty()
+                                       ? QString()
+                                       : QStringLiteral("DEFAULT %1").arg(column.defaultValue);
+        QString line = QString("| %1 | %2 | %3 | %4 | %5 | %6 | %7 |")
+                          .arg(column.name.leftJustified(8),
+                               typeStr.leftJustified(12),
+                               notNullStr.leftJustified(8),
+                               pkMark.leftJustified(4),
+                               uqMark.leftJustified(4),
+                               defaultStr.leftJustified(11),
+                               fkInfo.leftJustified(25));
+        lines.append(line);
+    }
+
+    lines.append(QStringLiteral("+----------+--------------+----------+------+------+-------------+---------------------------+"));
+
+    QStringList constraintLines;
+    for (const tabledef::Constraint &constraint : schema.constraints) {
+        const QString definition = formatConstraintDefinition(constraint);
+        if (!definition.trimmed().isEmpty()) {
+            constraintLines.append(definition);
+        }
+    }
+    if (!constraintLines.isEmpty()) {
+        lines.append(QString());
+        lines.append(QStringLiteral("Constraints:"));
+        for (const QString &definition : constraintLines) {
+            lines.append(QStringLiteral("  %1").arg(definition));
+        }
     }
 
     result.success = true;
